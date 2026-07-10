@@ -63,6 +63,7 @@ const CFG = {
   MAX_SUBS           : 5,     // substitutions allowed per team
 };
 const TIME_SCALE = (90 * 60) / CFG.MATCH_REAL_SECONDS;
+const SIM_STEP = 1 / 60; // fixed sim timestep — identical in live play, headless runs and replays
 
 /* --------------------- PITCH SURFACE & WEATHER TYPES ---------------------- */
 // Both feed multipliers into the shared ball/player physics (module ENV).
@@ -297,8 +298,8 @@ const scl   = (v, s) => ({ x: v.x * s, y: v.y * s });
 function norm(v){ const l = len(v); return l < 1e-6 ? {x:0,y:0} : {x:v.x/l, y:v.y/l}; }
 function gauss(){
   let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
+  while (u === 0) u = srand();
+  while (v === 0) v = srand();
   return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 function turnToward(cur, target, maxStep){
@@ -314,6 +315,24 @@ function mulberry32(seed){
     t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
+}
+/* ------------------------ DETERMINISTIC RANDOM ----------------------------- */
+// DeterministicRandom: every SIMULATION die goes through srand() — one seeded
+// stream whose state can be captured and restored, the backbone of match
+// recording, strict script replay and broadcast goal replays. Cosmetic code
+// (stadium crowd, weather particles, commentary phrasing) keeps Math.random,
+// so nothing render-side can ever desync the sim.
+const RNG = {
+  s: 1,
+  seed(v){ this.s = (v | 0) || 1; },
+  state(){ return this.s; },
+  restore(v){ this.s = v | 0; },
+};
+function srand(){
+  RNG.s |= 0; RNG.s = RNG.s + 0x6D2B79F5 | 0;
+  let t = Math.imul(RNG.s ^ RNG.s >>> 15, 1 | RNG.s);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
 }
 
 /* -------------------------- ISO PROJECTION ------------------------------- */
@@ -442,7 +461,7 @@ class Ball {
       k *= 1 + cell.mud * 1.3;                       // mud grabs the ball
       if (cell.wet > 0.6){                           // puddles nearly stop it
         k *= 2.0;
-        if (sp > 3 && Math.random() < dt * 6){ this.vx += gauss() * 0.8; this.vy += gauss() * 0.8; }
+        if (sp > 3 && srand() < dt * 6){ this.vx += gauss() * 0.8; this.vy += gauss() * 0.8; }
       } else if (cell.wet > 0.2 && sp > 8) k *= 0.75; // wet grass zips
     }
     const f = Math.exp(-k * dt);
@@ -764,6 +783,7 @@ class Player {
     this.team = team; this.slot = slot; this.role = slot.role;
     this.line = ROLE_LINE[this.role]; this.isGK = this.role === 'GK';
     this.num = idx + 1; this.name = makeName(rng);
+    this.pid = (team.idx === 0 ? 'home' : 'away') + '_' + this.num; // stable script/replay id
     this.a = {};
     const t = ROLE_TMPL[this.role];
     for (const k in t) this.a[k] = clamp(t[k] + (rng() - 0.5) * 0.22, 0.1, 0.97);
@@ -783,7 +803,7 @@ class Player {
     this.facing = 0; this.runPhase = 0; this.stamina = 1;
     this.target = { x: 0, y: 0 }; this.speedWish = 0.6;
     this.duty = 'position'; this.decision = { type: 'dribble' };
-    this.thinkT = Math.random() * 0.15; this.decideT = 0;
+    this.thinkT = srand() * 0.15; this.decideT = 0;
     this.kickCooldown = 0; this.touchCd = 0; this.tackleCd = 0;
     this.slowT = 0; this.blockCd = 0; this.holdT = 0; this.holdCd = 0;
     this.diving = false;
@@ -1755,6 +1775,8 @@ class Stadium {
     ];
   }
   react(type, team, data){
+    if (this.game.replayMode) return;
+    if (this.game.recorder) this.game.recorder.log('crowd', { kind: type, team: team ? team.id : undefined });
     this.lastEvent = { type, team, t: this.t, data: data || null };
     this.mrs.kick(type, team);
     this.crowd.react(type, team);
@@ -1960,6 +1982,7 @@ const FORMATIONS = {
 class Team {
   constructor(idx, def, rng){
     this.idx = idx;
+    this.id = idx === 0 ? 'home' : 'away'; // stable script/replay id
     this.name = def.name; this.code = def.code;
     this.kit = def.kit; this.gkKit = def.gkKit;
     this.tactics = { width: 0.5, scheme: 'zonal', trap: 0, ...def.tactics };
@@ -2017,7 +2040,7 @@ class DefensiveLineManager {
     const now = game.match.tMatch;
     if (defending && (T.scheme === 'trap' || (T.trap || 0) > 0.5) && c && c.team !== this.team &&
         now - this.lastTrap > 45 && ballDist > 30 && ballDist < 62 &&
-        Math.random() < (0.35 + this.org * 0.4) * game.loopDt){
+        srand() < (0.35 + this.org * 0.4) * game.loopDt){
       this.trapUntil = now + 26; this.lastTrap = now;
     }
     if (now < this.trapUntil) h += 7;
@@ -2144,6 +2167,7 @@ function creditTouch(game, p){
     ball.prevToucher = ball.lastToucher;
     ball.prevTouchClock = game.match.tMatch;
     p.stats.touches++;
+    if (game.recorder) game.recorder.log('touch', { actor: p.pid, position: EventSerializer.pos(p.pos), z: +ball.z.toFixed(2) });
   }
   ball.lastToucher = p; ball.lastTouchTeam = p.team;
   if (game.offsideSys) game.offsideSys.onTouch(p); // involvement = the flag goes up
@@ -2154,6 +2178,7 @@ function resolvePendingPass(game, gainer, canIntercept){
   if (gainer.team === pp.team){
     if (pp.passer && gainer !== pp.passer){
       gainer.team.passCmp++; pp.passer.stats.passCmp++;
+      if (game.recorder) game.recorder.log('pass_complete', { actor: pp.passer.pid, target: gainer.pid });
       // a long completed ball into the danger zone makes the feed
       const gd = dist(gainer.pos, { x: gainer.team.oppGoalX(), y: 34 });
       if (gd < 30 && dist(pp.passer.pos, gainer.pos) > 16 &&
@@ -2164,6 +2189,7 @@ function resolvePendingPass(game, gainer, canIntercept){
     }
   } else if (canIntercept && gainer !== pp.passer){
     gainer.stats.interceptions++;
+    if (game.recorder) game.recorder.log('interception', { actor: gainer.pid, target: pp.passer ? pp.passer.pid : undefined });
   }
   game.pendingPass = null;
 }
@@ -2197,6 +2223,16 @@ function doKick(p, game, opt){
   ball.shotCredited = false; // on-target credit given at most once per strike
   ball.isShot = opt.type === 'shot';
   p.kickCooldown = 0.45;
+  // EventSerializer hook: every deliberate strike becomes a timeline event
+  if (game.recorder) game.recorder.log(opt.cross ? 'cross' : (opt.header ? 'header' : opt.type), {
+    actor: p.pid, from: EventSerializer.pos(p.pos),
+    aim: { x: +(+opt.tx).toFixed(2), y: +(+opt.ty).toFixed(2) },
+    target: opt.receiver ? opt.receiver.pid : undefined,
+    power: +clamp(sp / 30, 0, 1).toFixed(3), speed: +sp.toFixed(2),
+    vz: +(opt.vz || 0).toFixed(2), spin: +(opt.spin || 0).toFixed(2),
+    trajectory: (opt.vz || 0) > 2.2 ? 'high' : ((opt.vz || 0) > 0.5 ? 'lofted' : 'ground'),
+    human: p.human ? true : undefined,
+  });
   // action pose for the kick
   if (!opt.silent){
     if (opt.header) p.setAction('head', 0.5);
@@ -2283,12 +2319,20 @@ function offBallTarget(p, game){
   const base = formationWorld(p);
   const rs = game.match.restart;
   const st = game.match.state;
-  // DeadBallStateManager: staged set-piece positions (walls, runners, markers)
+  // DeadBallStateManager: staged set-piece positions (walls, runners, markers).
+  // Values may carry a per-player walk/jog speed: { x, y, sw }.
   if (rs && rs.spTargets && rs.spTargets.has(p) && st !== 'PLAYING'){
-    p.target = rs.spTargets.get(p); p.speedWish = 0.95;
-    // light jostling in the box while waiting for the delivery
-    if (st === 'CORNER' && p.actionT <= 0 && dist(p.pos, p.target) < 1.5 && Math.random() < game.loopDt * 1.2)
-      p.setAction('shield', 0.35);
+    const sp = rs.spTargets.get(p);
+    p.target = { x: sp.x, y: sp.y };
+    const d0 = dist(p.pos, p.target);
+    const sw = sp.sw !== undefined ? sp.sw : 0.95;
+    // hustle over distance, settle into a walk on arrival
+    p.speedWish = d0 < 1.2 ? 0.25 : (d0 > 18 ? 1 : (d0 > 9 ? Math.min(1, sw + 0.3) : sw));
+    // waiting bodies feel alive: box jostling, defenders organizing
+    if (p.actionT <= 0 && d0 < 1.5){
+      if (st === 'CORNER' && srand() < game.loopDt * 1.2) p.setAction('shield', 0.35);
+      else if (p.line === 'DEF' && srand() < game.loopDt * 0.3) p.setAction('point', 0.55);
+    }
     return;
   }
   let tx = base.x + (ball.x - CFG.PITCH_L/2) * LINE_FOLLOW[p.line];
@@ -2403,8 +2447,9 @@ function offBallTarget(p, game){
       if (pressureOn(ball.controller, opps2) > 0.55 && dist(p.pos, ball.controller.pos) < 14){ want = 0.75; text = 'MAN ON!'; }
       // confident, creative players demand it; nervous ones stay quiet
       const conf = 0.35 + p.a.composure * 0.5 + (p.a.vision > 0.72 ? 0.12 : 0);
-      if (want > 0.4 && Math.random() < want * conf * 0.35){
+      if (want > 0.4 && srand() < want * conf * 0.35){
         p.callT = 1.1; p.callText = text;
+        if (game.recorder) game.recorder.log('call_for_ball', { actor: p.pid, position: EventSerializer.pos(p.pos), text, gesture: 'raise_hand' });
         p.callCd = now + 180; game.lastCallT = now;
         if (p.actionT <= 0 && len(p.vel) < 5) p.setAction('point', 0.5);
       }
@@ -2520,9 +2565,9 @@ function carrierDecide(p, game){
   const best = Math.max(shoot, bestPass, cross, drib, clear, shieldU, 0.18);
   if (best === shoot && shootAim){
     p.decision = { type:'shot', tx: shootAim.x, ty: shootAim.y,
-      speed: 23 + p.a.shooting * 10 + Math.random() * 3,
-      vz: 0.5 + Math.random() * 2.4,
-      spin: (Math.random() - 0.5) * 3,
+      speed: 23 + p.a.shooting * 10 + srand() * 3,
+      vz: 0.5 + srand() * 2.4,
+      spin: (srand() - 0.5) * 3,
       sigma: 0.085 - p.a.composure * 0.045 + press * 0.05 };
   } else if (best === cross && crossOpt){
     const d = dist(p.pos, crossOpt.aim);
@@ -2535,7 +2580,7 @@ function carrierDecide(p, game){
     if (o.loft){
       const l = loftFor(o.dm);
       p.decision = { type:'pass', tx:o.lead.x, ty:o.lead.y, speed:l.vh, vz:l.vz,
-        spin:(Math.random()-0.5)*2, sigma:0.1 - p.a.passing*0.05, receiver:o.mate };
+        spin:(srand()-0.5)*2, sigma:0.1 - p.a.passing*0.05, receiver:o.mate };
     } else {
       p.decision = { type:'pass', tx:o.lead.x, ty:o.lead.y, speed:groundPassSpeed(o.dm), vz:0,
         spin:0, sigma:0.09 - p.a.passing*0.055 + press*0.04, receiver:o.mate };
@@ -2549,7 +2594,7 @@ function carrierDecide(p, game){
   } else {
     p.decision = { type:'dribble', ang: dribAng, cautious: drib < 0.3 };
   }
-  p.decideT = 0.24 + Math.random() * 0.12;
+  p.decideT = 0.24 + srand() * 0.12;
 }
 
 function playerThink(p, game){
@@ -2612,7 +2657,7 @@ function keeperThink(p, game){
       p.target = { x: gx + inward * 1.2, y: 34 + (m2.state === 'CORNER' ? inward * 0 + 1.5 * (rs2.spot.y < 34 ? 1 : -1) : 0) };
     }
     p.speedWish = 0.9;
-    if (p.actionT <= 0 && Math.random() < (game.loopDt || 0.016) * 0.8) p.setAction('point', 0.6);
+    if (p.actionT <= 0 && srand() < (game.loopDt || 0.016) * 0.8) p.setAction('point', 0.6);
     return;
   }
   const approaching = (gx === 0 && ball.vx < -5) || (gx === CFG.PITCH_L && ball.vx > 5);
@@ -2669,7 +2714,7 @@ function keeperResolve(game, dt){
         const dm = dist(k.pos, m.pos);
         if (dm < 14 || dm > 58) continue;
         const adv = (m.pos.x - k.pos.x) * k.team.attackDir;
-        const s = adv + Math.abs(m.pos.y - 34) * 0.4 + Math.random() * 6;
+        const s = adv + Math.abs(m.pos.y - 34) * 0.4 + srand() * 6;
         if (s > bs){ bs = s; best = m; }
       }
       ball.holder = null;
@@ -2698,8 +2743,9 @@ function keeperResolve(game, dt){
     if (d3 < reach && ball.z < 2.45 && ball.lastToucher !== k && (!ownTouch || dangerous)){
       const sp3 = Math.hypot(ball.vx, ball.vy, ball.vz);
       const wasShot = ball.isShot;
-      if (sp3 < 11 + k.a.gk * 7 && Math.random() < 0.28 + k.a.gk * 0.34 + ENV.catchMod){
-        ball.holder = k; k.holdT = 1.3 + Math.random() * 0.6;
+      if (sp3 < 11 + k.a.gk * 7 && srand() < 0.28 + k.a.gk * 0.34 + ENV.catchMod){
+        ball.holder = k; k.holdT = 1.3 + srand() * 0.6;
+        if (game.recorder) game.recorder.log('gk_catch', { actor: k.pid, position: EventSerializer.pos(k.pos), save: !!wasShot });
         ball.controller = null; ball.isShot = false;
         creditTouch(game, k);
         resolvePendingPass(game, k, true);
@@ -2707,21 +2753,22 @@ function keeperResolve(game, dt){
         if (wasShot){ game.announce('SAVE!'); game.counts.save++; k.stats.saves++; game.commentate('save', { p: k, team }); if (game.lastShooter){ game.lastShooter.team.onTarget++; game.lastShooter.stats.shotsOn++; } ball.shotCredited = true; if (game.stadium) game.stadium.react('save', team); }
       } else {
         const inward = team.ownGoalX() === 0 ? 1 : -1;
-        if (Math.random() < 0.35){
+        if (srand() < 0.35){
           // pushed wide behind the goal line -> corner territory
-          ball.vx = -inward * (1.5 + Math.random() * 2.5);
-          ball.vy = Math.sign(ball.y - 34 || (Math.random() - 0.5)) * (9 + Math.random() * 5);
+          ball.vx = -inward * (1.5 + srand() * 2.5);
+          ball.vy = Math.sign(ball.y - 34 || (srand() - 0.5)) * (9 + srand() * 5);
         } else {
           // live rebound into the box: dangerous, like a real spill
-          ball.vx = inward * (4 + Math.random() * 6);
-          ball.vy = Math.sign(ball.y - 34 || 1) * (4 + Math.random() * 7) + ball.vy * 0.25;
+          ball.vx = inward * (4 + srand() * 6);
+          ball.vy = Math.sign(ball.y - 34 || 1) * (4 + srand() * 7) + ball.vy * 0.25;
         }
-        ball.vz = 1 + Math.random() * 2;
+        ball.vz = 1 + srand() * 2;
         ball.isShot = false;
         creditTouch(game, k);
         resolvePendingPass(game, k, true);
         k.holdCd = 0.9;
         k.setAction('gk_parry', 0.5);
+        if (game.recorder) game.recorder.log('gk_parry', { actor: k.pid, position: EventSerializer.pos(k.pos), save: !!wasShot });
         if (wasShot){ game.announce('SAVE!'); game.counts.save++; k.stats.saves++; game.commentate('save', { p: k, team }); if (game.lastShooter){ game.lastShooter.team.onTarget++; game.lastShooter.stats.shotsOn++; } ball.shotCredited = true; if (game.stadium) game.stadium.react('save', team); }
       }
     }
@@ -2811,18 +2858,19 @@ function resolveTackles(game, dt){
         const winCh = victim
           ? clamp(0.42 + (p.a.tackling - victim.a.dribbling) * 0.35 - (behind ? 0.22 : 0), 0.1, 0.8)
           : 0.9;
-        if (Math.random() < winCh){
+        if (srand() < winCh){
           p.stats.tackWon++;
-          const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (Math.random() - 0.5) * 6, y: (Math.random() - 0.5) * 8 });
-          const kb = 6 + Math.random() * 5;
-          ball.vx = dir.x * kb; ball.vy = dir.y * kb; ball.vz = 0.5 + Math.random();
+          if (game.recorder) game.recorder.log('tackle', { actor: p.pid, target: victim ? victim.pid : undefined, slide: true, won: true });
+          const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (srand() - 0.5) * 6, y: (srand() - 0.5) * 8 });
+          const kb = 6 + srand() * 5;
+          ball.vx = dir.x * kb; ball.vy = dir.y * kb; ball.vz = 0.5 + srand();
           ball.controller = null; ball.isShot = false;
           creditTouch(game, p);
           resolvePendingPass(game, p, false); // tackle stats already credit the win
           if (victim) victim.slowT = 0.5;
         } else if (victim){
           const foulCh = 0.5 + (behind ? 0.35 : 0) + p.a.aggression * 0.1;
-          if (Math.random() < foulCh){
+          if (srand() < foulCh){
             // referee judgement: slide + speed + angle + stopping an attack
             const promising = Math.abs(victim.pos.x - victim.team.oppGoalX()) < 42;
             const sev = 0.45 + (behind ? 0.22 : 0) + p.a.aggression * 0.12
@@ -2847,7 +2895,7 @@ function resolveTackles(game, dt){
       const ownGx = p.team.ownGoalX();
       const desperate = Math.abs(c.pos.x - ownGx) < 30;
       const caution = p.stats.yellow > 0 ? 0.5 : 1;
-      if ((desperate || p.a.aggression > 0.6) && Math.random() < (0.35 + p.a.aggression * 0.25) * caution){
+      if ((desperate || p.a.aggression > 0.6) && srand() < (0.35 + p.a.aggression * 0.25) * caution){
         p.tackleCd = 1.8;
         p.setAction('slide', 0.55);
         p.slideHit = false;
@@ -2865,11 +2913,12 @@ function resolveTackles(game, dt){
       p.tackleCd = 1.25;
       p.setAction('tackle', 0.35);
       p.stats.tackAtt++;
-      if (Math.random() < chance){
+      if (srand() < chance){
         p.stats.tackWon++;
-        const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (ball.x - c.pos.x), y: (ball.y - c.pos.y) + (Math.random() - 0.5) * 4 });
-        const kb = 5 + Math.random() * 4;
-        ball.vx = dir.x * kb; ball.vy = dir.y * kb; ball.vz = 0.5 + Math.random();
+        if (game.recorder) game.recorder.log('tackle', { actor: p.pid, target: c.pid, slide: false, won: true });
+        const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (ball.x - c.pos.x), y: (ball.y - c.pos.y) + (srand() - 0.5) * 4 });
+        const kb = 5 + srand() * 4;
+        ball.vx = dir.x * kb; ball.vy = dir.y * kb; ball.vz = 0.5 + srand();
         ball.controller = null; ball.isShot = false;
         creditTouch(game, p);
         resolvePendingPass(game, p, false);
@@ -2878,7 +2927,7 @@ function resolveTackles(game, dt){
       } else {
         p.slowT = 0.9;
         const foulCh = 0.11 + (behind ? 0.2 : 0) + p.a.aggression * 0.1;
-        if (Math.random() < foulCh){
+        if (srand() < foulCh){
           const sev = 0.24 + (behind ? 0.2 : 0) + p.a.aggression * 0.1;
           game.match.registerFoul(p, c, behind ? 'challenge from behind' : 'late challenge', false, sev);
         }
@@ -2937,7 +2986,7 @@ function resolveHeaders(game){
     for (const o of game.other(best.team).players){ const d = dist(o.pos, best.pos); if (d < oppNear) oppNear = d; }
     if (oppNear > 2.5) return;
   }
-  if (Math.random() > 0.35 + best.a.positioning * 0.35) return; // mistimed jump
+  if (srand() > 0.35 + best.a.positioning * 0.35) return; // mistimed jump
   game.headerCd = 1.2;
   resolvePendingPass(game, best, true); // headed cross = completed / cut out
   const team = best.team;
@@ -2946,23 +2995,155 @@ function resolveHeaders(game){
   game.announce('HEADER'); game.counts.header++;
   if (dGoal < 22){
     doKick(best, game, { type:'shot', header:true, tx: gx, ty: 34 + gauss() * 2,
-      speed: 13 + best.a.strength * 8, vz: -1 + Math.random() * 2, sigma: 0.13 });
+      speed: 13 + best.a.strength * 8, vz: -1 + srand() * 2, sigma: 0.13 });
   } else {
     const ownGx = team.ownGoalX();
     const defensive = Math.abs(best.pos.x - ownGx) < 30;
     if (defensive){
       doKick(best, game, { type:'clear', header:true, tx: ownGx + team.attackDir * 40, ty: best.pos.y < 34 ? 10 : 58,
-        speed: 10 + best.a.strength * 5, vz: 4 + Math.random() * 2, sigma: 0.25 });
+        speed: 10 + best.a.strength * 5, vz: 4 + srand() * 2, sigma: 0.25 });
     } else {
       // knock-down toward a nearby teammate
       let mate = null, md = 1e9;
       for (const m of team.players){ if (m === best || m.isGK) continue; const d = dist(m.pos, best.pos); if (d < md && d > 3){ md = d; mate = m; } }
       const tx = mate ? mate.pos.x : best.pos.x + team.attackDir * 8;
       const ty = mate ? mate.pos.y : best.pos.y;
-      doKick(best, game, { type:'pass', header:true, tx, ty, speed: 7 + Math.random() * 3, vz: -0.5, sigma: 0.18, receiver: mate });
+      doKick(best, game, { type:'pass', header:true, tx, ty, speed: 7 + srand() * 3, vz: -0.5, sigma: 0.18, receiver: mate });
     }
   }
 }
+
+/* ---------------------- TACTICAL POSITIONING SYSTEM ------------------------ */
+// TacticalPositioningSystem: builds full-team staged-position maps for every
+// restart so both sides reorganize like a televised set piece. Entries are
+// { x, y, sw } — sw is the walk/jog speedWish used on the way in. Consumed by
+// offBallTarget's dead-ball branch; delayed runs live in restart.spTargets2
+// and are merged into spTargets at restart.swapT (see Match.update).
+const TacticalPositioningSystem = {
+  // ThrowInRoutineSystem: teammates carve out passing lanes — a short option
+  // to feet, a down-the-line runner, an infield triangle and a safety valve.
+  // Opponents mark the receivers instead of crowding the ball.
+  stageThrowIn(r, game){
+    const team = r.team, opp = game.other(team), dir = team.attackDir, spot = r.spot;
+    r.spTargets = new Map();
+    const inY = spot.y < 34 ? 1 : -1; // infield direction
+    const mates = team.players.filter(p => !p.isGK && p !== r.taker)
+      .sort((a, b) => dist(a.pos, spot) - dist(b.pos, spot));
+    const lanes = [
+      { x: spot.x + dir * 4.5, y: spot.y + inY * 4.5, sw: 0.7 },  // short, to feet
+      { x: spot.x + dir * 11,  y: spot.y + inY * 2.5, sw: 0.85 }, // down the line
+      { x: spot.x + dir * 1.5, y: spot.y + inY * 10,  sw: 0.7 },  // infield triangle
+      { x: spot.x - dir * 7,   y: spot.y + inY * 6,   sw: 0.6 },  // safety valve
+    ];
+    lanes.forEach(sp => {
+      // lanes clamp tighter than markers so goal-side offsets survive corners
+      sp.x = clamp(sp.x, 4, CFG.PITCH_L - 4); sp.y = clamp(sp.y, 1.2, CFG.PITCH_W - 1.2);
+    });
+    lanes.forEach((sp, i) => { if (mates[i]) r.spTargets.set(mates[i], sp); });
+    // markers pick up the staged receivers, goal-side, outside the 2m circle
+    const receivers = [...r.spTargets.entries()];
+    const defs = opp.players.filter(p => !p.isGK)
+      .sort((a, b) => dist(a.pos, spot) - dist(b.pos, spot));
+    const ownGx = opp.ownGoalX();
+    let di = 0;
+    for (const [, sp] of receivers){
+      if (di >= 3) break;
+      const mk = defs[di++];
+      if (!mk) break;
+      const t = { x: sp.x + Math.sign(ownGx - sp.x) * 1.5, y: sp.y + (34 - sp.y) * 0.06, sw: 0.75 };
+      const d = dist(t, spot);
+      if (d < 2.5){ const away = norm(sub(t, spot)); t.x = spot.x + away.x * 2.5; t.y = spot.y + away.y * 2.5; }
+      t.x = clamp(t.x, 2, CFG.PITCH_L - 2); t.y = clamp(t.y, 1.2, CFG.PITCH_W - 1.2);
+      r.spTargets.set(mk, t);
+    }
+  },
+  // GoalKickRoutineSystem: possession sides split their back line to build
+  // out; direct sides push bodies to the second-ball zone. High-pressing
+  // opponents send strikers up to squeeze the short options.
+  stageGoalKick(r, game){
+    const team = r.team, opp = game.other(team), dir = team.attackDir, gx = team.ownGoalX();
+    r.spTargets = new Map();
+    const cbs = team.players.filter(p => p.role === 'CB');
+    const fbs = team.players.filter(p => p.role === 'LB' || p.role === 'RB');
+    const dms = team.players.filter(p => p.role === 'CM')
+      .sort((a, b) => a.slot.x - b.slot.x);
+    r.shortTo = cbs[0] || null; // any style can play short when asked to
+    if (team.tactics.style === 'possession'){
+      cbs.slice(0, 2).forEach((p, i) => r.spTargets.set(p, { x: gx + dir * 8, y: 34 + (i === 0 ? -15 : 15), sw: 0.7 }));
+      fbs.forEach(p => r.spTargets.set(p, { x: gx + dir * 24, y: formationWorld(p).y < 34 ? 6 : 62, sw: 0.75 }));
+      if (dms[0]) r.spTargets.set(dms[0], { x: gx + dir * 17, y: 34, sw: 0.7 });
+    } else {
+      const zone = gx + dir * 55;
+      team.players.filter(p => p.line === 'ATT').slice(0, 3).forEach((p, i) =>
+        r.spTargets.set(p, { x: clamp(zone + dir * 3, 8, CFG.PITCH_L - 8), y: 20 + i * 12, sw: 0.75 }));
+    }
+    if (opp.tactics.pressing > 0.6){
+      opp.players.filter(p => p.line === 'ATT').slice(0, 2).forEach((p, i) =>
+        r.spTargets.set(p, { x: gx + dir * (14 + i * 3), y: 34 + (i === 0 ? -12 : 12), sw: 0.8 }));
+    }
+  },
+  // CornerRoutineSystem extras: rebound hunters on the edge of the box, a
+  // near-post zonal guard, a cutback screen — and delayed darts: the aerial
+  // targets hold off their marks, then attack the spots just before delivery.
+  stageCornerExtras(r, game){
+    const team = r.team, def = game.other(team);
+    const gx = r.spot.x < 50 ? 0 : CFG.PITCH_L, inw = gx === 0 ? 1 : -1;
+    const spare = team.players.filter(q => !q.isGK && q !== r.taker && q !== r.short && !r.spTargets.has(q) && q.line !== 'DEF')
+      .sort((a, b) => Math.abs(a.pos.x - gx) - Math.abs(b.pos.x - gx));
+    spare.slice(0, 2).forEach((q, i) =>
+      r.spTargets.set(q, { x: gx + inw * (19.5 + i * 3), y: 34 + (i === 0 ? -7 : 7), sw: 0.7 }));
+    const guards = def.players.filter(q => !q.isGK && !r.spTargets.has(q))
+      .sort((a, b) => dist(a.pos, r.spot) - dist(b.pos, r.spot));
+    if (guards[0]) r.spTargets.set(guards[0], { x: gx + inw * 2.6, y: 34 + (r.spot.y < 34 ? -3.4 : 3.4), sw: 0.85 });
+    if (guards[1]) r.spTargets.set(guards[1], { x: gx + inw * 13, y: 34 + (r.spot.y < 34 ? -8 : 8), sw: 0.8 });
+    r.spTargets2 = new Map();
+    for (const [p, sp] of [...r.spTargets]){
+      if (p.team !== team || p === r.short) continue;
+      if (Math.abs(sp.x - gx) > 14) continue; // only the box crowd darts late
+      r.spTargets2.set(p, { x: sp.x, y: sp.y, sw: 0.98 });
+      r.spTargets.set(p, {
+        x: sp.x + inw * 3.2,
+        y: sp.y + (34 - sp.y) * 0.25 + (srand() - 0.5) * 2,
+        sw: 0.6,
+      });
+    }
+  },
+  // WallFormationSystem extras: defenders pick up the free-kick runners
+  // goal-side, one attacker hangs on the edge for the rebound, and the
+  // runners themselves dart for the far line only as the taker steps up.
+  stageFreeKickExtras(r, game){
+    const team = r.team, def = game.other(team);
+    if (!r.shooting){
+      // simple free kick: two nearby teammates offer angles around the ball
+      const dir = team.attackDir;
+      const near = team.players.filter(p => !p.isGK && p !== r.taker)
+        .sort((a, b) => dist(a.pos, r.spot) - dist(b.pos, r.spot));
+      r.spTargets = r.spTargets || new Map();
+      if (near[0]) r.spTargets.set(near[0], { x: clamp(r.spot.x + dir * 7, 2, 103), y: clamp(r.spot.y - 6, 2, 66), sw: 0.7 });
+      if (near[1]) r.spTargets.set(near[1], { x: clamp(r.spot.x - dir * 4, 2, 103), y: clamp(r.spot.y + 7, 2, 66), sw: 0.65 });
+      return;
+    }
+    const gxA = team.oppGoalX(), inwA = gxA === 0 ? 1 : -1;
+    const runners = [...r.spTargets.entries()].filter(([p]) => p.team === team && p !== r.short);
+    const freeDefs = def.players.filter(q => !q.isGK && !r.spTargets.has(q))
+      .sort((a, b) => dist(a.pos, { x: gxA, y: 34 }) - dist(b.pos, { x: gxA, y: 34 }));
+    let di = 0;
+    r.spTargets2 = r.spTargets2 || new Map();
+    for (const [p, sp] of runners){
+      // marker: goal-side of where the runner will END up
+      if (di < 3){
+        const mk = freeDefs[di++];
+        if (mk) r.spTargets.set(mk, { x: sp.x + inwA * -1.4, y: sp.y + (34 - sp.y) * 0.1, sw: 0.8 });
+      }
+      // delayed run: hold a stride deeper, dart as the taker approaches
+      r.spTargets2.set(p, { x: sp.x, y: sp.y, sw: 0.98 });
+      r.spTargets.set(p, { x: sp.x + inwA * 3, y: sp.y + (34 - sp.y) * 0.2, sw: 0.6 });
+    }
+    const spare = team.players.filter(q => !q.isGK && q !== r.taker && !r.spTargets.has(q) && q.line !== 'DEF')
+      .sort((a, b) => Math.abs(a.pos.x - gxA) - Math.abs(b.pos.x - gxA));
+    if (spare[0]) r.spTargets.set(spare[0], { x: gxA + inwA * 19, y: 34 + (r.spot.y < 34 ? 5 : -5), sw: 0.7 });
+  },
+};
 
 /* --------------------------- MATCH STATE MANAGER --------------------------- */
 class Match {
@@ -2977,9 +3158,14 @@ class Match {
     this.goalScorer = null;
     this.pendingFoul = null;
   }
-  setState(s){ this.state = s; this.stateT = 0; }
+  setState(s){
+    if (this.game.recorder && this.state !== s)
+      this.game.recorder.log('state', { from: this.state, to: s });
+    this.state = s; this.stateT = 0;
+  }
   registerFoul(by, victim, desc, immediate, severity){
     if (this.state !== 'PLAYING') return;
+    if (this.game.recorder) this.game.recorder.log('foul_committed', { actor: by.pid, target: victim.pid, severity: +(severity || 0.3).toFixed(2) });
     victim.setAction('fall', 0.8);
     victim.slowT = 1.0;
     by.stats.foulsC++;
@@ -3016,8 +3202,10 @@ class Match {
   callOffside(p){
     const g = this.game;
     if (this.state !== 'PLAYING') return;
-    g.announce('OFFSIDE');
+    if (g.broadcast) g.broadcast.event({ icon: 'offside', title: 'OFFSIDE',
+      sub: p.name + ' · ' + p.team.code, color: p.team.kit.shirt, dur: 2.4, pri: 1.4 });
     g.commentate('offside', { p, team: p.team });
+    if (g.recorder) g.recorder.log('offside', { actor: p.pid, position: EventSerializer.pos(p.pos) });
     g.counts.offside = (g.counts.offside || 0) + 1;
     if (g.stadium){
       g.stadium.react('offside', p.team);
@@ -3039,16 +3227,21 @@ class Match {
     if (card === 'yellow'){
       off.stats.yellow++;
       g.counts.yellow = (g.counts.yellow || 0) + 1;
-      g.announce('YELLOW CARD: ' + off.name, 3);
+      if (g.broadcast) g.broadcast.event({ icon: 'card', iconColor: UITheme.warn, title: 'YELLOW CARD',
+        sub: off.name + ' · ' + off.team.code, color: off.team.kit.shirt, dur: 3, pri: 2.4 });
       g.commentate('yellow', { p: off, team: off.team, desc: f.desc });
+      if (g.recorder) g.recorder.log('card', { actor: off.pid, card: 'yellow' });
       g.ref.showCard('y');
       if (g.fx) g.fx.play(new RefereeCardAnimation(g, off, 'yellow'));
     } else {
       if (card === 'red2') off.stats.yellow++;
       off.stats.red = 1;
       g.counts.red = (g.counts.red || 0) + 1;
-      g.announce('RED CARD: ' + off.name + (card === 'red2' ? ' (2nd yellow)' : ''), 3.5);
+      if (g.broadcast) g.broadcast.event({ icon: 'card', iconColor: UITheme.bad, title: 'RED CARD',
+        sub: off.name + ' · ' + off.team.code + (card === 'red2' ? ' · second yellow' : ''),
+        color: off.team.kit.shirt, dur: 3.6, pri: 2.6 });
       g.ref.showCard('r');
+      if (g.recorder) g.recorder.log('card', { actor: off.pid, card: card === 'red2' ? 'red2' : 'red' });
       if (g.fx) g.fx.play(new RefereeCardAnimation(g, off, 'red'));
       if (off.team.players.includes(off)) g.sendOff(off); // else: already off the pitch
       g.commentate('red', { p: off, team: off.team, left: off.team.players.length });
@@ -3085,6 +3278,7 @@ class Match {
             const pt = g.possessionTeam();
             if (!f.immediate && pt === f.team){
               g.announce('ADVANTAGE'); g.counts.advantage++;
+              if (g.recorder) g.recorder.log('advantage', { team: f.team.id });
               // play on — but a card-worthy offence is still punished
               if (f.severity > 0.48){ g.counts.foul++; f.byTeam.fouls++; this.applyDiscipline(f); }
             } else {
@@ -3116,34 +3310,118 @@ class Match {
         }
         break;
       case 'THROWIN': case 'CORNER': case 'GOALKICK': case 'FREEKICK': {
-        this.tMatch += dt * TIME_SCALE * 0.4;
+        // ceremony clock parks just shy of the half boundary — the half ends
+        // legitimately on the first PLAYING tick after the delivery
+        this.tMatch = Math.min(this.tMatch + dt * TIME_SCALE * 0.45, (this.half === 1 ? 45 : 90) * 60 - 0.5);
         const r = this.restart;
         const b = this.game.ball;
         b.x = r.spot.x; b.y = r.spot.y; b.z = 0.11; b.vx = b.vy = b.vz = 0; b.controller = null;
         b.px = b.x; b.py = b.y;
-        r.taker.target = { x: r.spot.x, y: r.spot.y }; r.taker.speedWish = 1; r.taker.duty = 'taker';
-        // corner taker crouches to place the ball
-        if (this.state === 'CORNER' && !r.placed && dist(r.taker.pos, r.spot) < 1.8){
+        // RestartState: FORM (walk into shape) → SET (run-up, late darts) → deliver
+        const wait = r.wait || 1.2, force = r.force || wait + 2.4;
+        if (r.spTargets2 && this.stateT >= (r.swapT || 0)){
+          for (const [p, sp] of r.spTargets2) r.spTargets.set(p, sp); // delayed runs go now
+          r.spTargets2 = null;
+        }
+        // readiness: are the staged bodies (mostly) where they belong?
+        let ready = true;
+        if (r.spTargets && r.spTargets.size){
+          let missing = 0, n = 0;
+          for (const [p, sp] of r.spTargets){ n++; if (dist(p.pos, sp) > 3.2) missing++; }
+          ready = missing <= Math.ceil(n * 0.25);
+        }
+        // taker choreography: corners place the ball first, then everyone
+        // waits at the run-up mark and steps up when the stage is set
+        const needsPlace = this.state === 'CORNER' && !r.placed;
+        if (needsPlace && dist(r.taker.pos, r.spot) < 1.8){
           r.placed = true; r.taker.setAction('tackle', 0.35);
         }
-        // set pieces with staging (walls forming, runners arriving) take longer
-        const wait = (r.shooting || this.state === 'CORNER') ? 2.2 : 0.9;
-        const force = (r.shooting || this.state === 'CORNER') ? 5 : 4;
+        const runup = (this.stateT > wait - 0.55 && ready) || this.stateT > force - 0.55;
+        const tkTarget = (needsPlace || runup || !r.standback) ? r.spot : r.standback;
+        r.taker.target = { x: tkTarget.x, y: tkTarget.y };
+        r.taker.speedWish = runup ? 0.95 : (dist(r.taker.pos, tkTarget) > 12 ? 0.85 : 0.6);
+        r.taker.duty = 'taker';
         // the low-shot guard lies down just before the kick
-        if (r.lying && this.stateT > wait - 0.5 && r.lying.actionT <= 0) r.lying.setAction('fall', 1.2);
-        if ((dist(r.taker.pos, r.spot) < 1.6 && this.stateT > wait) || this.stateT > force){
-          if (this.stateT > force){ r.taker.pos.x = r.spot.x + 0.5; r.taker.pos.y = r.spot.y; }
+        if (r.lying && runup && r.lying.actionT <= 0) r.lying.setAction('fall', 1.2);
+        let fire = false;
+        if (r.humanTaker && this.game.humanMode){
+          // human-controlled restart: the coach pulls the trigger
+          r.awaiting = this.stateT > wait && dist(r.taker.pos, r.spot) < 1.6;
+          const inp = this.game.input;
+          // a hold that straddled the whistle is not a trigger
+          if (inp.passReleased && inp.spaceT < (r.startedAt || 0)) inp.passReleased = null;
+          if (inp.shootReleased && inp.shiftT < (r.startedAt || 0)) inp.shootReleased = null;
+          const pressed = (!this.game.coachOpen && (inp.passReleased || inp.shootReleased)) || this.game.takeRequested;
+          if (r.awaiting && pressed){
+            r.humanChoice = (inp.shootReleased || this.game.takeShoot) ? 'attack' : 'safe';
+            inp.passReleased = null; inp.shootReleased = null;
+            if (this.game.recorder) this.game.recorder.log('take_trigger', { actor: r.taker.pid, choice: r.humanChoice });
+            fire = true;
+          }
+          this.game.takeRequested = false; this.game.takeShoot = false;
+          if (this.stateT > force) fire = true; // AFK / headless safety
+        } else {
+          fire = (dist(r.taker.pos, r.spot) < 1.6 && this.stateT > wait && ready) || this.stateT > force;
+        }
+        if (fire){
+          if (dist(r.taker.pos, r.spot) > 1.6){ r.taker.pos.x = r.spot.x + 0.5; r.taker.pos.y = r.spot.y; }
+          const gkTaker = r.humanTaker && r.taker.isGK;
           this.executeRestart();
+          // a human goal kick must not leave the keeper as the selected player
+          if (gkTaker && this.game.selected && this.game.selected.isGK){
+            const rec = this.game.ball.intendedReceiver;
+            this.game.selected = (rec && rec.team === this.game.teams[0] && !rec.isGK)
+              ? rec : this.game.nearestToBall(this.game.teams[0]);
+          }
           this.setState('PLAYING');
         }
         break;
       }
       case 'GOAL':
-        if (this.stateT > 2.6){
+        if (this.stateT > 3.0){
           this.banner = '';
-          this.setupKickoff(this.concededIdx);
+          this.beginKickoffReturn(this.concededIdx);
         }
         break;
+      case 'RESET': {
+        // both teams jog back into kickoff shape — no teleporting
+        const r = this.restart;
+        const b = g.ball;
+        b.x = CFG.PITCH_L / 2; b.y = 34; b.z = 0.11; b.vx = b.vy = b.vz = 0; b.controller = null;
+        b.px = b.x; b.py = b.y;
+        let missing = 0;
+        for (const [p, sp] of r.spTargets){
+          if (!p.team.players.includes(p)) continue; // subbed off mid-walk
+          if (dist(p.pos, sp) > 2.4) missing++;
+        }
+        if ((missing === 0 && this.stateT > 1.6) || this.stateT > (r.force || 6.5)){
+          // stragglers and kickoff-law violators take their final step;
+          // everyone settles for the whistle
+          const half2 = CFG.PITCH_L / 2, center2 = { x: half2, y: 34 };
+          for (const team of g.teams){
+            for (const p of team.players){
+              const t = r.plan && r.plan.get(p);
+              const wrongHalf = team.attackDir === 1 ? p.pos.x > half2 - 1 : p.pos.x < half2 + 1;
+              if (t && (dist(p.pos, t) > 2.4 || wrongHalf || dist(p.pos, center2) < CFG.CIRCLE)){
+                p.pos.x = t.x; p.pos.y = t.y;
+              }
+              p.vel.x = p.vel.y = 0; p.slowT = 0; p.decision = { type: 'dribble' }; p.decideT = 0;
+              p.facing = Math.atan2(34 - p.pos.y, team.oppGoalX() - p.pos.x);
+              p.target = { x: p.pos.x, y: p.pos.y };
+              p.callT = 0;
+            }
+          }
+          // the two kickoff protagonists stand exactly on their marks
+          for (const k of ['taker', 'helper']){
+            const p = r[k], t = p && r.plan && r.plan.get(p);
+            if (t){ p.pos.x = t.x; p.pos.y = t.y; }
+          }
+          if (g.broadcast) g.broadcast.event({ icon: 'kickoff', title: 'KICK OFF', sub: this.scoreLine(), dur: 2, pri: 1.2 });
+          g.commentate('kickoff', { half: this.half });
+          this.setState('KICKOFF');
+        }
+        break;
+      }
       case 'HALFTIME':
         if (this.stateT > 2.8){
           this.banner = '';
@@ -3173,27 +3451,68 @@ class Match {
     const s = Math.floor(this.tMatch % 60);
     return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
   }
-  setupKickoff(kickIdx){
+  // shared kickoff placement math: where all 22 (plus taker/helper) belong
+  kickoffPlan(kickIdx){
     const g = this.game;
     const kt = g.teams[kickIdx];
-    g.checkAutoSubs(); // subs first, so the entering player is PLACED by the loop below
-    g.ball.reset();
-    this.pendingFoul = null;
     const half = CFG.PITCH_L / 2, center = { x: half, y: 34 };
+    const targets = new Map();
     for (const team of g.teams){
       for (const p of team.players){
         const f = formationWorld(p);
         const ownGx = team.ownGoalX();
-        p.pos.x = ownGx + (f.x - ownGx) * 0.82;
-        p.pos.y = f.y;
+        let x = ownGx + (f.x - ownGx) * 0.82, y = f.y;
         // kickoff law: own half, outside the centre circle
-        p.pos.x = team.attackDir === 1 ? Math.min(p.pos.x, half - 1.5) : Math.max(p.pos.x, half + 1.5);
-        if (dist(p.pos, center) < CFG.CIRCLE + 0.6){
-          const away = norm(sub(p.pos, center));
-          p.pos.x = center.x + away.x * (CFG.CIRCLE + 0.6);
-          p.pos.y = clamp(34 + away.y * (CFG.CIRCLE + 0.6), 2, 66);
-          p.pos.x = team.attackDir === 1 ? Math.min(p.pos.x, half - 1.5) : Math.max(p.pos.x, half + 1.5);
+        x = team.attackDir === 1 ? Math.min(x, half - 1.5) : Math.max(x, half + 1.5);
+        if (dist({ x, y }, center) < CFG.CIRCLE + 0.6){
+          const away = norm(sub({ x, y }, center));
+          x = center.x + away.x * (CFG.CIRCLE + 0.6);
+          y = clamp(34 + away.y * (CFG.CIRCLE + 0.6), 2, 66);
+          x = team.attackDir === 1 ? Math.min(x, half - 1.5) : Math.max(x, half + 1.5);
         }
+        targets.set(p, { x, y });
+      }
+    }
+    const atts = kt.players.filter(p => p.line === 'ATT');
+    const mids = kt.players.filter(p => p.line === 'MID');
+    const outfield = kt.players.filter(p => !p.isGK);
+    const taker = atts[atts.length - 1] || mids[0] || outfield[outfield.length - 1];
+    let helper = mids[Math.floor(mids.length / 2)] || atts[0] || outfield[0];
+    if (helper === taker) helper = outfield.find(p => p !== taker) || taker;
+    if (taker) targets.set(taker, { x: CFG.PITCH_L / 2 - kt.attackDir * 0.9, y: 34 });
+    if (helper) targets.set(helper, { x: CFG.PITCH_L / 2 - kt.attackDir * 10.5, y: 30 });
+    return { targets, taker, helper, team: kt };
+  }
+  // after a goal: no teleports — both teams jog back into kickoff shape
+  beginKickoffReturn(kickIdx){
+    const g = this.game;
+    g.checkAutoSubs(); // subs walk on during the reorganization
+    g.ball.reset();
+    this.pendingFoul = null;
+    const plan = this.kickoffPlan(kickIdx);
+    const spTargets = new Map();
+    let far = 0;
+    for (const [p, t] of plan.targets){
+      if (p.isGK) continue; // keepers find their own way home via keeperThink
+      far = Math.max(far, dist(p.pos, t));
+      spTargets.set(p, { x: t.x, y: t.y, sw: clamp(dist(p.pos, t) / 22, 0.5, 0.95) });
+    }
+    this.restart = { type: 'KICKOFF', team: plan.team, spot: { x: CFG.PITCH_L / 2, y: 34 },
+      taker: plan.taker, helper: plan.helper, spTargets, plan: plan.targets,
+      force: clamp(1.6 + far / 6, 4, 9) }; // scoring celebrations start far from home
+    if (g.recorder) g.recorder.log('reset_start', { team: plan.team.id });
+    this.setState('RESET');
+  }
+  setupKickoff(kickIdx){
+    const g = this.game;
+    g.checkAutoSubs(); // subs first, so the entering player is PLACED by the loop below
+    g.ball.reset();
+    this.pendingFoul = null;
+    const plan = this.kickoffPlan(kickIdx);
+    for (const team of g.teams){
+      for (const p of team.players){
+        const t = plan.targets.get(p);
+        if (t){ p.pos.x = t.x; p.pos.y = t.y; }
         p.vel.x = p.vel.y = 0; p.slowT = 0; p.decision = { type:'dribble' };
         p.facing = Math.atan2(34 - p.pos.y, team.oppGoalX() - p.pos.x);
         p.target = { x: p.pos.x, y: p.pos.y };
@@ -3202,18 +3521,12 @@ class Match {
       }
     }
     g.ref.pos = { x: 48, y: 24 }; g.ref.vel = { x: 0, y: 0 }; g.ref.signalT = 0; g.ref.setAction('idle', 0);
-    const atts = kt.players.filter(p => p.line === 'ATT');
-    const mids = kt.players.filter(p => p.line === 'MID');
-    const outfield = kt.players.filter(p => !p.isGK);
-    const taker = atts[atts.length - 1] || mids[0] || outfield[outfield.length - 1];
-    let helper = mids[Math.floor(mids.length / 2)] || atts[0] || outfield[0];
-    if (helper === taker) helper = outfield.find(p => p !== taker) || taker;
-    taker.pos = { x: CFG.PITCH_L/2 - kt.attackDir * 0.9, y: 34 };
-    helper.pos = { x: CFG.PITCH_L/2 - kt.attackDir * 10.5, y: 30 };
-    this.restart = { type: 'KICKOFF', team: kt, spot: { x: CFG.PITCH_L/2, y: 34 }, taker, helper };
+    this.restart = { type: 'KICKOFF', team: plan.team, spot: { x: CFG.PITCH_L/2, y: 34 }, taker: plan.taker, helper: plan.helper };
     g.positionBenches();
-    g.announce('KICK OFF');
+    if (g.broadcast) g.broadcast.event({ icon: 'kickoff', title: 'KICK OFF',
+      sub: this.half === 2 ? 'second half' : this.scoreLine(), dur: 2.2, pri: 1.2 });
     g.commentate('kickoff', { half: this.half });
+    if (g.recorder) g.recorder.log('kickoff', { team: plan.team.id, half: this.half });
     this.setState('KICKOFF');
   }
   checkBallOut(){
@@ -3259,19 +3572,27 @@ class Match {
             }
           }
           g.commentate('goal', { p: scorer, a: assistP, team: scorerTeam, og });
-          if (g.fx) g.fx.play(new GoalCelebrationAnimation(g, og ? null : scorer, scorerTeam));
-          this.banner = 'GOAL!  ' + scorerTeam.name;
-          this.bannerSub = (this.goalScorer ? this.goalScorer.name + (og ? ' (o.g.)' : '') + '  ·  ' : '') + this.scoreLine();
+          // celebration runs on the SIM clock (see Game.update) so headless
+          // runs, live play and replays all reproduce the same positions
+          g.celebration = new GoalCelebrationAnimation(g, og ? null : scorer, scorerTeam);
+          if (g.broadcast) g.broadcast.event({
+            big: true, icon: 'goal', title: 'GOAL  ·  ' + scorerTeam.name,
+            sub: (this.goalScorer ? this.goalScorer.name + (og ? ' (own goal)' : '') + '  ·  ' : '') + Math.min(90, Math.floor(this.tMatch / 60) + 1) + "'",
+            right: this.scoreLine(), color: scorerTeam.kit.shirt, dur: 4.8, pri: 3,
+          });
           this.concededIdx = 1 - scorerTeam.idx;
+          if (g.recorder) g.recorder.log('goal', { actor: scorer ? scorer.pid : null,
+            assist: assistP ? assistP.pid : undefined, og: og || undefined,
+            team: scorerTeam.id, score: [...this.score] });
           this.flushFoulCards(); // the goal stands; a violent foul is still carded
           b.trail.length = 0;
-          g.announce('GOAL!');
           if (g.stadium) g.stadium.react('goal', scorerTeam);
           // celebration: scorer's nearby teammates
           for (const p of scorerTeam.players){
             if (this.goalScorer && dist(p.pos, this.goalScorer.pos) < 30) p.setAction('celebrate', 2.4);
           }
           this.setState('GOAL');
+          if (g.goalReplay) g.goalReplay.onGoal();
           return;
         }
       }
@@ -3318,6 +3639,9 @@ class Match {
   }
   beginRestart(type, team, spot){
     const g = this.game;
+    // cards first: a second-yellow send-off must leave the roster before the
+    // taker is chosen, or a dismissed player could be handed the ball
+    this.flushFoulCards();
     let taker;
     if (type === 'GOALKICK') taker = team.gk;
     else {
@@ -3331,7 +3655,6 @@ class Match {
     const r = { type, team, spot, taker };
     this.game.ball.intendedReceiver = null; // stale receivers must not steer duties or selection
     this.game.ball.holder = null;           // a same-frame keeper catch must not swallow the restart
-    this.flushFoulCards();                  // a pending advantage-window foul dies here (cards still given)
     if (this.game.offsideSys) this.game.offsideSys.watch = null; // dead ball ends the phase
     // SetPieceManager: staged positions for walls, runners and markers
     if (type === 'CORNER'){
@@ -3341,20 +3664,21 @@ class Match {
       const inw = gx === 0 ? 1 : -1;
       const dPool = ['inswing','inswing','outswing','nearpost','farpost','cutback','six'];
       if (team.tactics.style === 'possession') dPool.push('short', 'short');
-      r.delivery = dPool[(Math.random() * dPool.length) | 0];
+      r.delivery = dPool[(srand() * dPool.length) | 0];
       const nearY = 34 + (spot.y < 34 ? -3.2 : 3.2), farY = 34 + (spot.y < 34 ? 4.5 : -4.5);
       const spots2 = [
         { x: gx + inw * 5.5, y: nearY },              // near post
         { x: gx + inw * 7.5, y: farY },               // far post
         { x: gx + inw * 11, y: 34 },                  // penalty spot
         { x: gx + inw * 4.5, y: 34 },                 // six-yard chaos
-        { x: gx + inw * 19, y: 34 + (Math.random() - 0.5) * 8 }, // cutback edge
+        { x: gx + inw * 19, y: 34 + (srand() - 0.5) * 8 }, // cutback edge
       ];
       // tall, strong attackers hunt the aerial spots
       const att = team.players.filter(q => !q.isGK && q !== taker)
         .sort((a, b2) => (b2.a.strength + (b2.line === 'ATT' ? 0.3 : 0)) - (a.a.strength + (a.line === 'ATT' ? 0.3 : 0)));
       spots2.forEach((sp2, i) => { if (att[i]) r.spTargets.set(att[i], sp2); });
-      if (r.delivery === 'short' && att[5]){
+      if (att[5] && (r.delivery === 'short' || (this.game.humanMode && team === this.game.teams[0]))){
+        // human corners always stage the short man so the SHORT chip is real
         r.short = att[5];
         r.spTargets.set(att[5], { x: spot.x + inw * 6, y: spot.y < 34 ? spot.y + 7 : spot.y - 7 });
       }
@@ -3393,7 +3717,7 @@ class Match {
           r.spTargets.set(q, { x: spot.x + toGoal.x * 9.3 + perp.x * off, y: spot.y + toGoal.y * 9.3 + perp.y * off });
         });
         r.wall = defs2;
-        r.lying = dG < 22 && Math.random() < 0.4 ? defs2[defs2.length - 1] : null; // guards the low one
+        r.lying = dG < 22 && srand() < 0.4 ? defs2[defs2.length - 1] : null; // guards the low one
         // FreeKickSystem: runners on the far line, a short option, a decoy
         const runners = att2.players.filter(q => !q.isGK && q !== taker && (q.line === 'ATT' || q.a.strength > 0.62)).slice(0, 3);
         runners.forEach((q, i) => r.spTargets.set(q, { x: gxA + (gxA === 0 ? 1 : -1) * (7.5 + i * 2.5), y: 29 + i * 4.5 }));
@@ -3404,23 +3728,78 @@ class Match {
         this.game.ref.target = { x: clamp(spot.x + toGoal.x * 5, 2, 103), y: clamp(spot.y + perp.y * 3, 2, 66) };
       }
     }
+    // TacticalPositioningSystem: choreography for every restart type
+    if (type === 'THROWIN') TacticalPositioningSystem.stageThrowIn(r, this.game);
+    if (type === 'GOALKICK') TacticalPositioningSystem.stageGoalKick(r, this.game);
+    if (type === 'CORNER') TacticalPositioningSystem.stageCornerExtras(r, this.game);
+    if (type === 'FREEKICK') TacticalPositioningSystem.stageFreeKickExtras(r, this.game);
+    // RestartState pacing: broadcast-length pauses with a hard force-resume
+    // (the force timer keeps headless __simulate runs moving no matter what)
+    r.wait = { THROWIN: 1.6, GOALKICK: 2.1, CORNER: 3.2, FREEKICK: r.shooting ? 3.4 : 2.2 }[type];
+    // players with unreasonably long journeys keep their normal shape instead
+    // of sprinting across the whole pitch for one ceremony
+    if (r.spTargets){
+      for (const [p, sp] of [...r.spTargets]){
+        if (dist(p.pos, sp) > 38){
+          r.spTargets.delete(p);
+          if (r.spTargets2) r.spTargets2.delete(p);
+          if (r.wall) r.wall = r.wall.filter(q => q !== p);
+          for (const k of ['lying', 'decoy', 'short', 'shortTo'])
+            if (r[k] === p) r[k] = null; // a pruned body loses its routine role too
+        }
+      }
+    }
+    // the force timer scales with the longest journey — enough time to jog
+    // over, but the ceremony stays broadcast-short (≈2-5s per event)
+    let far = dist(taker.pos, spot);
+    if (r.spTargets) for (const [p, sp] of r.spTargets) far = Math.max(far, dist(p.pos, sp) * 0.8);
+    r.force = r.wait + clamp(far / 6.5, 1.6, 3.6);
+    if (r.spTargets2) r.swapT = Math.max(0.8, r.wait - 0.8);
+    // the taker waits at a run-up mark behind the ball
+    const sbDir = type === 'THROWIN'
+      ? { x: 0, y: spot.y < 34 ? -1 : 1 }
+      : norm(sub(spot, { x: team.oppGoalX(), y: 34 }));
+    r.standback = { x: clamp(spot.x + sbDir.x * 2.4, -2, CFG.PITCH_L + 2),
+                    y: clamp(spot.y + sbDir.y * 2.4, -2, CFG.PITCH_W + 2) };
+    // a human coach takes their own set pieces
+    r.humanTaker = this.game.humanMode && team === this.game.teams[0];
+    if (r.humanTaker){
+      this.game.selected = r.taker;
+      r.force = r.wait + 8;
+      // a release recorded before the whistle must not auto-fire the restart
+      r.startedAt = performance.now();
+      g.input.passReleased = null; g.input.shootReleased = null;
+      this.game.takeRequested = false; this.game.takeShoot = false;
+    }
     this.restart = r;
     g.checkAutoSubs(); // dead ball: a natural moment for AI benches to act
     const label = { THROWIN:'THROW-IN', CORNER:'CORNER KICK', GOALKICK:'GOAL KICK', FREEKICK:'FREE KICK' }[type];
-    if (label) g.announce(label);
+    if (label && g.broadcast){
+      const icon = { THROWIN:'throwin', CORNER:'corner', GOALKICK:'goalkick', FREEKICK:'freekick' }[type];
+      let sub = team.name;
+      if (type === 'CORNER') sub = taker.name + ' · ' + team.code;
+      if (type === 'FREEKICK') sub = taker.name + ' · ' + team.code + (r.shooting ? ' · shooting range' : '');
+      g.broadcast.event({ icon, title: label, sub, color: team.kit.shirt, dur: 2.8, pri: 1.5 });
+    }
     if (type === 'CORNER' || type === 'THROWIN' || type === 'GOALKICK')
       g.commentate(type.toLowerCase().replace('goalkick', 'goalkick'), { team });
     if (type === 'THROWIN') g.counts.throwin++;
     if (type === 'CORNER'){ g.counts.corner++; if (g.stadium) g.stadium.react('corner', team); }
     if (type === 'GOALKICK') g.counts.goalkick++;
     if (type === 'FREEKICK') g.counts.freekick++;
+    if (g.recorder) g.recorder.log('restart', { kind: type, team: team.id, position: EventSerializer.pos(spot),
+      actor: taker.pid, delivery: r.delivery, shooting: !!r.shooting });
     this.setState(type);
   }
   executeRestart(){
     const g = this.game, r = this.restart, b = g.ball;
+    if (g.recorder) g.recorder.log('restart_taken', { kind: r.type, actor: r.taker.pid,
+      choice: r.humanChoice || r.delivery || undefined });
     const team = r.team, taker = r.taker;
     b.x = r.spot.x; b.y = r.spot.y;
     if (r.type === 'THROWIN'){
+      // ThrowInRoutineSystem: weigh safe, progressive and risky options —
+      // lane safety vs field progression, tilted by team risk appetite
       let best = null, bs = -1;
       const maxThrow = Math.min(26, groundedPassLimit() + 6);
       for (const m of team.players){
@@ -3428,7 +3807,12 @@ class Match {
         const dm = dist(taker.pos, m.pos);
         if (dm < 4 || dm > maxThrow) continue;
         const infield = 1 - Math.abs(m.pos.y - 34) / 40;
-        const s = laneClear(taker.pos, m.pos, g.other(team).players, 0) * 0.6 + infield * 0.4 + Math.random() * 0.15;
+        const lane = laneClear(taker.pos, m.pos, g.other(team).players, 0);
+        const prog = clamp((m.pos.x - taker.pos.x) * team.attackDir / 22, -1, 1);
+        let s = lane * 0.5 + infield * 0.22 + srand() * 0.15;
+        s += prog * (0.1 + team.tactics.risk * 0.22);
+        if (r.humanChoice === 'attack') s += prog * 0.4;
+        if (r.humanChoice === 'safe') s += lane * 0.35 - Math.max(0, prog) * 0.25;
         if (s > bs){ bs = s; best = m; }
       }
       const tgt = best ? best.pos : { x: clamp(taker.pos.x + team.attackDir * 8, 2, 103), y: 34 };
@@ -3441,7 +3825,9 @@ class Match {
       const inward = gx === 0 ? 1 : -1;
       const inCurl = (r.spot.y < 34 ? 1 : -1) * inward * 2.2;
       const nearY = 34 + (r.spot.y < 34 ? -3 : 3), farY = 34 + (r.spot.y < 34 ? 4.5 : -4.5);
-      const dl = r.delivery || 'inswing';
+      let dl = r.delivery || 'inswing';
+      if (r.humanChoice === 'safe' && r.short) dl = 'short';
+      else if (r.humanChoice === 'attack' && dl === 'short') dl = 'inswing';
       let tx, ty, spin = inCurl, low = false;
       if (dl === 'short' && r.short){
         doKick(taker, g, { type:'pass', tx: r.short.pos.x, ty: r.short.pos.y,
@@ -3451,19 +3837,35 @@ class Match {
       if (dl === 'nearpost'){ tx = gx + inward * 5.5; ty = nearY; }
       else if (dl === 'farpost'){ tx = gx + inward * 8; ty = farY; }
       else if (dl === 'six'){ tx = gx + inward * 4.5; ty = 34; }
-      else if (dl === 'cutback'){ tx = gx + inward * 18; ty = 34 + (Math.random() - 0.5) * 6; low = true; spin = 0; }
+      else if (dl === 'cutback'){ tx = gx + inward * 18; ty = 34 + (srand() - 0.5) * 6; low = true; spin = 0; }
       else if (dl === 'outswing'){ tx = gx + inward * 10.5; ty = 34; spin = -inCurl; }
-      else { tx = gx + inward * (7 + Math.random() * 4); ty = 34 + (Math.random() - 0.5) * 6; }
+      else { tx = gx + inward * (7 + srand() * 4); ty = 34 + (srand() - 0.5) * 6; }
       const d = dist(r.spot, { x: tx, y: ty });
       const l = loftFor(d);
       doKick(taker, g, { type:'pass', cross: !low, tx, ty,
         speed: low ? 16 : l.vh, vz: low ? 0.8 : l.vz, spin, sigma: 0.09 });
     } else if (r.type === 'GOALKICK'){
-      const tx = team.ownGoalX() + team.attackDir * (46 + Math.random() * 12);
-      const ty = Math.random() < 0.5 ? 12 : 56;
-      const d = dist(r.spot, { x: tx, y: ty });
-      const l = loftFor(d);
-      doKick(taker, g, { type:'pass', tx, ty, speed: l.vh, vz: l.vz, sigma: 0.13 });
+      // GoalKickRoutineSystem: play out short when the style suits and the
+      // press allows; otherwise launch it long to the second-ball zone
+      const gxO = team.ownGoalX();
+      const oppNear = g.other(team).players.filter(o => Math.abs(o.pos.x - gxO) < 32).length;
+      const wantShort = r.humanChoice === 'safe' ||
+        (r.humanChoice !== 'attack' && r.shortTo && team.players.includes(r.shortTo) &&
+         team.tactics.style === 'possession' && oppNear < 4 && srand() < 0.7);
+      if (wantShort && r.shortTo && team.players.includes(r.shortTo)){
+        doKick(taker, g, { type:'pass', tx: r.shortTo.pos.x, ty: r.shortTo.pos.y,
+          speed: groundPassSpeed(dist(r.spot, r.shortTo.pos)), vz: 0, sigma: 0.05, receiver: r.shortTo });
+      } else {
+        // launch toward a staged second-ball body when the shape exists
+        const staged = r.spTargets
+          ? [...r.spTargets].filter(([p]) => p.team === team && p.line === 'ATT').map(([, sp]) => sp) : [];
+        const aim = staged.length ? staged[(srand() * staged.length) | 0] : null;
+        const tx = aim ? aim.x - team.attackDir * 2 : gxO + team.attackDir * (46 + srand() * 12);
+        const ty = aim ? aim.y : (srand() < 0.5 ? 12 : 56);
+        const d = dist(r.spot, { x: tx, y: ty });
+        const l = loftFor(d);
+        doKick(taker, g, { type:'pass', tx, ty, speed: l.vh, vz: l.vz, sigma: 0.13 });
+      }
     } else if (r.type === 'FREEKICK'){
       const gx = team.oppGoalX();
       const dGoal = dist(r.spot, { x: gx, y: 34 });
@@ -3476,7 +3878,9 @@ class Match {
           { k: 'chip', w: r.decoy ? 0.5 + t2.a.passing * 0.6 : 0 },
           { k: 'short', w: r.short ? (team.tactics.style === 'possession' ? 0.9 : 0.35) : 0 },
         ];
-        let tot = opts2.reduce((a, o) => a + o.w, 0), pickR = Math.random() * tot, choice = 'curl';
+        if (r.humanChoice === 'attack') for (const o of opts2){ if (o.k === 'chip' || o.k === 'short') o.w = 0; }
+        if (r.humanChoice === 'safe') for (const o of opts2){ if (o.k === 'curl' || o.k === 'low') o.w *= 0.12; }
+        let tot = opts2.reduce((a, o) => a + o.w, 0), pickR = srand() * tot, choice = 'curl';
         for (const o of opts2){ pickR -= o.w; if (pickR <= 0){ choice = o.k; break; } }
         const curl = (r.spot.y < 34 ? -1 : 1) * (gx === 0 ? -1 : 1) * 2.6;
         const isShot = choice === 'curl' || choice === 'low';
@@ -3505,8 +3909,8 @@ class Match {
             q.wallJumpT = 0.5;
           }
         }
-      } else if (dGoal < 45){
-        const tx = gx + (gx === 0 ? 9 : -9), ty = 34 + (Math.random() - 0.5) * 10;
+      } else if (dGoal < 45 && r.humanChoice !== 'safe'){
+        const tx = gx + (gx === 0 ? 9 : -9), ty = 34 + (srand() - 0.5) * 10;
         const d = dist(r.spot, { x: tx, y: ty });
         const l = loftFor(d);
         doKick(taker, g, { type:'pass', cross:true, tx, ty, speed: l.vh, vz: l.vz, spin: 0, sigma: 0.11 });
@@ -3516,7 +3920,10 @@ class Match {
           if (m === taker || m.isGK) continue;
           const dm = dist(taker.pos, m.pos);
           if (dm < 5 || dm > 35) continue;
-          const s = laneClear(taker.pos, m.pos, g.other(team).players, 0) + Math.random() * 0.2;
+          const prog = clamp((m.pos.x - taker.pos.x) * team.attackDir / 22, -1, 1);
+          let s = laneClear(taker.pos, m.pos, g.other(team).players, 0) + srand() * 0.2;
+          if (r.humanChoice === 'attack') s += prog * 0.5;
+          if (r.humanChoice === 'safe') s -= Math.max(0, prog) * 0.3;
           if (s > bs){ bs = s; best = m; }
         }
         const tgt = best ? best.pos : { x: taker.pos.x + team.attackDir * 12, y: 34 };
@@ -3530,6 +3937,201 @@ class Match {
       }
     }
     this.restart = null;
+  }
+}
+
+/* ----------------------- UI THEME & BROADCAST OVERLAY ---------------------- */
+// UITheme: the broadcast interface language in one place — type, glass fills,
+// accents, rounded geometry. Every piece of screen-space UI reads from here.
+const UITheme = {
+  sans: (w, s) => w + ' ' + s + 'px -apple-system, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+  mono: (w, s) => w + ' ' + s + 'px ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  ink: '#f2f6fa', mid: '#c3d0da', dim: '#8fa1af', faint: '#66757f',
+  accent: '#ffd257', good: '#46c878', bad: '#e25948', warn: '#e8c23a',
+  glassTop: 'rgba(17,22,30,0.86)', glassBot: 'rgba(9,12,17,0.74)',
+  edge: 'rgba(255,255,255,0.10)', edgeSoft: 'rgba(255,255,255,0.06)',
+  shadow: 'rgba(0,0,0,0.38)',
+};
+function rrPath(ctx, x, y, w, h, r){
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+// the standard translucent panel: vertical gradient, hairline edge, soft drop
+function glassPanel(ctx, x, y, w, h, r, opts = {}){
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, opts.top || UITheme.glassTop);
+  g.addColorStop(1, opts.bot || UITheme.glassBot);
+  rrPath(ctx, x, y, w, h, r);
+  if (opts.blur){
+    ctx.save();
+    ctx.shadowColor = UITheme.shadow; ctx.shadowBlur = opts.blur; ctx.shadowOffsetY = 2;
+    ctx.fillStyle = g; ctx.fill();
+    ctx.restore();
+  } else { ctx.fillStyle = g; ctx.fill(); }
+  ctx.strokeStyle = opts.edge || UITheme.edge; ctx.lineWidth = 1;
+  rrPath(ctx, x + 0.5, y + 0.5, w - 1, h - 1, r);
+  ctx.stroke();
+}
+function hexA(hex, a){
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeOutBack = t => { const c = 1.7; t -= 1; return 1 + t * t * ((c + 1) * t + c); };
+
+// BroadcastOverlay + EventBanner: TV-style event graphics. One banner at a
+// time (a small queue behind it), drawn in screen space from drawHUD on the
+// render clock — headless __simulate never draws, and nothing gates on it.
+class BroadcastOverlay {
+  constructor(game){ this.game = game; this.cur = null; this.queue = []; }
+  clear(){ this.cur = null; this.queue.length = 0; }
+  // spec: { title, sub?, right?, icon?, iconColor?, color?, big?, dur?, pri? }
+  event(spec){
+    if (this.game.replayMode) return;
+    spec.dur = spec.dur || 2.7; spec.pri = spec.pri || 1;
+    const t = this.game.animT;
+    if (this.cur && t < this.cur.t0 + this.cur.dur){
+      if (spec.pri >= this.cur.pri){
+        // preempt: rush the current banner out, show this one next
+        this.cur.dur = Math.min(this.cur.dur, t - this.cur.t0 + 0.22);
+        this.queue.length = 0;
+        this.queue.push(spec);
+      } else if (this.queue.length < 2) this.queue.push(spec);
+    } else this.start(spec);
+  }
+  start(spec){ spec.t0 = this.game.animT; this.cur = spec; }
+  draw(r){
+    const t = this.game.animT;
+    if (this.cur && t > this.cur.t0 + this.cur.dur) this.cur = null;
+    if (!this.cur && this.queue.length) this.start(this.queue.shift());
+    if (!this.cur) return;
+    if (this.cur.big) this.drawBand(r, this.cur);
+    else this.drawPill(r, this.cur);
+  }
+  drawPill(r, b){
+    const ctx = r.ctx, W = r.W, t = this.game.animT;
+    const kIn = easeOutCubic(clamp((t - b.t0) / 0.3, 0, 1));
+    const kOut = easeOutCubic(clamp((b.t0 + b.dur - t) / 0.26, 0, 1));
+    ctx.font = UITheme.sans('700', 13);
+    const tw = ctx.measureText(b.title).width;
+    ctx.font = UITheme.sans('500', 12);
+    const sw = b.sub ? ctx.measureText(b.sub).width + 13 : 0;
+    const iw = b.icon ? 24 : 0;
+    const h = 32, w = Math.min((b.color ? 18 : 14) + iw + tw + sw + 16, W - 20);
+    const x = (W - w) / 2;
+    const yBase = W < 720 ? 92 : 46; // clear of the ticker pills on phones
+    const y = yBase - (1 - kIn) * 15 - (1 - kOut) * 8;
+    ctx.globalAlpha = Math.min(kIn, kOut);
+    glassPanel(ctx, x, y, w, h, h / 2, { blur: 12 });
+    ctx.save();
+    rrPath(ctx, x, y, w, h, h / 2); ctx.clip(); // long text stays inside the pill
+    let cx = x + 14;
+    if (b.color){
+      ctx.fillStyle = b.color;
+      rrPath(ctx, x + 8, y + 8, 4, h - 16, 2); ctx.fill();
+      cx = x + 18;
+    }
+    if (b.icon){ this.icon(ctx, b.icon, cx + 8, y + h / 2, b.iconColor || b.color || UITheme.accent); cx += iw; }
+    ctx.textBaseline = 'middle';
+    ctx.font = UITheme.sans('700', 13); ctx.fillStyle = UITheme.ink;
+    ctx.fillText(b.title, cx, y + h / 2 + 0.5); cx += tw + 13;
+    if (b.sub){ ctx.font = UITheme.sans('500', 12); ctx.fillStyle = UITheme.dim; ctx.fillText(b.sub, cx, y + h / 2 + 0.5); }
+    ctx.restore();
+    ctx.textBaseline = 'top';
+    ctx.globalAlpha = 1;
+  }
+  drawBand(r, b){
+    const ctx = r.ctx, W = r.W, t = this.game.animT;
+    const kIn = easeOutBack(clamp((t - b.t0) / 0.38, 0, 1));
+    const kOut = easeOutCubic(clamp((b.t0 + b.dur - t) / 0.3, 0, 1));
+    const w = Math.min(W - 16, 600), h = 56;
+    const x = (W - w) / 2;
+    const yBase = W < 720 ? 92 : 42;
+    const y = yBase - (1 - kIn) * 26 - (1 - kOut) * 10;
+    ctx.globalAlpha = Math.min(clamp((t - b.t0) / 0.2, 0, 1), kOut);
+    glassPanel(ctx, x, y, w, h, 13, { blur: 18 });
+    if (b.color){
+      const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+      grad.addColorStop(0, hexA(b.color, 0.5));
+      grad.addColorStop(0.45, hexA(b.color, 0.1));
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      rrPath(ctx, x, y, w, h, 13); ctx.fillStyle = grad; ctx.fill();
+    }
+    if (b.icon) this.icon(ctx, b.icon, x + 24, y + h / 2, '#ffffff');
+    ctx.textBaseline = 'middle';
+    ctx.font = UITheme.sans('800', 23); ctx.fillStyle = UITheme.ink;
+    ctx.fillText(b.title, x + 44, y + h / 2 - 10);
+    if (b.sub){
+      ctx.font = UITheme.sans('600', 13); ctx.fillStyle = UITheme.mid;
+      ctx.fillText(b.sub, x + 45, y + h / 2 + 13);
+    }
+    if (b.right){
+      ctx.font = UITheme.mono('700', 20); ctx.fillStyle = UITheme.ink;
+      ctx.fillText(b.right, x + w - ctx.measureText(b.right).width - 20, y + h / 2 + 0.5);
+    }
+    ctx.textBaseline = 'top';
+    ctx.globalAlpha = 1;
+  }
+  // tiny vector glyphs, ~16px, centered on (cx, cy)
+  icon(ctx, kind, cx, cy, color){
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.lineWidth = 1.7; ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    switch (kind){
+      case 'corner':
+        ctx.beginPath(); ctx.moveTo(-4, 8); ctx.lineTo(-4, -8); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-4, -8); ctx.lineTo(6, -4.8); ctx.lineTo(-4, -1.6); ctx.closePath(); ctx.fill();
+        break;
+      case 'freekick':
+        ctx.beginPath(); ctx.arc(-6.5, 3.5, 2.6, 0, 7); ctx.fill();
+        rrPath(ctx, 0.5, -6.5, 3.6, 11, 1.4); ctx.fill();
+        rrPath(ctx, 5.1, -6.5, 3.6, 11, 1.4); ctx.fill();
+        break;
+      case 'throwin':
+        ctx.beginPath(); ctx.arc(0, -4.8, 2.9, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-3.6, 6); ctx.lineTo(-1.6, -1); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(3.6, 6); ctx.lineTo(1.6, -1); ctx.stroke();
+        break;
+      case 'goalkick':
+        ctx.beginPath(); ctx.moveTo(-7, 6); ctx.lineTo(-7, -5); ctx.lineTo(7, -5); ctx.lineTo(7, 6); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 3, 2.4, 0, 7); ctx.fill();
+        break;
+      case 'goal':
+        ctx.beginPath(); ctx.arc(0, 0, 6, 0, 7); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, 2.1, 0, 7); ctx.fill();
+        break;
+      case 'card':
+        ctx.rotate(-0.16);
+        rrPath(ctx, -4.5, -7, 9, 13, 1.6); ctx.fill();
+        break;
+      case 'sub':
+        ctx.fillStyle = UITheme.good;
+        ctx.beginPath(); ctx.moveTo(-4.5, -1.5); ctx.lineTo(-8.5, 4.5); ctx.lineTo(-0.5, 4.5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = UITheme.bad;
+        ctx.beginPath(); ctx.moveTo(4.5, 1.5); ctx.lineTo(0.5, -4.5); ctx.lineTo(8.5, -4.5); ctx.closePath(); ctx.fill();
+        break;
+      case 'offside':
+        ctx.beginPath(); ctx.moveTo(2.5, 8); ctx.lineTo(2.5, -8); ctx.stroke();
+        rrPath(ctx, -6.5, -8, 9, 6, 1); ctx.fill();
+        break;
+      case 'kickoff':
+        ctx.beginPath(); ctx.arc(0, 0, 5.4, 0, 7); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-8.5, 0); ctx.lineTo(-5.4, 0); ctx.moveTo(5.4, 0); ctx.lineTo(8.5, 0); ctx.stroke();
+        ctx.beginPath(); ctx.arc(0, 0, 1.5, 0, 7); ctx.fill();
+        break;
+      case 'whistle':
+        ctx.beginPath(); ctx.arc(-1, 2, 4.4, 0, 7); ctx.fill();
+        rrPath(ctx, -1, -4.5, 9, 4, 1.6); ctx.fill();
+        break;
+    }
+    ctx.restore();
   }
 }
 
@@ -3789,17 +4391,28 @@ class Renderer {
   frame(game){
     const ctx = this.ctx, W = this.W, H = this.H;
     const b = game.ball;
-    // camera: follow a chosen player if the profile FOLLOW toggle is on
+    // camera: replay cinematics override; else follow player/ball as usual
+    const rc = game.replayCam;
     const fp = game.followPlayer;
-    const bp = fp ? project(lerp(fp.pos.x, b.x, 0.3), lerp(fp.pos.y, b.y, 0.3), 0) : project(b.x, b.y, 0);
-    const lead = fp ? bp : project(b.x + b.vx * 0.3, b.y + b.vy * 0.3, 0);
-    const tx = lerp(bp.x, lead.x, 0.5), ty = lerp(bp.y, lead.y, 0.5);
-    this.cam.x = lerp(this.cam.x, tx, 0.06);
-    this.cam.y = lerp(this.cam.y, ty, 0.06);
+    let tx, ty, camK = 0.06;
+    if (rc){
+      const s = project(rc.target.x, rc.target.y, 0);
+      tx = s.x; ty = s.y; camK = rc.lerp || 0.08;
+    } else {
+      const bp = fp ? project(lerp(fp.pos.x, b.x, 0.3), lerp(fp.pos.y, b.y, 0.3), 0) : project(b.x, b.y, 0);
+      const lead = fp ? bp : project(b.x + b.vx * 0.3, b.y + b.vy * 0.3, 0);
+      tx = lerp(bp.x, lead.x, 0.5); ty = lerp(bp.y, lead.y, 0.5);
+    }
+    this.cam.x = lerp(this.cam.x, tx, camK);
+    this.cam.y = lerp(this.cam.y, ty, camK);
     const ox = Math.round(W / 2 - this.cam.x);
     const oy = Math.round(H / 2 - this.cam.y + 12);
     this.lastOx = ox; this.lastOy = oy; // for click hit-testing
     ctx.fillStyle = '#23292e'; ctx.fillRect(0, 0, W, H);
+    if (rc){ // cinematic zoom about the screen centre
+      ctx.save();
+      ctx.translate(W / 2, H / 2); ctx.scale(rc.zoom, rc.zoom); ctx.translate(-W / 2, -H / 2);
+    }
     ctx.drawImage(this.bg, ox - this.bgOrigin.x, oy - this.bgOrigin.y);
     this.drawPitchLines(ctx, ox, oy);
     if (game.stadium) game.stadium.drawCrowd(ctx, ox, oy); // living crowd, roofs, ad boards
@@ -3828,6 +4441,24 @@ class Renderer {
       ctx.strokeStyle = game.followPlayer === p ? '#ffe24a' : 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.ellipse(s.x + ox, s.y + oy, 10 * pulse, 5 * pulse, 0, 0, 7); ctx.stroke();
+    }
+    // script debug highlight: active actor (accent) and target (white)
+    const sr = game.scriptRunner;
+    if (sr && sr.active && sr.t() < sr.active.until){
+      for (const [pl, col] of [[sr.active.actor, UITheme.accent], [sr.active.target, '#ffffff']]){
+        if (!pl) continue;
+        const s = project(pl.pos.x, pl.pos.y, 0);
+        ctx.strokeStyle = col; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(s.x + ox, s.y + oy, 11, 5.5, 0, 0, 7); ctx.stroke();
+      }
+      if (sr.active.actor && sr.active.target){
+        const a = project(sr.active.actor.pos.x, sr.active.actor.pos.y, 0);
+        const b2 = project(sr.active.target.pos.x, sr.active.target.pos.y, 0);
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath(); ctx.moveTo(a.x + ox, a.y + oy); ctx.lineTo(b2.x + ox, b2.y + oy); ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
     // depth-sorted entities
     const ents = [];
@@ -3903,6 +4534,12 @@ class Renderer {
         ctx.fillRect(s.x + ox - 11, s.y + oy - 5, Math.round(22 * pw), 3);
       }
     }
+    if (rc) ctx.restore();
+    // brief fade returning from a replay to live coverage
+    if (game.replayFadeT !== undefined && game.animT - game.replayFadeT < 0.4){
+      ctx.fillStyle = 'rgba(0,0,0,' + (0.8 * (1 - (game.animT - game.replayFadeT) / 0.4)).toFixed(2) + ')';
+      ctx.fillRect(0, 0, this.W, this.H);
+    }
     this.drawWeather(game);
     this.drawHUD(game);
     if (game.debug) this.drawDebug(game, ox, oy);
@@ -3958,78 +4595,124 @@ class Renderer {
     const m = game.match;
     game.ui.zones.length = 0; // fresh hit-zones every frame
     ctx.textBaseline = 'top';
-    ctx.font = 'bold 14px monospace';
-    const txt = ' ' + game.teams[0].code + ' ' + m.score[0] + '-' + m.score[1] + ' ' + game.teams[1].code + '  ' + m.clock() + ' ' + (m.half === 1 ? '1ST' : '2ND') + ' ';
-    const w = ctx.measureText(txt).width + 22;
-    ctx.fillStyle = 'rgba(8,12,16,0.72)'; ctx.fillRect(6, 6, w, 21);
-    ctx.fillStyle = game.teams[0].kit.shirt; ctx.fillRect(10, 10, 8, 13);
-    ctx.fillStyle = game.teams[1].kit.shirt; ctx.fillRect(w - 8, 10, 8, 13);
-    ctx.fillStyle = '#f0f0e8'; ctx.fillText(txt, 18, 11);
-    // possession chip
-    let cx2 = w + 12;
+    /* ---- score bug (broadcast style) ---- */
+    const bugX = 8, bugY = 8, bugH = 30;
+    const code0 = game.teams[0].code, code1 = game.teams[1].code;
+    const sc = m.score[0] + ' - ' + m.score[1];
+    ctx.font = UITheme.sans('800', 14);
+    const cw0 = ctx.measureText(code0).width, cw1 = ctx.measureText(code1).width, scW = ctx.measureText(sc).width;
+    ctx.font = UITheme.mono('700', 12);
+    const ck = m.clock(), ckW = ctx.measureText(ck).width;
+    const halfTxt = m.half === 1 ? '1ST' : '2ND';
+    ctx.font = UITheme.sans('700', 10);
+    const hfW = ctx.measureText(halfTxt).width;
+    const bugW = 23 + cw0 + 10 + scW + 10 + cw1 + 25 + ckW + 8 + hfW + 12;
+    glassPanel(ctx, bugX, bugY, bugW, bugH, 9);
+    const cyd = bugY + bugH / 2 + 0.5;
+    ctx.textBaseline = 'middle';
+    let bx2 = bugX + 10;
+    ctx.fillStyle = game.teams[0].kit.shirt; rrPath(ctx, bx2, bugY + 8, 5, bugH - 16, 2); ctx.fill(); bx2 += 13;
+    ctx.font = UITheme.sans('800', 14); ctx.fillStyle = UITheme.ink;
+    ctx.fillText(code0, bx2, cyd); bx2 += cw0 + 10;
+    ctx.fillText(sc, bx2, cyd); bx2 += scW + 10;
+    ctx.fillText(code1, bx2, cyd); bx2 += cw1 + 8;
+    ctx.fillStyle = game.teams[1].kit.shirt; rrPath(ctx, bx2, bugY + 8, 5, bugH - 16, 2); ctx.fill(); bx2 += 17;
+    ctx.font = UITheme.mono('700', 12); ctx.fillStyle = UITheme.mid;
+    ctx.fillText(ck, bx2, cyd); bx2 += ckW + 8;
+    ctx.font = UITheme.sans('700', 10); ctx.fillStyle = UITheme.faint;
+    ctx.fillText(halfTxt, bx2, cyd + 0.5);
+    /* ---- possession + tracked-player chips ---- */
+    let cx2 = bugX + bugW + 8;
     const pt = game.possessionTeam();
     if (pt){
-      ctx.fillStyle = 'rgba(8,12,16,0.72)'; ctx.fillRect(cx2, 6, 68, 21);
-      ctx.fillStyle = pt.kit.shirt; ctx.fillRect(cx2 + 6, 10, 8, 13);
-      ctx.fillStyle = '#c8d8e0'; ctx.fillText(pt.code, cx2 + 20, 11);
-      cx2 += 74;
+      ctx.font = UITheme.sans('700', 11);
+      const pw2 = ctx.measureText(pt.code).width + 30;
+      if (cx2 + pw2 < W - 8){
+        glassPanel(ctx, cx2, bugY + 3, pw2, bugH - 6, 8);
+        ctx.fillStyle = pt.kit.shirt;
+        ctx.beginPath(); ctx.arc(cx2 + 12, bugY + bugH / 2, 4, 0, 7); ctx.fill();
+        ctx.fillStyle = UITheme.dim; ctx.fillText(pt.code, cx2 + 20, cyd);
+        cx2 += pw2 + 6;
+      }
     }
     // ball-carrier chip (T or click a player for full stats)
     const tracked = game.trackPlayer() || game.ball.lastToucher;
     if (tracked){
       const live = !!game.trackPlayer();
+      ctx.font = UITheme.sans('600', 11);
       const label = '#' + tracked.num + ' ' + tracked.name;
-      const cw = ctx.measureText(label).width + 36;
+      const cw = ctx.measureText(label).width + 30;
       if (cx2 + cw < W - 190){ // skip on narrow windows so it can't hit the env chip
-        ctx.fillStyle = 'rgba(8,12,16,0.72)'; ctx.fillRect(cx2, 6, cw, 21);
+        glassPanel(ctx, cx2, bugY + 3, cw, bugH - 6, 8);
         ctx.fillStyle = tracked.team.kit.shirt;
-        ctx.beginPath(); ctx.arc(cx2 + 14, 16.5, 5.5, 0, 7); ctx.fill();
-        ctx.fillStyle = live ? '#f0f0e8' : '#8a98a4';
-        ctx.fillText(label, cx2 + 25, 11);
+        ctx.beginPath(); ctx.arc(cx2 + 12, bugY + bugH / 2, 4, 0, 7); ctx.fill();
+        ctx.fillStyle = live ? UITheme.ink : UITheme.faint;
+        ctx.fillText(label, cx2 + 20, cyd);
       }
     }
     // pitch/weather chip, top-right (desktop only — no room on phones)
     if (W >= 720){
-      ctx.font = 'bold 12px monospace';
+      ctx.font = UITheme.sans('600', 11);
       const envTxt = ENV.grass.label + ' · ' + ENV.weather.label;
-      const ew = ctx.measureText(envTxt).width + 16;
-      ctx.fillStyle = 'rgba(8,12,16,0.6)'; ctx.fillRect(W - ew - 6, 6, ew, 19);
-      ctx.fillStyle = '#9ab0be'; ctx.fillText(envTxt, W - ew + 2, 10);
+      const ew = ctx.measureText(envTxt).width + 20;
+      glassPanel(ctx, W - ew - 8, bugY + 3, ew, bugH - 6, 8);
+      ctx.fillStyle = UITheme.faint; ctx.fillText(envTxt, W - ew + 2, cyd);
     }
-    // event ticker
-    ctx.font = 'bold 13px monospace';
+    ctx.textBaseline = 'top';
+    /* ---- broadcast replay: the truck owns the screen ---- */
+    if (game.goalReplay && game.goalReplay.playing){
+      BroadcastReplayOverlay.draw(this, game);
+      return;
+    }
+    /* ---- event ticker (minor events — headline events use the broadcast layer) */
     const now = game.animT;
     game.events = game.events.filter(e => e.until > now);
-    let ey = 33;
+    let ey = bugY + bugH + 8;
+    // a live centered banner owns the y=46 band on desktop — duck under it
+    const bc = game.broadcast && game.broadcast.cur;
+    if (W >= 720 && bc && now < bc.t0 + bc.dur) ey = bc.big ? 106 : 84;
+    ctx.font = UITheme.sans('600', 11);
     for (const e of game.events.slice(-2)){
       const alpha = clamp((e.until - now) / 0.5, 0, 1);
-      ctx.globalAlpha = alpha;
+      ctx.globalAlpha = alpha * 0.94;
       const tw = ctx.measureText(e.text).width;
-      ctx.fillStyle = 'rgba(8,12,16,0.72)'; ctx.fillRect(6, ey, tw + 20, 18);
-      ctx.fillStyle = '#ffe24a'; ctx.fillRect(6, ey, 3, 18);
-      ctx.fillStyle = '#f0f0e8'; ctx.fillText(e.text, 16, ey + 3);
+      glassPanel(ctx, bugX, ey, tw + 26, 21, 7);
+      ctx.fillStyle = UITheme.accent; rrPath(ctx, bugX + 7, ey + 5.5, 3, 10, 1.5); ctx.fill();
+      ctx.fillStyle = UITheme.mid; ctx.fillText(e.text, bugX + 16, ey + 5);
       ctx.globalAlpha = 1;
-      ey += 21;
+      ey += 25;
     }
+    /* ---- broadcast event banners ---- */
+    if (game.broadcast) game.broadcast.draw(this);
     // hints bar (short on phones — keyboard shortcuts are desktop-only)
-    ctx.font = '12px monospace';
+    ctx.font = UITheme.sans('500', 10.5);
     const hint = W < 720
       ? (game.humanMode ? 'HUMAN vs AI' : 'AI vs AI') + ' · tap a player for stats'
-      : (game.humanMode ? 'HUMAN vs AI' : 'AI vs AI') + ' · click players for stats · L:feed Y:tactics C:coach M:map T:stats G:grass N:weather B:stadium U:crowd H:play P:pause R:reset D:debug';
-    ctx.fillStyle = 'rgba(8,12,16,0.6)'; ctx.fillRect(6, H - 24, ctx.measureText(hint).width + 14, 18);
-    ctx.fillStyle = '#9ab0be'; ctx.fillText(hint, 13, H - 21);
+      : (game.humanMode ? 'HUMAN vs AI' : 'AI vs AI') + ' · click players for stats · V:replay/script L:feed Y:tactics C:coach M:map T:stats G:grass N:weather B:stadium U:crowd H:play P:pause R:reset D:debug';
+    ctx.globalAlpha = 0.85;
+    glassPanel(ctx, 6, H - 26, ctx.measureText(hint).width + 18, 20, 7);
+    ctx.fillStyle = UITheme.faint; ctx.fillText(hint, 15, H - 21);
+    ctx.globalAlpha = 1;
     if (game.paused){
-      ctx.fillStyle = 'rgba(8,12,16,0.55)'; ctx.fillRect(0, H/2 - 18, W, 36);
-      ctx.fillStyle = '#ffe24a'; ctx.textAlign = 'center';
-      ctx.font = 'bold 22px monospace'; ctx.fillText('PAUSED', W/2, H/2 - 10); ctx.textAlign = 'left';
+      const pw3 = 210, ph3 = 58, px3 = (W - pw3) / 2, py3 = H / 2 - 62;
+      glassPanel(ctx, px3, py3, pw3, ph3, 12, { blur: 16 });
+      ctx.textAlign = 'center';
+      ctx.font = UITheme.sans('800', 18); ctx.fillStyle = UITheme.ink;
+      ctx.fillText('PAUSED', W / 2, py3 + 12);
+      ctx.font = UITheme.sans('500', 11); ctx.fillStyle = UITheme.faint;
+      ctx.fillText('press P to resume', W / 2, py3 + 36);
+      ctx.textAlign = 'left';
     }
     if (m.banner){
+      const bw3 = Math.min(W - 24, 620);
+      const bh3 = m.state === 'FULLTIME' ? 106 : 82;
+      const px3 = (W - bw3) / 2, py3 = H / 2 - bh3 / 2 - 8;
+      glassPanel(ctx, px3, py3, bw3, bh3, 14, { blur: 18 });
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(8,12,16,0.7)'; ctx.fillRect(0, H/2 - 40, W, 72);
-      ctx.font = 'bold 28px monospace'; ctx.fillStyle = '#ffe24a';
-      ctx.fillText(m.banner, W/2, H/2 - 30);
-      ctx.font = 'bold 15px monospace'; ctx.fillStyle = '#f0f0e8';
-      ctx.fillText(m.bannerSub, W/2, H/2 + 4);
+      ctx.font = UITheme.sans('800', 25); ctx.fillStyle = UITheme.accent;
+      ctx.fillText(m.banner, W / 2, py3 + 15);
+      ctx.font = UITheme.sans('600', 14); ctx.fillStyle = UITheme.ink;
+      ctx.fillText(m.bannerSub, W / 2, py3 + 49);
       if (m.state === 'FULLTIME'){
         const t0 = game.teams[0], t1 = game.teams[1];
         const tot = Math.max(1, t0.possT + t1.possT);
@@ -4040,14 +4723,17 @@ class Renderer {
           + '  PASS ' + t0.passCmp + '/' + t0.passAtt + '-' + t1.passCmp + '/' + t1.passAtt
           + '  FOULS ' + t0.fouls + '-' + t1.fouls
           + '  CARDS ' + c0[0] + 'Y/' + c0[1] + 'R-' + c1[0] + 'Y/' + c1[1] + 'R';
-        ctx.font = '13px monospace'; ctx.fillStyle = '#9ab0be';
-        ctx.fillText(line, W/2, H/2 + 22);
+        ctx.font = UITheme.mono('500', 11);
+        const tw3 = ctx.measureText(line).width, mx3 = bw3 - 24;
+        if (tw3 > mx3) ctx.font = UITheme.mono('500', Math.max(6.5, 11 * mx3 / tw3));
+        ctx.fillStyle = UITheme.dim;
+        ctx.fillText(line, W / 2, py3 + 78);
       }
       ctx.textAlign = 'left';
     }
     // quick-access chips (thumb-sized on mobile)
     const mob = W < 720;
-    const cw2 = mob ? Math.floor((W - 34) / 3) : 84;
+    const cw2 = mob ? Math.floor((W - 40) / 4) : 84;
     const chH = mob ? 40 : 24;
     const chY = H - (mob ? 78 : 56);
     const chip = (i, label, type, extra) => {
@@ -4058,12 +4744,16 @@ class Renderer {
     chip(0, 'TACTICS', 'tactics');
     chip(1, 'BENCH', 'sub', { stage: 'bench' });
     chip(2, 'FEED', 'history');
+    chip(3, 'REPLAY', 'script');
     if (game.showMap && !game.coachOpen && !(mob && game.panel)) this.drawMinimap(game);
+    // set-piece trigger chips paint (and hit-test) above the minimap
+    this.drawTakeControls(game);
     if (game.panel){
       if (game.panel.type === 'profile') this.drawProfilePanel(game);
       else if (game.panel.type === 'sub') this.drawSubPanel(game);
       else if (game.panel.type === 'tactics') this.drawTacticsPanel(game);
       else if (game.panel.type === 'history') this.drawHistoryPanel(game);
+      else if (game.panel.type === 'script') this.drawScriptPanel(game);
     }
     if (game.coachOpen) this.drawCoachConsole(game);
   }
@@ -4109,6 +4799,183 @@ class Renderer {
     this.btn(game, box.x + 28 + bw2 * 2, fy, bw2, box.bh, 'CLEAR', { cb: () => { game.history.length = 0; game.histScroll = 0; } });
     this.btn(game, box.x + 36 + bw2 * 3, fy, bw2, box.bh, 'CLOSE', { cb: () => game.closePanel() });
   }
+  // ReplayController transport + ScriptEditor: inspect, seek, retime,
+  // reassign and adjust timeline events; import/export; goal-replay settings.
+  drawScriptPanel(game){
+    const box = this.panelBox(game, 560);
+    this.panelShell(game, box, 'REPLAY & SCRIPT', UITheme.accent);
+    const ctx = this.ctx;
+    const rp = game.replay, sess = rp.session, run = game.scriptRunner;
+    const ed = game.scriptEd || (game.scriptEd = { sel: -1, page: 0, showAll: false, follow: true });
+    let y = box.y + 34;
+    const bh = box.mobile ? 30 : 22;
+    const row = (defs, h) => {
+      const live = defs.filter(Boolean);
+      const gap = 6, w = (box.w - 24 - gap * (live.length - 1)) / live.length;
+      live.forEach((d, i) => this.btn(game, box.x + 12 + i * (w + gap), y, w, h || bh, d[0], d[1] || {}));
+      y += (h || bh) + 6;
+    };
+    const tNow = game.simTick / 60;
+    ctx.font = UITheme.sans('600', 11);
+    ctx.fillStyle = UITheme.dim;
+    if (sess){
+      ctx.fillText((sess.mode === 'strict' ? 'STRICT' : 'ADAPTIVE') + ' · ' + tNow.toFixed(1) + 's / '
+        + sess.duration.toFixed(1) + 's' + (run && run.resyncs ? ' · resyncs ' + run.resyncs : '')
+        + (rp._loopA !== undefined ? ' · loop A set' : ''), box.x + 12, y);
+    } else {
+      ctx.fillText('LIVE · recording ' + (game.recorder && game.recorder.enabled
+        ? 'ON · ' + game.recorder.timeline.length + ' events' : 'OFF'), box.x + 12, y);
+    }
+    y += 18;
+    if (sess){
+      row([
+        ['⏮', { cb: () => rp.restart() }],
+        ['◀◀', { cb: () => rp.stepEvent(-1) }],
+        [game.paused ? '▶' : '⏸', { active: !game.paused, cb: () => { game.paused = !game.paused; } }],
+        ['▶▶', { cb: () => rp.stepEvent(1) }],
+        ['+1f', { cb: () => rp.stepFrame() }],
+      ]);
+      row([
+        ['SPD ' + rp.speed + 'x', { cb: () => { const s = [0.25, 0.5, 1, 2, 4]; rp.setSpeed(s[(s.indexOf(rp.speed) + 1) % s.length]); } }],
+        [rp.loopRange ? 'LOOP ✓' : (rp._loopA !== undefined ? 'LOOP B?' : 'LOOP A'), { active: !!rp.loopRange, cb: () => {
+          if (rp.loopRange) rp.loopRange = null;
+          else if (rp._loopA === undefined) rp._loopA = tNow;
+          else { rp.loopRange = [Math.min(rp._loopA, tNow), Math.max(rp._loopA, tNow) + 0.5]; rp._loopA = undefined; }
+        } }],
+        ['STOP', { cb: () => { rp.stop(); game.reset(); } }],
+      ]);
+      // seek bar with bookmark ticks
+      const sx = box.x + 12, sw2 = box.w - 24;
+      ctx.fillStyle = 'rgba(255,255,255,0.12)'; rrPath(ctx, sx, y + 5, sw2, 8, 4); ctx.fill();
+      ctx.fillStyle = UITheme.accent;
+      rrPath(ctx, sx, y + 5, Math.max(4, sw2 * clamp(tNow / Math.max(1e-6, sess.duration), 0, 1)), 8, 4); ctx.fill();
+      for (const bm of rp.bookmarks()){
+        ctx.fillStyle = bm.type === 'goal' ? UITheme.good : 'rgba(255,255,255,0.4)';
+        ctx.fillRect(sx + sw2 * clamp(bm.time / Math.max(1e-6, sess.duration), 0, 1) - 1, y + 1, 2, 16);
+      }
+      this.zone(game, sx, y - 2, sw2, 20, cx => rp.seek(clamp((cx - sx) / sw2, 0, 1) * sess.duration));
+      y += 24;
+      // event list
+      const tl = sess.script.timeline;
+      const view = ed.showAll ? tl : tl.filter(e => e.type !== 'movement' && e.type !== 'touch');
+      const rows = box.mobile ? 5 : 7, rowH = 20;
+      let curIdx = 0;
+      while (curIdx < view.length && view[curIdx].time <= tNow) curIdx++;
+      curIdx = Math.max(0, curIdx - 1);
+      if (ed.follow && ed.sel < 0) ed.page = Math.floor(curIdx / rows);
+      row([
+        ['◀ PG', { cb: () => { ed.page = Math.max(0, ed.page - 1); ed.follow = false; } }],
+        ['PG ▶', { cb: () => { ed.page = Math.min(Math.floor(Math.max(0, view.length - 1) / rows), ed.page + 1); ed.follow = false; } }],
+        [ed.showAll ? 'ALL ✓' : 'KEY', { active: ed.showAll, cb: () => { ed.showAll = !ed.showAll; ed.sel = -1; } }],
+        ['AUTO', { active: !!ed.follow, cb: () => { ed.follow = !ed.follow; } }],
+      ], 20);
+      const start = clamp(ed.page * rows, 0, Math.max(0, view.length - 1));
+      for (let i = start; i < Math.min(view.length, start + rows); i++){
+        const e = view[i], seld = ed.sel === i, isCur = i === curIdx;
+        ctx.fillStyle = seld ? 'rgba(255,210,87,0.18)' : (isCur ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)');
+        rrPath(ctx, box.x + 10, y, box.w - 20, rowH - 2, 4); ctx.fill();
+        ctx.font = UITheme.mono('500', 10);
+        ctx.fillStyle = isCur ? UITheme.accent : UITheme.faint;
+        ctx.fillText(e.time.toFixed(1) + 's', box.x + 16, y + 4);
+        ctx.font = UITheme.sans('600', 10.5);
+        ctx.fillStyle = seld ? UITheme.ink : UITheme.mid;
+        ctx.fillText((e.type + (e.actor ? ' · ' + e.actor : '') + (e.target ? ' → ' + e.target : '')).slice(0, 44), box.x + 62, y + 4);
+        const idx = i;
+        this.zone(game, box.x + 10, y, box.w - 20, rowH - 2, () => { ed.sel = ed.sel === idx ? -1 : idx; ed.follow = false; });
+        y += rowH;
+      }
+      y += 4;
+      // ScriptEditor: mutations imply intent, so a strict session goes adaptive
+      const selEv = ed.sel >= 0 && ed.sel < view.length ? view[ed.sel] : null;
+      if (selEv){
+        const mut = fn => {
+          fn();
+          sess.script.timeline.sort((a, b) => a.time - b.time);
+          if (sess.mode === 'strict'){ sess.mode = 'adaptive'; if (run){ run.mode = 'adaptive'; run.warn('script edited — strict determinism ended, now adaptive'); } }
+          rp.seek(Math.min(tNow, sess.duration));
+        };
+        row([
+          ['GO', { cb: () => rp.seek(Math.max(0, selEv.time - 1)) }],
+          ['DEL', { cb: () => mut(() => { const k = sess.script.timeline.indexOf(selEv); if (k >= 0) sess.script.timeline.splice(k, 1); ed.sel = -1; }) }],
+          ['DUP', { cb: () => mut(() => sess.script.timeline.push({ ...selEv, id: selEv.id + 'c', time: +(selEv.time + 0.5).toFixed(3) })) }],
+          ['−.5s', { cb: () => mut(() => { selEv.time = Math.max(0, +(selEv.time - 0.5).toFixed(3)); }) }],
+          ['+.5s', { cb: () => mut(() => { selEv.time = +(selEv.time + 0.5).toFixed(3); }) }],
+        ], 20);
+        row([
+          ['ACTOR ▸', { dim: !selEv.actor, cb: () => mut(() => {
+            const p = EventSerializer.player(game, selEv.actor);
+            if (!p) return;
+            selEv.actor = p.team.players[(p.team.players.indexOf(p) + 1 + p.team.players.length) % p.team.players.length].pid;
+          }) }],
+          ['PWR −', { dim: selEv.power === undefined, cb: () => mut(() => { if (selEv.power !== undefined) selEv.power = +clamp(selEv.power - 0.1, 0.05, 1).toFixed(2); }) }],
+          ['PWR +', { dim: selEv.power === undefined, cb: () => mut(() => { if (selEv.power !== undefined) selEv.power = +clamp(selEv.power + 0.1, 0.05, 1).toFixed(2); }) }],
+          ['+ PASS', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +tNow.toFixed(2), type: 'pass', actor: selEv.actor || 'home_10', power: 0.5, trajectory: 'ground' })) }],
+          ['+ MOVE', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +tNow.toFixed(2), type: 'move', actor: selEv.actor || 'home_10', to: { x: +game.ball.x.toFixed(1), y: +game.ball.y.toFixed(1) }, speed: 0.9 })) }],
+        ], 20);
+      }
+    } else {
+      row([
+        [game.recorder && game.recorder.enabled ? 'REC ON' : 'REC OFF',
+          { active: !!(game.recorder && game.recorder.enabled), cb: () => { if (game.recorder) game.recorder.enabled = !game.recorder.enabled; } }],
+        ['EXPORT', { cb: () => window.__downloadScript() }],
+        ['IMPORT', { cb: () => game.fileInput.click() }],
+      ]);
+      row([
+        ['MODE: ' + (game.nextLoadMode || 'strict').toUpperCase(),
+          { cb: () => { game.nextLoadMode = game.nextLoadMode === 'strict' ? 'adaptive' : 'strict'; } }],
+        ['▶ REPLAY THIS MATCH', { cb: () => {
+          const doc = window.__exportScript();
+          if (doc && doc.timeline.length) game.loadScript(doc, { mode: game.nextLoadMode });
+        } }],
+      ]);
+      const gr = game.goalReplay;
+      row([
+        ['GOAL REPLAYS ' + (gr.cfg.enabled ? 'ON' : 'OFF'), { active: gr.cfg.enabled, cb: () => { gr.cfg.enabled = !gr.cfg.enabled; } }],
+        ['LENGTH ' + gr.cfg.length + 's', { cb: () => { const L = [5, 6, 8, 10]; gr.cfg.length = L[(L.indexOf(gr.cfg.length) + 1) % L.length]; } }],
+      ]);
+      ctx.font = UITheme.sans('500', 10);
+      ctx.fillStyle = UITheme.faint;
+      ctx.fillText('record · export as JSON · import & replay strict or adaptive', box.x + 12, y + 2);
+      y += 18;
+    }
+    // validation + runner warnings
+    ctx.font = UITheme.sans('500', 10);
+    const lines = [];
+    if (game.scriptReport){
+      for (const e of game.scriptReport.errors.slice(0, 3)) lines.push(['✕ ' + e, UITheme.bad]);
+      for (const w of game.scriptReport.warnings.slice(0, 2)) lines.push(['⚠ ' + w, UITheme.warn]);
+    }
+    if (run) for (const w of run.warnings.slice(-2)) lines.push(['⚠ ' + w, UITheme.warn]);
+    let wy = y + 2;
+    for (const [txt, col] of lines.slice(0, 5)){
+      ctx.fillStyle = col;
+      ctx.fillText(txt.slice(0, 68), box.x + 12, wy);
+      wy += 14;
+    }
+  }
+  // human-controlled set piece: two option chips (tap or SPACE/SHIFT)
+  drawTakeControls(game){
+    const m = game.match, r = m.restart;
+    if (!r || !r.humanTaker || !r.awaiting || !game.humanMode || game.coachOpen) return;
+    const labels = {
+      THROWIN: ['THROW SAFE', 'THROW LONG'],
+      CORNER: ['SHORT CORNER', 'DELIVER CROSS'],
+      GOALKICK: ['PLAY SHORT', 'GO LONG'],
+      FREEKICK: r.shooting ? ['PASS OPTION', 'SHOOT'] : ['PLAY SAFE', 'PLAY FORWARD'],
+    }[m.state];
+    if (!labels) return;
+    const ctx = this.ctx, W = this.W, H = this.H;
+    const bw = 128, bh = 34, gap = 10;
+    const y = H - (W < 720 ? 134 : 106);
+    const x0 = W / 2 - bw - gap / 2;
+    this.btn(game, x0, y, bw, bh, labels[0], { font: 12, cb: () => { game.takeRequested = true; } });
+    this.btn(game, x0 + bw + gap, y, bw, bh, labels[1], { font: 12, active: true, cb: () => { game.takeRequested = true; game.takeShoot = true; } });
+    if (W >= 720){
+      ctx.font = UITheme.sans('500', 10.5); ctx.fillStyle = UITheme.dim; ctx.textAlign = 'center';
+      ctx.fillText('SPACE · ' + labels[0].toLowerCase() + '     SHIFT · ' + labels[1].toLowerCase(), W / 2, y + bh + 7);
+      ctx.textAlign = 'left';
+    }
+  }
   // top-down tactical map: formations at a glance
   drawMinimap(game){
     const ctx = this.ctx;
@@ -4116,9 +4983,10 @@ class Renderer {
     const mw = mob ? 168 : 236, mh = mob ? 110 : 154;
     const x0 = this.W - mw - 10, y0 = this.H - mh - (mob ? 96 : 34); // clear of the chips row on phones
     this.zone(game, x0, y0, mw, mh, null); // block taps through the map
-    ctx.fillStyle = 'rgba(8,12,16,0.68)'; ctx.fillRect(x0, y0, mw, mh);
+    glassPanel(ctx, x0, y0, mw, mh, 10);
     const px0 = x0 + 10, py0 = y0 + 10, pw = mw - 20, ph = mh - 20;
-    ctx.fillStyle = 'rgba(30,92,42,0.9)'; ctx.fillRect(px0, py0, pw, ph);
+    ctx.fillStyle = 'rgba(30,92,42,0.85)';
+    rrPath(ctx, px0, py0, pw, ph, 5); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
     ctx.strokeRect(px0, py0, pw, ph);
     ctx.beginPath(); ctx.moveTo(px0 + pw/2, py0); ctx.lineTo(px0 + pw/2, py0 + ph); ctx.stroke();
@@ -4144,13 +5012,19 @@ class Renderer {
   zone(game, x, y, w, h, cb){ game.ui.zones.push({ x, y, w, h, cb }); }
   btn(game, x, y, w, h, label, opts = {}){
     const ctx = this.ctx;
-    ctx.fillStyle = opts.active ? (opts.color || '#ffe24a') : 'rgba(255,255,255,0.10)';
-    ctx.fillRect(x, y, w, h);
-    ctx.font = 'bold ' + (opts.font || 12) + 'px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = opts.active ? '#101418' : (opts.dim ? '#5a6874' : '#e8eef4');
-    ctx.fillText(label, x + w / 2, y + h / 2 - (opts.font || 12) / 2);
-    ctx.textAlign = 'left';
+    const rad = Math.min(8, h / 2);
+    rrPath(ctx, x, y, w, h, rad);
+    ctx.fillStyle = opts.active ? (opts.color || UITheme.accent) : 'rgba(255,255,255,0.08)';
+    ctx.fill();
+    if (!opts.active){
+      ctx.strokeStyle = UITheme.edgeSoft; ctx.lineWidth = 1;
+      rrPath(ctx, x + 0.5, y + 0.5, w - 1, h - 1, rad); ctx.stroke();
+    }
+    ctx.font = UITheme.sans('600', opts.font || 12);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = opts.active ? '#10151b' : (opts.dim ? UITheme.faint : UITheme.ink);
+    ctx.fillText(label, x + w / 2, y + h / 2 + 0.5);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
     if (!opts.dim) this.zone(game, x, y, w, h, opts.cb);
   }
   // desktop: side panel · mobile: bottom sheet that slides up
@@ -4166,13 +5040,16 @@ class Renderer {
   }
   panelShell(game, box, title, color){
     const ctx = this.ctx;
-    ctx.fillStyle = 'rgba(10,14,18,0.93)'; ctx.fillRect(box.x, box.y, box.w, box.h);
-    ctx.fillStyle = color || '#ffe24a'; ctx.fillRect(box.x, box.y, box.w, 4);
+    // no shadowBlur here: the near-opaque sheet redraws every frame and blur
+    // on a panel this size is the single most expensive fill in the HUD
+    glassPanel(ctx, box.x, box.y, box.w, box.h, 12, { top: 'rgba(13,17,23,0.95)', bot: 'rgba(9,12,16,0.92)' });
+    ctx.fillStyle = color || UITheme.accent;
+    rrPath(ctx, box.x + 12, box.y + 11, 4, 17, 2); ctx.fill();
     this.zone(game, box.x, box.y, box.w, box.h, null); // block taps through the panel
-    ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#f0f0e8';
-    ctx.fillText(title, box.x + 12, box.y + 13);
+    ctx.font = UITheme.sans('700', 14); ctx.fillStyle = UITheme.ink;
+    ctx.fillText(title, box.x + 24, box.y + 13);
     const bw = box.mobile ? 54 : 44;
-    this.btn(game, box.x + box.w - bw - 8, box.y + 8, bw, box.mobile ? 30 : 20, 'X',
+    this.btn(game, box.x + box.w - bw - 8, box.y + 8, bw, box.mobile ? 30 : 20, '✕',
       { cb: () => { game.closePanel(); game.statsFor = null; } });
   }
   // PlayerProfilePanel: identity + live match stats + rating + follow
@@ -4437,7 +5314,7 @@ class Renderer {
 // touch the simulation loop and expire on their own.
 class EventAnimationManager {
   constructor(game){ this.game = game; this.list = []; }
-  play(anim){ anim.t = 0; this.list.push(anim); }
+  play(anim){ if (this.game.replayMode) return; anim.t = 0; this.list.push(anim); }
   update(dt){
     for (const a of this.list){ a.t += dt; if (a.update) a.update(dt, this.game); }
     this.list = this.list.filter(a => a.t < a.dur);
@@ -4657,6 +5534,837 @@ function parseCoach(text, team){
 }
 
 /* ------------------------------- GAME LOOP --------------------------------- */
+/* ================== SCRIPTING, RECORDING & REPLAY ENGINE =================== */
+// EventSerializer: entity <-> stable-id translation shared by snapshots, the
+// recorder and the script systems. Players are 'home_10' style, teams are
+// 'home'/'away'.
+const EventSerializer = {
+  pid(p){ return p ? p.pid : null; },
+  tid(t){ return t ? t.id : null; },
+  playerMap(game){
+    const m = new Map();
+    for (const t of game.teams)
+      for (const p of [...t.players, ...t.bench, ...t.offList]) m.set(p.pid, p);
+    return m;
+  },
+  player(game, pid, map){
+    if (!pid) return null;
+    if (map) return map.get(pid) || null;
+    for (const t of game.teams)
+      for (const p of [...t.players, ...t.bench, ...t.offList]) if (p.pid === pid) return p;
+    return null;
+  },
+  team(game, tid){ return tid === 'home' ? game.teams[0] : (tid === 'away' ? game.teams[1] : null); },
+  pos(v){ return v ? { x: +(+v.x).toFixed(3), y: +(+v.y).toFixed(3) } : null; },
+};
+
+// SnapshotManager: complete sim-state capture/restore. A restored snapshot
+// continues EXACTLY like the uninterrupted run — same RNG stream, same maps,
+// same timers — which is what makes seeking and goal replays deterministic.
+const SnapshotManager = {
+  PLAYER_FIELDS: ['facing','runPhase','stamina','speedWish','duty','thinkT','thinkInterval','decideT',
+    'kickCooldown','touchCd','tackleCd','slowT','blockCd','holdT','holdCd','diving','action','actionT',
+    'actionDur','slideHit','glanceT','callT','callCd','callText','wallJumpT','walkOff','role','line','isGK'],
+  BALL_FIELDS: ['x','y','z','vx','vy','vz','spin','roll','flightT','isShot','px','py','pz',
+    'lastKickShot','lastKickClock','shotCredited','prevTouchClock','prevTouch2Clock'],
+  BALL_REFS: ['controller','holder','intendedReceiver','lastToucher','lastKicker','prevToucher','prevToucher2'],
+  capture(game){
+    const E = EventSerializer, m = game.match;
+    const ball = {};
+    for (const k of this.BALL_FIELDS) ball[k] = game.ball[k];
+    for (const k of this.BALL_REFS) ball[k] = E.pid(game.ball[k]);
+    ball.lastTouchTeam = E.tid(game.ball.lastTouchTeam);
+    return {
+      tick: game.simTick, seed: game.matchSeed, rng: RNG.state(),
+      env: { grass: game.grassKey, weather: game.weatherKey, windDir: game.windDir, surfaceSeed: game.surfaceSeed },
+      counts: { ...game.counts },
+      g: {
+        transitionT: game.transitionT, lastPoss: E.tid(game.lastPoss), headerCd: game.headerCd || 0,
+        frameNo: game.frameNo, lastCallT: game.lastCallT, lastChanceT: game.lastChanceT,
+        lastShooter: E.pid(game.lastShooter),
+        pendingPass: game.pendingPass
+          ? { team: E.tid(game.pendingPass.team), passer: E.pid(game.pendingPass.passer), t: game.pendingPass.t } : null,
+        celebration: game.celebration && game.celebration.scorer ? {
+          scorer: E.pid(game.celebration.scorer),
+          mates: game.celebration.mates.map(p => E.pid(p)),
+          run: { ...game.celebration.run },
+        } : null,
+      },
+      ball,
+      match: {
+        state: m.state, stateT: m.stateT, half: m.half, tMatch: m.tMatch, score: [...m.score],
+        firstKick: m.firstKick, concededIdx: m.concededIdx, banner: m.banner, bannerSub: m.bannerSub,
+        goalScorer: E.pid(m.goalScorer),
+        pendingFoul: m.pendingFoul ? { ...m.pendingFoul, team: E.tid(m.pendingFoul.team),
+          byTeam: E.tid(m.pendingFoul.byTeam), by: E.pid(m.pendingFoul.by),
+          victim: E.pid(m.pendingFoul.victim), spot: { ...m.pendingFoul.spot } } : null,
+        restart: this.captureRestart(m.restart),
+      },
+      ref: (r => ({ pos: { ...r.pos }, vel: { ...r.vel }, facing: r.facing, runPhase: r.runPhase,
+        action: r.action, actionT: r.actionT, actionDur: r.actionDur,
+        target: { ...r.target }, signalT: r.signalT || 0 }))(game.ref),
+      teams: game.teams.map(t => ({
+        tactics: { ...t.tactics }, attackDir: t.attackDir, subsUsed: t.subsUsed, lastAutoSub: t.lastAutoSub || 0,
+        shots: t.shots, onTarget: t.onTarget, passAtt: t.passAtt, passCmp: t.passCmp, possT: t.possT, fouls: t.fouls,
+        gk: E.pid(t.gk),
+        squad: [...t.players, ...t.bench, ...t.offList].map(p => this.capturePlayer(p)),
+        players: t.players.map(p => p.pid),
+        bench: t.bench.map(p => p.pid),
+        offList: t.offList.map(p => p.pid),
+        dlm: { lineX: t.dlm.lineX, trapUntil: t.dlm.trapUntil, lastTrap: t.dlm.lastTrap,
+          trapActive: !!t.dlm.trapActive, org: t.dlm.org },
+      })),
+      offside: game.offsideSys && game.offsideSys.watch
+        ? { set: [...game.offsideSys.watch.set].map(p => E.pid(p)),
+            team: E.tid(game.offsideSys.watch.team), t: game.offsideSys.watch.t } : null,
+    };
+  },
+  capturePlayer(p){
+    const o = { pid: p.pid, pos: { ...p.pos }, vel: { ...p.vel }, target: { ...p.target },
+      slot: { ...p.slot }, stats: { ...p.stats },
+      decision: p.decision ? { ...p.decision, receiver: EventSerializer.pid(p.decision.receiver) } : null };
+    for (const k of this.PLAYER_FIELDS) o[k] = p[k];
+    return o;
+  },
+  captureRestart(r){
+    if (!r) return null;
+    const E = EventSerializer;
+    const mapOf = m => m ? [...m].map(([p, v]) => [E.pid(p), { ...v }]) : null;
+    return {
+      type: r.type, team: E.tid(r.team), spot: { ...r.spot }, taker: E.pid(r.taker), helper: E.pid(r.helper),
+      wait: r.wait, force: r.force, swapT: r.swapT, standback: r.standback ? { ...r.standback } : null,
+      humanTaker: !!r.humanTaker, awaiting: !!r.awaiting, humanChoice: r.humanChoice || null,
+      delivery: r.delivery || null, shooting: !!r.shooting, placed: !!r.placed,
+      short: E.pid(r.short), shortTo: E.pid(r.shortTo), decoy: E.pid(r.decoy), lying: E.pid(r.lying),
+      wall: r.wall ? r.wall.map(p => E.pid(p)) : null,
+      spTargets: mapOf(r.spTargets), spTargets2: mapOf(r.spTargets2), plan: mapOf(r.plan),
+    };
+  },
+  restore(game, snap){
+    const E = EventSerializer;
+    if (game.grassKey !== snap.env.grass || game.weatherKey !== snap.env.weather ||
+        game.surfaceSeed !== snap.env.surfaceSeed){
+      game.grassKey = snap.env.grass; game.weatherKey = snap.env.weather;
+      game.surfaceSeed = snap.env.surfaceSeed;
+      game.applyEnv();
+      if (game.renderer) game.renderer.buildBackground();
+    }
+    game.windDir = snap.env.windDir;
+    RNG.restore(snap.rng);
+    game.simTick = snap.tick;
+    game.counts = { ...snap.counts };
+    const map = E.playerMap(game);
+    const P = pid => (pid ? map.get(pid) || null : null);
+    snap.teams.forEach((ts, i) => {
+      const team = game.teams[i];
+      for (const ps of ts.squad){
+        const p = map.get(ps.pid); if (!p) continue;
+        p.pos = { ...ps.pos }; p.vel = { ...ps.vel }; p.target = { ...ps.target };
+        p.slot = { ...ps.slot }; p.stats = { ...ps.stats };
+        p.decision = ps.decision ? { ...ps.decision, receiver: P(ps.decision.receiver) } : { type: 'dribble' };
+        for (const k of this.PLAYER_FIELDS) p[k] = ps[k];
+        p.human = false; p.trackClaim = 0;
+      }
+      team.players = ts.players.map(P).filter(Boolean);
+      team.bench = ts.bench.map(P).filter(Boolean);
+      team.offList = ts.offList.map(P).filter(Boolean);
+      team.gk = P(ts.gk) || team.players[0];
+      Object.assign(team.tactics, ts.tactics);
+      team.attackDir = ts.attackDir; team.subsUsed = ts.subsUsed; team.lastAutoSub = ts.lastAutoSub;
+      team.shots = ts.shots; team.onTarget = ts.onTarget; team.passAtt = ts.passAtt; team.passCmp = ts.passCmp;
+      team.possT = ts.possT; team.fouls = ts.fouls;
+      Object.assign(team.dlm, ts.dlm);
+    });
+    const b = game.ball;
+    for (const k of this.BALL_FIELDS) b[k] = snap.ball[k];
+    for (const k of this.BALL_REFS) b[k] = P(snap.ball[k]);
+    b.lastTouchTeam = E.team(game, snap.ball.lastTouchTeam);
+    b.trail = [];
+    const m = game.match, ms = snap.match;
+    m.state = ms.state; m.stateT = ms.stateT; m.half = ms.half; m.tMatch = ms.tMatch;
+    m.score = [...ms.score]; m.firstKick = ms.firstKick; m.concededIdx = ms.concededIdx;
+    m.banner = ms.banner; m.bannerSub = ms.bannerSub;
+    m.goalScorer = P(ms.goalScorer);
+    m.pendingFoul = ms.pendingFoul ? { ...ms.pendingFoul, team: E.team(game, ms.pendingFoul.team),
+      byTeam: E.team(game, ms.pendingFoul.byTeam), by: P(ms.pendingFoul.by),
+      victim: P(ms.pendingFoul.victim), spot: { ...ms.pendingFoul.spot } } : null;
+    m.restart = this.restoreRestart(game, ms.restart, P);
+    Object.assign(game.ref, { pos: { ...snap.ref.pos }, vel: { ...snap.ref.vel }, facing: snap.ref.facing,
+      runPhase: snap.ref.runPhase, action: snap.ref.action, actionT: snap.ref.actionT,
+      actionDur: snap.ref.actionDur, target: { ...snap.ref.target }, signalT: snap.ref.signalT });
+    game.transitionT = snap.g.transitionT;
+    game.lastPoss = E.team(game, snap.g.lastPoss);
+    game.headerCd = snap.g.headerCd; game.frameNo = snap.g.frameNo;
+    game.lastCallT = snap.g.lastCallT; game.lastChanceT = snap.g.lastChanceT;
+    game.lastShooter = P(snap.g.lastShooter);
+    game.pendingPass = snap.g.pendingPass ? { team: E.team(game, snap.g.pendingPass.team),
+      passer: P(snap.g.pendingPass.passer), t: snap.g.pendingPass.t } : null;
+    game.celebration = snap.g.celebration
+      ? Object.assign(Object.create(GoalCelebrationAnimation.prototype), {
+          dur: 2.4, scorer: P(snap.g.celebration.scorer),
+          mates: snap.g.celebration.mates.map(P).filter(Boolean),
+          run: { ...snap.g.celebration.run } })
+      : null;
+    if (game.offsideSys) game.offsideSys.watch = snap.offside
+      ? { set: new Set(snap.offside.set.map(P).filter(Boolean)),
+          team: E.team(game, snap.offside.team), t: snap.offside.t } : null;
+    game.kickBuffer = null;
+    if (game.selected && !game.teams[0].players.includes(game.selected))
+      game.selected = game.humanMode ? game.nearestToBall(game.teams[0]) : null;
+    if (game.statsFor && game.statsFor.team && !map.has(game.statsFor.pid)) game.statsFor = null;
+  },
+  restoreRestart(game, rs, P){
+    if (!rs) return null;
+    const E = EventSerializer;
+    const mapBack = arr => { if (!arr) return null; const m = new Map();
+      for (const [pid, v] of arr){ const p = P(pid); if (p) m.set(p, { ...v }); } return m; };
+    const r = {
+      type: rs.type, team: E.team(game, rs.team), spot: { ...rs.spot }, taker: P(rs.taker),
+      wait: rs.wait, force: rs.force, swapT: rs.swapT,
+      standback: rs.standback ? { ...rs.standback } : null,
+      humanTaker: rs.humanTaker, awaiting: rs.awaiting, humanChoice: rs.humanChoice || undefined,
+      delivery: rs.delivery || undefined, shooting: rs.shooting, placed: rs.placed,
+      short: P(rs.short), shortTo: P(rs.shortTo), decoy: P(rs.decoy), lying: P(rs.lying),
+      startedAt: 0,
+    };
+    if (rs.helper) r.helper = P(rs.helper);
+    if (rs.wall) r.wall = rs.wall.map(P).filter(Boolean);
+    if (rs.spTargets) r.spTargets = mapBack(rs.spTargets);
+    if (rs.spTargets2) r.spTargets2 = mapBack(rs.spTargets2);
+    if (rs.plan) r.plan = mapBack(rs.plan);
+    return r;
+  },
+};
+
+// MatchRecorder: turns live play — AI and human — into a MatchScript: semantic
+// timeline events (passes, tackles, restarts, cards, calls, tactics...),
+// periodic movement samples for path data, and seek snapshots. Suppressed
+// while game.replayMode is on so replays never re-record themselves.
+const SCRIPT_VERSION = '1.0';
+class MatchRecorder {
+  constructor(game){
+    this.game = game;
+    this.enabled = true;
+    this.moveEvery = 30;  // ticks between movement samples (0.5s)
+    this.snapEvery = 300; // ticks between seek snapshots (5s)
+    this.begin();
+  }
+  begin(){
+    this.timeline = []; this.snapshots = []; this.eventSeq = 0;
+    this.initial = null; this.createdAt = new Date().toISOString();
+  }
+  start(){ // called at the end of Game.reset — captures the pristine kickoff
+    this.begin();
+    this.initial = SnapshotManager.capture(this.game);
+    this.snapshots.push(this.initial);
+    this.human0 = { on: this.game.humanMode,
+      sel: this.game.selected ? this.game.selected.pid : null };
+  }
+  t(){ return +(this.game.simTick / 60).toFixed(3); }
+  log(type, data){
+    if (!this.enabled || this.game.replayMode) return null;
+    // tick is the authoritative timestamp (time is a rounded convenience —
+    // strict playback must fire on the exact sim step)
+    const e = { id: 'e' + (++this.eventSeq), time: this.t(), tick: this.game.simTick, type, ...(data || {}) };
+    this.timeline.push(e);
+    return e;
+  }
+  tick(){
+    if (!this.enabled || this.game.replayMode) return;
+    const g = this.game;
+    if (g.simTick % this.snapEvery === 0) this.snapshots.push(SnapshotManager.capture(g));
+    if (g.simTick % this.moveEvery === 0){
+      const frames = [];
+      for (const t of g.teams)
+        for (const p of t.players)
+          frames.push([p.pid, +p.pos.x.toFixed(2), +p.pos.y.toFixed(2), +p.facing.toFixed(2), +len(p.vel).toFixed(2)]);
+      frames.push(['ball', +g.ball.x.toFixed(2), +g.ball.y.toFixed(2), +g.ball.z.toFixed(2)]);
+      this.timeline.push({ id: 'e' + (++this.eventSeq), time: this.t(), type: 'movement', frames });
+    }
+  }
+  // MatchScript document: versioned, self-contained, replayable
+  export(){
+    const g = this.game;
+    const teams = g.teams.map(t => ({
+      id: t.id, name: t.name, code: t.code, kit: { ...t.kit }, gkKit: { ...t.gkKit },
+      formation: t.assignedFormation, tactics: { ...t.tactics },
+      players: [...t.players, ...t.bench, ...t.offList].map(p => ({
+        id: p.pid, num: p.num, name: p.name, role: p.role, isGK: p.isGK,
+        age: p.age, rarity: p.rarity, foot: p.foot,
+        attrs: Object.fromEntries(Object.entries(p.a).map(([k, v]) => [k, +v.toFixed(3)])),
+      })),
+    }));
+    const KEY_TYPES = ['goal','card','substitution','send_off','restart','offside','kickoff','tactic','foul'];
+    return {
+      version: SCRIPT_VERSION,
+      kind: 'fobal-match-script',
+      metadata: {
+        created: this.createdAt, exported: new Date().toISOString(),
+        engine: 'FOBAL SIMULATOR', realSeconds: this.t(),
+        score: [...g.match.score], clock: g.match.clock(),
+      },
+      match: {
+        seed: g.matchSeed, duration: CFG.MATCH_REAL_SECONDS, simStep: SIM_STEP, timeScale: TIME_SCALE,
+        env: { grass: g.grassKey, weather: g.weatherKey, windDir: g.windDir, surfaceSeed: g.surfaceSeed },
+        firstKick: g.match.firstKick,
+        human: this.human0 || { on: false, sel: null },
+      },
+      teams,
+      initialState: this.initial,
+      timeline: this.timeline.slice(),
+      events: this.timeline.filter(e => KEY_TYPES.includes(e.type))
+        .map(e => ({ id: e.id, time: e.time, type: e.type, actor: e.actor || e.player || e.taker || null })),
+      snapshots: this.snapshots.slice(),
+      finalState: SnapshotManager.capture(g),
+    };
+  }
+}
+
+// ScriptParser: accepts a JSON string or object, normalizes it into a script
+// the runner understands, and never throws on bad input — it reports instead.
+const ScriptParser = {
+  parse(src){
+    let doc = src;
+    if (typeof src === 'string'){
+      try { doc = JSON.parse(src); }
+      catch (err){ return { ok: false, errors: ['JSON parse failed: ' + err.message], warnings: [], script: null }; }
+    }
+    if (!doc || typeof doc !== 'object') return { ok: false, errors: ['script is not an object'], warnings: [], script: null };
+    const v = ScriptValidator.validate(doc);
+    return { ok: v.errors.length === 0, errors: v.errors, warnings: v.warnings, script: v.errors.length ? null : v.script };
+  },
+};
+
+// ScriptValidator: structural + semantic checks. Errors block playback,
+// warnings are shown but tolerated. Bad scripts must never crash the game.
+const ScriptValidator = {
+  KNOWN_TYPES: ['movement','move','pass','shot','clear','cross','header','touch','pass_complete','interception',
+    'tackle','block','gk_catch','gk_parry','foul_committed','foul','advantage','card','offside','restart',
+    'restart_taken','kickoff','reset_start','goal','substitution','send_off','state','call_for_ball','tactic',
+    'coach_command','crowd','ref_signal','gesture','human_move','human_kick','human_select','human_mode','take_trigger','wait'],
+  validate(doc){
+    const errors = [], warnings = [];
+    const script = doc;
+    if (doc.kind && doc.kind !== 'fobal-match-script') warnings.push('unexpected kind "' + doc.kind + '"');
+    if (!doc.version) warnings.push('missing version — assuming ' + SCRIPT_VERSION);
+    else if (String(doc.version).split('.')[0] !== SCRIPT_VERSION.split('.')[0])
+      warnings.push('script version ' + doc.version + ' may not match engine ' + SCRIPT_VERSION);
+    if (!doc.match || typeof doc.match !== 'object') errors.push('missing match section');
+    else if (doc.match.seed === undefined && !doc.initialState)
+      warnings.push('no seed and no initialState — strict playback unavailable');
+    const knownIds = new Set(['ball', 'home', 'away']);
+    if (Array.isArray(doc.teams))
+      for (const t of doc.teams)
+        if (Array.isArray(t.players)) for (const p of t.players) knownIds.add(p.id);
+    const haveRoster = knownIds.size > 3;
+    if (!Array.isArray(doc.timeline)){
+      errors.push('timeline must be an array');
+      return { errors, warnings, script };
+    }
+    let lastT = -1, unsorted = false;
+    doc.timeline.forEach((e, i) => {
+      const at = 'timeline[' + i + '] ';
+      if (!e || typeof e !== 'object'){ errors.push(at + 'is not an object'); return; }
+      if (typeof e.time !== 'number' || !isFinite(e.time) || e.time < 0) errors.push(at + 'invalid time ' + e.time);
+      else { if (e.time < lastT) unsorted = true; lastT = Math.max(lastT, e.time); }
+      if (!e.type) errors.push(at + 'missing type');
+      else if (!this.KNOWN_TYPES.includes(e.type)) warnings.push(at + 'unknown type "' + e.type + '" (will be skipped)');
+      if (e.actor && haveRoster && !knownIds.has(e.actor)) errors.push(at + 'unknown actor "' + e.actor + '"');
+      if (e.target && haveRoster && typeof e.target === 'string' && !knownIds.has(e.target))
+        warnings.push(at + 'unknown target "' + e.target + '"');
+      for (const key of ['position', 'from', 'to']){
+        const v = e[key];
+        if (!v || typeof v !== 'object') continue; // state events use string from/to
+        if (typeof v.x !== 'number' || typeof v.y !== 'number') errors.push(at + 'malformed ' + key);
+        else if (v.x < -5 || v.x > CFG.PITCH_L + 5 || v.y < -5 || v.y > CFG.PITCH_W + 5)
+          warnings.push(at + key + ' is off the pitch (will be clamped)');
+      }
+      if (e.power !== undefined && (typeof e.power !== 'number' || e.power < 0 || e.power > 1))
+        warnings.push(at + 'power outside 0..1 (will be clamped)');
+      if (['pass','shot','cross','move'].includes(e.type) && !e.actor) errors.push(at + e.type + ' requires an actor');
+    });
+    if (unsorted){
+      warnings.push('timeline was not sorted by time — auto-sorted');
+      doc.timeline = doc.timeline.slice().sort((a, b) => (a.time || 0) - (b.time || 0));
+    }
+    return { errors, warnings, script };
+  },
+};
+
+// ScriptRunner: executes a MatchScript timeline against the engine.
+// STRICT mode re-arms only the exogenous inputs (human moves/triggers, manual
+// subs, tactic changes) and lets the deterministic engine reproduce the rest,
+// hard-resyncing from recorded snapshots if it ever drifts.
+// ADAPTIVE mode treats every event as INTENT: actors are walked into place,
+// kicks fire when plausible (with a grace window), and the surrounding AI
+// fills every gap — so a hand-written script plays out on a living pitch.
+class ScriptRunner {
+  constructor(game, script, mode){
+    this.game = game;
+    this.script = script;
+    this.mode = mode || 'strict';
+    this.timeline = script.timeline;
+    this.cursor = 0;
+    this.moveDir = undefined;          // strict human-move injection
+    this.warnings = [];
+    this.pending = [];                 // adaptive: deferred kicks awaiting the ball
+    this.orders = new Map();           // adaptive: player -> scripted move order
+    this.active = null;                // {actor, target, until} for the debug highlight
+    this.driftChecks = 0; this.resyncs = 0;
+    this.snapIdx = 0;
+  }
+  t(){ return this.game.simTick / 60; }
+  stop(){
+    for (const p of this.orders.keys()) p.scripted = false;
+    this.orders.clear();
+    this.moveDir = undefined;
+    this.game.scriptRunner = null;
+  }
+  warn(msg){
+    if (this.warnings.length < 60) this.warnings.push(this.t().toFixed(1) + 's: ' + msg);
+  }
+  due(e, now){
+    return e.tick !== undefined ? e.tick <= this.game.simTick : e.time <= now;
+  }
+  tick(){
+    const now = this.t() + 1e-9;
+    while (this.cursor < this.timeline.length && this.due(this.timeline[this.cursor], now)){
+      try { this.exec(this.timeline[this.cursor]); }
+      catch (err){ this.warn('event ' + this.timeline[this.cursor].id + ' failed: ' + err.message); }
+      this.cursor++;
+    }
+    if (this.mode === 'strict') this.checkDrift(now);
+    else { this.retryPending(now); this.applyOrders(now); }
+  }
+  // strict-mode drift watchdog: compare against recorded snapshots
+  checkDrift(now){
+    const snaps = this.script.snapshots || [];
+    // snapshots hold post-update state of tick N; the runner sees that exact
+    // state pre-update on tick N+1, so consume them at simTick-1
+    while (this.snapIdx < snaps.length && snaps[this.snapIdx].tick <= this.game.simTick - 1){
+      const s = snaps[this.snapIdx++];
+      if (s.tick !== this.game.simTick - 1) continue; // seek jumped past it
+      this.driftChecks++;
+      const b = this.game.ball;
+      const drift = Math.hypot(b.x - s.ball.x, b.y - s.ball.y);
+      const scoreOk = this.game.match.score[0] === s.match.score[0] && this.game.match.score[1] === s.match.score[1];
+      if (drift > 0.5 || !scoreOk){
+        this.resyncs++;
+        this.warn('drift ' + drift.toFixed(2) + 'm at ' + (s.tick / 60).toFixed(1) + 's — resynced');
+        SnapshotManager.restore(this.game, s);
+      }
+    }
+  }
+  actorOf(e){ return EventSerializer.player(this.game, e.actor); }
+  exec(e){
+    const g = this.game, E = EventSerializer;
+    const strict = this.mode === 'strict';
+    switch (e.type){
+      // ---- exogenous inputs: replayed in strict mode only ----
+      case 'human_move': if (strict) this.moveDir = e.dir ? { x: e.dir.x, y: e.dir.y } : null; break;
+      case 'human_kick':
+        if (strict){
+          if (e.pass) g.input.passReleased = e.pass;
+          if (e.shoot) g.input.shootReleased = e.shoot;
+        }
+        break;
+      case 'human_select': if (strict){ const p = this.actorOf(e); if (p) g.selected = p; } break;
+      case 'human_mode': if (strict){ g.humanMode = !!e.on; g.selected = e.on ? g.nearestToBall(g.teams[0]) : null; } break;
+      case 'take_trigger': if (strict){ g.takeRequested = true; g.takeShoot = e.choice === 'attack'; } break;
+      case 'tactic': {
+        const team = E.team(g, e.team) || g.teams[0];
+        if (e.tactics) Object.assign(team.tactics, e.tactics);
+        if (e.formation && g.setFormation) g.setFormation(team, e.formation);
+        break;
+      }
+      case 'substitution': {
+        if (strict && e.auto) break; // deterministic AI subs reproduce themselves
+        const team = E.team(g, e.team);
+        const on = E.player(g, e.on), off = E.player(g, e.off);
+        if (team && on && off && team.bench.includes(on) && team.players.includes(off)) g.performSub(team, off, on);
+        else if (!strict) this.warn('substitution impossible (' + e.on + ' for ' + e.off + ')');
+        break;
+      }
+      // ---- everything below is adaptive-mode intent ----
+      case 'move': case 'movement': {
+        if (strict) break;
+        if (e.type === 'movement') break; // recorded path samples — reference data, engine moves itself
+        const p = this.actorOf(e); if (!p){ this.warn('move: unknown actor ' + e.actor); break; }
+        const to = e.to || e.position; if (!to) break;
+        this.orders.set(p, { x: clamp(to.x, 1, CFG.PITCH_L - 1), y: clamp(to.y, 1, CFG.PITCH_W - 1),
+          sw: e.speed !== undefined ? clamp(e.speed, 0.15, 1) : 0.85,
+          until: e.time + (e.duration || 6), face: e.direction });
+        this.mark(p, null, 1.4);
+        break;
+      }
+      case 'pass': case 'shot': case 'cross': case 'clear': case 'header': {
+        if (strict) break; // the engine replays its own kicks deterministically
+        this.pending.push({ e, deadline: e.time + 3.5 });
+        break;
+      }
+      case 'call_for_ball': {
+        if (strict) break;
+        const p = this.actorOf(e); if (!p) break;
+        p.callT = 1.1; p.callText = e.text || 'HERE!';
+        if (p.actionT <= 0) p.setAction('point', 0.6);
+        this.mark(p, null, 1.1);
+        break;
+      }
+      case 'gesture': {
+        if (strict) break;
+        const p = this.actorOf(e); if (!p) break;
+        const pose = { raise_hand: 'point', point: 'point', celebrate: 'celebrate', clap: 'clap',
+          fall: 'fall', shield: 'shield', head: 'head' }[e.gesture] || 'point';
+        p.setAction(pose, e.duration || 1);
+        break;
+      }
+      case 'restart': {
+        if (strict) break;
+        const team = E.team(g, e.team) || g.teams[0];
+        const kind = e.kind || 'FREEKICK';
+        if (g.match.state === 'PLAYING' && ['THROWIN','CORNER','GOALKICK','FREEKICK'].includes(kind))
+          g.match.beginRestart(kind, team, { x: clamp((e.position || {}).x || 52.5, 0.5, 104.5), y: clamp((e.position || {}).y || 34, 0.5, 67.5) });
+        else if (g.match.state !== 'PLAYING') this.warn('restart skipped — already at a dead ball');
+        break;
+      }
+      case 'restart_taken': {
+        if (strict) break;
+        const r = g.match.restart;
+        if (r && g.match.state === r.type){ r.wait = 0; if (e.choice) r.humanChoice = e.choice; }
+        break;
+      }
+      default: break; // touch/pass_complete/goal/state/crowd/... — outcomes, not commands
+    }
+  }
+  mark(actor, target, dur){ this.active = { actor, target, until: this.t() + dur }; }
+  retryPending(now){
+    const g = this.game;
+    this.pending = this.pending.filter(job => {
+      const e = job.e;
+      const p = this.actorOf(e);
+      if (!p || !p.team.players.includes(p)){ this.warn(e.type + ': actor unavailable'); return false; }
+      const b = g.ball;
+      const d = dist(p.pos, b);
+      // adaptive possession grant: the script says this is his moment — once
+      // the event is due and he's plausibly close, the ball comes to his feet
+      if (d >= 2.4 && d < 16 && now > e.time + 1.0 && g.match.state === 'PLAYING'){
+        b.holder = null; b.controller = p;
+        b.x = p.pos.x + Math.cos(p.facing) * 0.5; b.y = p.pos.y + Math.sin(p.facing) * 0.5;
+        b.z = 0.11; b.vx = b.vy = b.vz = 0; b.spin = 0;
+        b.px = b.x; b.py = b.y;
+        creditTouch(g, p);
+      }
+      const near = dist(p.pos, b) < 2.4 && b.z < 1.4 && g.match.state === 'PLAYING';
+      if (near){
+        // adaptive nudge: the scripted man takes the ball for his moment
+        if (b.controller && b.controller !== p){ b.controller = null; }
+        if (b.holder && b.holder !== p) b.holder = null;
+        const tgt = e.target ? EventSerializer.player(g, e.target) : null;
+        const aim = e.aim || (tgt ? { x: tgt.pos.x, y: tgt.pos.y } : e.to) ||
+          { x: p.team.oppGoalX(), y: 34 };
+        const d = dist(p.pos, aim);
+        const power = e.power !== undefined ? clamp(e.power, 0, 1) : null;
+        let speed = e.speed !== undefined ? e.speed : (power !== null ? 6 + power * 24 : null);
+        let vz = e.vz;
+        if (vz === undefined){
+          if (e.trajectory === 'high'){ vz = 4.5; if (speed === null) speed = loftFor(d).vh; }
+          else if (e.trajectory === 'lofted' || (e.trajectory === undefined && d > groundedPassLimit() && e.type !== 'shot')){
+            const l = loftFor(d); vz = l.vz; if (speed === null) speed = l.vh;
+          } else vz = e.type === 'shot' ? 1.2 : 0;
+        }
+        if (speed === null) speed = e.type === 'shot' ? 22 : groundPassSpeed(d);
+        doKick(p, g, { type: e.type === 'shot' ? 'shot' : (e.type === 'clear' ? 'clear' : 'pass'),
+          cross: e.type === 'cross' || undefined, header: e.type === 'header' || undefined,
+          tx: aim.x, ty: aim.y, speed, vz, spin: e.spin || 0, sigma: e.sigma !== undefined ? e.sigma : 0.05,
+          receiver: tgt || undefined });
+        this.mark(p, tgt, 1.6);
+        return false;
+      }
+      // not there yet: chase the ball until the grace window closes
+      this.orders.set(p, { x: b.x, y: b.y, sw: 1, until: job.deadline, chase: true });
+      if (now > job.deadline){
+        this.warn(e.type + ' by ' + e.actor + ' skipped — could not reach the ball');
+        return false;
+      }
+      return true;
+    });
+  }
+  applyOrders(now){
+    for (const [p, o] of [...this.orders]){
+      if (now > o.until || !p.team.players.includes(p)){
+        p.scripted = false; this.orders.delete(p); continue;
+      }
+      p.scripted = true;
+      if (o.chase){ o.x = this.game.ball.x; o.y = this.game.ball.y; }
+      p.target = { x: o.x, y: o.y };
+      p.speedWish = o.sw || 0.85;
+      if (!o.chase && dist(p.pos, p.target) < 0.6){
+        p.speedWish = 0;
+        if (o.face !== undefined) p.facing = turnToward(p.facing, o.face, 0.2);
+      }
+    }
+  }
+}
+
+// ReplayController: transport + seeking for a loaded MatchScript session.
+// Seeks restore the nearest recorded snapshot and silently fast-forward the
+// deterministic sim, so scrubbing never replays from kickoff.
+class ReplayController {
+  constructor(game){
+    this.game = game;
+    this.session = null; // { script, mode, duration }
+    this.loopRange = null;
+    this.speed = 1;
+  }
+  load(script, mode){
+    const g = this.game;
+    this.stop();
+    g.reset(script.match && script.match.seed !== undefined ? script.match.seed : undefined);
+    if (mode === 'strict' && script.initialState) SnapshotManager.restore(g, script.initialState);
+    g.scriptSession = true;
+    if (g.recorder) g.recorder.enabled = false; // don't re-record a replay
+    if (mode === 'strict' && script.match && script.match.human){
+      // human-control state is part of the recording's initial conditions
+      g.humanMode = !!script.match.human.on;
+      g.selected = script.match.human.sel
+        ? EventSerializer.player(g, script.match.human.sel)
+        : (g.humanMode ? g.nearestToBall(g.teams[0]) : null);
+    }
+    g.scriptRunner = new ScriptRunner(g, script, mode);
+    const last = script.timeline.length ? script.timeline[script.timeline.length - 1].time : 0;
+    this.session = { script, mode, duration: Math.max(last, (script.finalState ? script.finalState.tick : 0) / 60) };
+    this.speed = 1;
+    g.simRate = 1;
+    g.paused = false;
+    return this.session;
+  }
+  stop(){
+    const g = this.game;
+    if (g.scriptRunner) g.scriptRunner.stop();
+    g.scriptSession = false;
+    if (g.recorder) g.recorder.enabled = true;
+    this.session = null; this.loopRange = null;
+    g.simRate = 1;
+  }
+  playing(){ return !!this.session && !this.game.paused; }
+  play(){ if (this.session) this.game.paused = false; }
+  pause(){ if (this.session) this.game.paused = true; }
+  setSpeed(v){ this.speed = v; this.game.simRate = v; }
+  restart(){ if (this.session) this.seek(0); }
+  t(){ return this.game.simTick / 60; }
+  // seek: nearest snapshot at or before target, then silent deterministic catch-up
+  seek(target){
+    if (!this.session) return;
+    const g = this.game;
+    target = clamp(target, 0, this.session.duration);
+    const snaps = this.session.script.snapshots || [];
+    let snap = this.session.script.initialState;
+    for (const s of snaps){ if (s.tick / 60 <= target + 1e-6) snap = s; else break; }
+    if (!snap) return;
+    const runner = g.scriptRunner;
+    SnapshotManager.restore(g, snap);
+    if (runner){
+      runner.cursor = 0;
+      while (runner.cursor < runner.timeline.length){
+        const e = runner.timeline[runner.cursor];
+        if (e.tick !== undefined ? e.tick <= snap.tick : e.time <= snap.tick / 60) runner.cursor++;
+        else break;
+      }
+      runner.snapIdx = 0; runner.pending.length = 0;
+      for (const p of runner.orders.keys()) p.scripted = false;
+      runner.orders.clear();
+    }
+    const wantTick = Math.round(target * 60);
+    const wasReplay = g.replayMode;
+    g.replayMode = true; // silent catch-up: no banners, no crowd, no recording
+    while (g.simTick < wantTick) g.step();
+    g.replayMode = wasReplay;
+  }
+  stepEvent(dirn){
+    if (!this.session) return;
+    const tl = this.session.script.timeline.filter(e => e.type !== 'movement' && e.type !== 'touch');
+    if (!tl.length) return;
+    const now = this.t();
+    let target = null;
+    if (dirn > 0) target = tl.find(e => e.time > now + 1e-3);
+    else { for (const e of tl){ if (e.time < now - 1e-3) target = e; else break; } }
+    if (target) this.seek(target.time);
+    this.game.paused = true;
+  }
+  stepFrame(){ if (this.session){ this.game.paused = true; this.game.step(); } }
+  tickLoop(){ // called from panel draw (render clock is fine for a UX loop)
+    if (this.session && this.loopRange && this.t() > this.loopRange[1]) this.seek(this.loopRange[0]);
+  }
+  bookmarks(){
+    if (!this.session) return [];
+    return this.session.script.timeline.filter(e => ['goal','card','substitution','restart','offside'].includes(e.type));
+  }
+}
+
+// ReplayCameraController: cinematic framing for broadcast replays. The iso
+// projection is fixed, so "angles" are honest framings — zoom level, target
+// and pan character — cycled with a short cut-fade like a TV truck would.
+class ReplayCameraController {
+  constructor(game){ this.game = game; this.shot = null; this.fade = 0; }
+  static ANGLES = [
+    { name: 'WIDE',        zoom: 0.82, lerp: 0.05, of: 'ball' },
+    { name: 'SIDELINE',    zoom: 1.26, lerp: 0.07, of: 'ball' },
+    { name: 'TRACKING',    zoom: 1.4,  lerp: 0.10, of: 'ball' },
+    { name: 'BEHIND GOAL', zoom: 1.5,  lerp: 0.08, of: 'goalline' },
+    { name: 'SCORER',      zoom: 1.72, lerp: 0.12, of: 'scorer' },
+  ];
+  start(scorerPid, goalT, endT){
+    const A = ReplayCameraController.ANGLES;
+    const build = [A[0], A[1], A[2]][(Math.random() * 3) | 0];
+    const finish = [A[2], A[3], scorerPid ? A[4] : A[3]][(Math.random() * 3) | 0];
+    this.shot = { scorerPid, plan: [ { until: goalT - 2.0, angle: build }, { until: endT + 1, angle: finish } ] };
+    this.fade = 0.35;
+    this.cur = build;
+  }
+  stop(){ this.shot = null; this.game.replayCam = null; }
+  update(){
+    const g = this.game;
+    if (!this.shot){ g.replayCam = null; return; }
+    this.fade = Math.max(0, this.fade - SIM_STEP); // cut-fade decays with the replay itself
+    const t = g.simTick / 60;
+    const seg = this.shot.plan.find(s => t <= s.until) || this.shot.plan[this.shot.plan.length - 1];
+    if (seg.angle !== this.cur){ this.cur = seg.angle; this.fade = 0.28; }
+    const a = seg.angle;
+    let target;
+    if (a.of === 'scorer'){
+      const p = EventSerializer.player(g, this.shot.scorerPid);
+      target = p ? { x: p.pos.x, y: p.pos.y } : { x: g.ball.x, y: g.ball.y };
+    } else if (a.of === 'goalline'){
+      const gx = g.ball.x < 52.5 ? 0 : CFG.PITCH_L;
+      target = { x: (g.ball.x * 2 + gx) / 3, y: (g.ball.y * 2 + 34) / 3 };
+    } else target = { x: g.ball.x, y: g.ball.y };
+    g.replayCam = { zoom: a.zoom, lerp: a.lerp, target, angle: a.name };
+  }
+}
+
+// GoalReplayManager: after every goal, the broadcast truck rolls it back —
+// restore a snapshot from before the buildup, re-run the DETERMINISTIC sim in
+// slow motion under cinematic cameras, then restore live state and carry on
+// with the walk-back and kickoff. Pure engine replay: no video, no fakery.
+class GoalReplayManager {
+  constructor(game){
+    this.game = game;
+    this.cfg = { enabled: true, length: 8, preRoll: 1.0, slowmo: 0.42, buildupRate: 1.15 };
+    this.playing = null;
+    this.armed = null;
+    this.cams = new ReplayCameraController(game);
+  }
+  onGoal(){
+    const g = this.game;
+    if (!this.cfg.enabled || g.replayMode || g.scriptSession || g.headless) return;
+    this.armed = { tick: g.simTick, scorer: g.match.goalScorer ? g.match.goalScorer.pid : null };
+  }
+  tick(){
+    const g = this.game;
+    if (this.armed){
+      if (g.match.state !== 'GOAL') this.armed = null;
+      else if (g.match.stateT >= this.cfg.preRoll){ this.begin(); }
+    }
+    if (this.playing){
+      // broadcast pacing: buildup slightly quick, the finish in slow motion
+      const toGoal = (this.playing.goalTick - g.simTick) / 60;
+      g.simRate = toGoal < 2.4 ? this.cfg.slowmo : this.cfg.buildupRate;
+      this.cams.update();
+      if (g.simTick >= this.playing.endTick) this.end();
+    }
+  }
+  begin(){
+    const g = this.game, rec = g.recorder;
+    const scorer = (this.armed && this.armed.scorer) || (g.match.goalScorer ? g.match.goalScorer.pid : null);
+    this.armed = null;
+    if (!rec || !rec.snapshots.length) return;
+    const goalTick = g.simTick - Math.round(g.match.stateT * 60);
+    const startT = Math.max(0, goalTick / 60 - this.cfg.length);
+    let snap = null;
+    for (const s of rec.snapshots){ if (s.tick / 60 <= startT + 1e-6) snap = s; else break; }
+    if (!snap || goalTick - snap.tick < 90) return; // nothing meaningful to roll back
+    this.playing = {
+      liveSnap: SnapshotManager.capture(g),
+      goalTick,
+      endTick: goalTick + Math.round(1.1 * 60),
+      fadeIn: 0.35,
+    };
+    g.replayMode = true;
+    SnapshotManager.restore(g, snap);
+    const wantTick = Math.round(startT * 60);
+    const hardRate = g.simRate; g.simRate = 1;
+    while (g.simTick < wantTick) g.step(); // silent catch-up to the buildup start
+    g.simRate = hardRate;
+    this.cams.start(scorer, this.playing.goalTick / 60, this.playing.endTick / 60);
+    this.t0 = g.animT;
+  }
+  end(){ this.finish(false); }
+  skip(){ if (this.playing) this.finish(true); }
+  abort(silent){ if (this.playing) this.finish(true); this.armed = null; }
+  finish(){
+    const g = this.game;
+    if (!this.playing) return;
+    SnapshotManager.restore(g, this.playing.liveSnap);
+    this.playing = null;
+    g.replayMode = false;
+    g.simRate = 1;
+    this.cams.stop();
+    g.replayFadeT = g.animT; // renderer: short fade back to live
+  }
+}
+
+// BroadcastReplayOverlay: letterbox bars, REPLAY badge, angle label, progress
+// and skip hint. Screen-space, drawn from drawHUD while a replay runs.
+const BroadcastReplayOverlay = {
+  draw(r, game){
+    const gr = game.goalReplay;
+    if (!gr || !gr.playing) return;
+    const ctx = r.ctx, W = r.W, H = r.H;
+    const age = game.animT - (gr.t0 || 0);
+    const k = easeOutCubic(clamp(age / 0.45, 0, 1));
+    const bar = Math.round(H * 0.085 * k);
+    ctx.fillStyle = '#05070a';
+    ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
+    // camera-cut fade (decayed in ReplayCameraController.update)
+    if (gr.cams.fade > 0){
+      ctx.fillStyle = 'rgba(0,0,0,' + clamp(gr.cams.fade * 2.4, 0, 0.8).toFixed(2) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    // REPLAY badge
+    ctx.textBaseline = 'middle';
+    ctx.font = UITheme.sans('800', 13);
+    const bw = ctx.measureText('REPLAY').width + 40;
+    const bx = W - bw - 14, by = bar + 10;
+    glassPanel(ctx, bx, by, bw, 28, 14);
+    const pulse = 0.55 + 0.45 * Math.sin(game.animT * 5);
+    ctx.fillStyle = 'rgba(226,89,72,' + pulse.toFixed(2) + ')';
+    ctx.beginPath(); ctx.arc(bx + 15, by + 14, 4.5, 0, 7); ctx.fill();
+    ctx.fillStyle = UITheme.ink;
+    ctx.fillText('REPLAY', bx + 26, by + 14.5);
+    // angle label
+    if (game.replayCam && game.replayCam.angle){
+      ctx.font = UITheme.sans('600', 10.5);
+      const aw = ctx.measureText(game.replayCam.angle).width + 18;
+      glassPanel(ctx, bx + bw - aw, by + 34, aw, 20, 7);
+      ctx.fillStyle = UITheme.dim;
+      ctx.fillText(game.replayCam.angle, bx + bw - aw + 9, by + 44);
+    }
+    // progress along the replay window + skip hint
+    const p = gr.playing;
+    const span = p.endTick - (p.goalTick - gr.cfg.length * 60);
+    const frac = clamp(1 - (p.endTick - game.simTick) / span, 0, 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillRect(0, H - bar - 2, W, 2);
+    ctx.fillStyle = UITheme.accent;
+    ctx.fillRect(0, H - bar - 2, W * frac, 2);
+    ctx.font = UITheme.sans('600', 10.5);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    const hint = r.W < 720 ? 'tap to skip' : 'SPACE · skip replay';
+    ctx.fillText(hint, W / 2 - ctx.measureText(hint).width / 2, H - bar / 2);
+    ctx.textBaseline = 'top';
+  },
+};
+
 class Game {
   constructor(){
     this.input = new Input();
@@ -4667,6 +6375,28 @@ class Game {
     this.panel = null; this.followPlayer = null;
     this.history = []; this.histScroll = 0;
     this.fx = new EventAnimationManager(this);
+    this.broadcast = new BroadcastOverlay(this);
+    this.takeRequested = false; this.takeShoot = false;
+    this.replayMode = false; this.simRate = 1;
+    this.recorder = new MatchRecorder(this);
+    this.scriptRunner = null;
+    this.replay = new ReplayController(this);
+    this.goalReplay = new GoalReplayManager(this);
+    this.scriptReport = null;
+    this.nextLoadMode = 'strict';
+    // hidden file input for script import
+    this.fileInput = document.createElement('input');
+    this.fileInput.type = 'file'; this.fileInput.accept = '.json,application/json';
+    this.fileInput.style.display = 'none';
+    document.body.appendChild(this.fileInput);
+    this.fileInput.addEventListener('change', () => {
+      const f = this.fileInput.files && this.fileInput.files[0];
+      this.fileInput.value = '';
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => this.loadScript(String(rd.result), { mode: this.nextLoadMode });
+      rd.readAsText(f);
+    });
     this.reset();
     this.renderer = new Renderer(document.getElementById('game'), this);
     // pointerdown covers mouse AND touch (tap) with one code path
@@ -4690,7 +6420,7 @@ class Game {
   applyEnv(){
     const g = GRASS_TYPES[this.grassKey], w = WEATHER_TYPES[this.weatherKey];
     const mag = w.wind || 0;
-    if (this.windDir === undefined) this.windDir = Math.random() * Math.PI * 2;
+    if (this.windDir === undefined) this.windDir = srand() * Math.PI * 2;
     ENV = {
       grass: g, weather: w,
       groundFr: CFG.BALL_FR_GROUND * g.frMul * w.frMul,
@@ -4728,10 +6458,11 @@ class Game {
   trackPlayer(){ return this.ball.holder || this.ball.controller; }
   // MatchHistoryLog: newest-first live feed of real match events
   commentate(type, d = {}){
+    if (this.replayMode) return;
     const text = commentaryText(type, d);
     if (!text) return;
     this.history.unshift({
-      min: Math.min(90, Math.floor(this.match.tMatch / 60)) + "'",
+      min: Math.min(90, Math.floor(this.match.tMatch / 60) + 1) + "'",
       teamIdx: d.team ? d.team.idx : -1,
       type, text,
     });
@@ -4740,6 +6471,7 @@ class Game {
   logEvent(type, text){ this.commentate('raw', { text }); }
   notifyTactic(label){
     const team = this.teams[0];
+    if (this.recorder) this.recorder.log('tactic', { team: team.id, label, tactics: { ...team.tactics }, formation: team.assignedFormation });
     this.commentate('tactic', { team, what: label });
     if (this.fx && this.stadium) this.fx.play(new CoachInstructionAnimation(this, team, label));
   }
@@ -4750,6 +6482,7 @@ class Game {
   closePanel(){ this.panel = null; }
   // SelectionManager: one pointer entry point for mouse and touch
   onPointer(cx, cy){
+    if (this.goalReplay && this.goalReplay.playing){ this.goalReplay.skip(); return; }
     const r = this.renderer;
     if (r.lastOx === undefined || this.coachOpen) return;
     // a second finger in the same frame finds cleared zones — don't let it
@@ -4760,7 +6493,7 @@ class Game {
       const z = this.ui.zones[i];
       if (cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h){
         this.ui.zones.length = 0; // a second finger this frame must not act on stale zones
-        if (z.cb) z.cb();
+        if (z.cb) z.cb(cx, cy);
         return;
       }
     }
@@ -4789,12 +6522,25 @@ class Game {
     team.players = team.players.filter(q => q !== p);
     team.offList.push(p);
     p.walkOff = true; // the long walk to the dugout
+    if (this.recorder) this.recorder.log('send_off', { actor: p.pid });
     const b = this.ball;
     if (b.controller === p) b.controller = null;
     if (b.holder === p) b.holder = null;
     if (b.intendedReceiver === p) b.intendedReceiver = null;
     const rs = this.match.restart;
-    if (rs && rs.taker === p) rs.taker = team.players.find(q => !q.isGK) || team.players[0];
+    if (rs && rs.taker === p){
+      rs.taker = team.players.find(q => !q.isGK) || team.players[0];
+      // the stand-in taker is driven by Match.update, not his staged spot
+      if (rs.spTargets && rs.taker) rs.spTargets.delete(rs.taker);
+    }
+    if (rs){ // drop every choreography reference to the dismissed player
+      if (rs.spTargets) rs.spTargets.delete(p);
+      if (rs.spTargets2) rs.spTargets2.delete(p);
+      if (rs.plan) rs.plan.delete(p);
+      if (rs.wall) rs.wall = rs.wall.filter(q => q !== p);
+      for (const k of ['helper', 'lying', 'decoy', 'short', 'shortTo'])
+        if (rs[k] === p) rs[k] = null;
+    }
     if (this.selected === p) this.selected = this.humanMode ? this.nearestToBall(this.teams[0]) : null;
     if (this.followPlayer === p) this.followPlayer = null;
     this.positionBenches();
@@ -4818,19 +6564,35 @@ class Game {
     if (b.holder === out) b.holder = null;
     if (b.intendedReceiver === out) b.intendedReceiver = null;
     const rs = this.match.restart;
-    if (rs && rs.taker === out) rs.taker = sub;
-    if (rs && rs.helper === out) rs.helper = sub;
-    if (rs && rs.spTargets && rs.spTargets.has(out)){
-      rs.spTargets.set(sub, rs.spTargets.get(out));
-      rs.spTargets.delete(out);
+    if (rs){ // hand every choreography role to the replacement
+      if (rs.taker === out) rs.taker = sub;
+      for (const k of ['helper', 'lying', 'decoy', 'short', 'shortTo'])
+        if (rs[k] === out) rs[k] = sub;
+      if (rs.wall){ const i = rs.wall.indexOf(out); if (i >= 0) rs.wall[i] = sub; }
+      // staged spots transfer only when the sub can plausibly reach them;
+      // the kickoff plan always transfers (RESET has its own long timer)
+      if (rs.spTargets && rs.spTargets.has(out)){
+        const sp = rs.spTargets.get(out); rs.spTargets.delete(out);
+        const sp2 = rs.spTargets2 && rs.spTargets2.get(out);
+        if (rs.spTargets2) rs.spTargets2.delete(out);
+        if (dist(sub.pos, sp) <= 38){
+          rs.spTargets.set(sub, sp);
+          if (sp2) rs.spTargets2.set(sub, sp2);
+        }
+      }
+      if (rs.plan && rs.plan.has(out)){ rs.plan.set(sub, rs.plan.get(out)); rs.plan.delete(out); }
+      if (rs.spTargets && rs.taker) rs.spTargets.delete(rs.taker);
     }
     if (this.selected === out) this.selected = sub;
     if (this.followPlayer === out) this.followPlayer = sub;
     if (this.statsFor === out) this.statsFor = sub;
     out.walkOff = true; // walks to the dugout instead of teleporting
     this.positionBenches();
-    this.announce('SUB ' + team.code + ': ' + sub.name + ' ON · ' + out.name + ' OFF', 3);
+    if (this.broadcast) this.broadcast.event({ icon: 'sub', title: 'SUBSTITUTION',
+      sub: sub.name + ' on · ' + out.name + ' off', color: team.kit.shirt, dur: 3.2, pri: 1.8 });
+    if (this.stadium) this.stadium.react('sub', team);
     this.commentate('sub', { team, sin: sub, sout: out });
+    if (this.recorder) this.recorder.log('substitution', { team: team.id, on: sub.pid, off: out.pid, auto: this._autoSub || undefined });
     if (this.fx && this.stadium) this.fx.play(new SubstitutionAnimation(this, team, out, sub));
     return true;
   }
@@ -4862,7 +6624,11 @@ class Game {
         const sc = (ROLE_LINE[sb.slot.role] === worst.line ? 2 : 0) + sb.rating() / 99;
         if (sc > pScore){ pScore = sc; pick = sb; }
       }
-      if (pick && this.performSub(team, worst, pick)) team.lastAutoSub = m.tMatch;
+      if (pick){
+        this._autoSub = true; // recorder tag: deterministic AI sub, not a user action
+        if (this.performSub(team, worst, pick)) team.lastAutoSub = m.tMatch;
+        this._autoSub = false;
+      }
     }
   }
   positionBenches(){
@@ -4925,21 +6691,26 @@ class Game {
     if (msgs.length) this.notifyTactic(msgs.join(' · '));
     this.closeCoach();
   }
-  reset(){
+  reset(seed){
     spriteCache.clear(); // appearances re-roll each match
+    // DeterministicRandom: one seed drives environment, squads and every sim
+    // die — the same seed always reproduces the same match
+    this.matchSeed = (seed !== undefined ? seed : (Math.random() * 1e9)) | 0;
+    RNG.seed(this.matchSeed);
+    this.simTick = 0; this.simAcc = 0;
     // random surface & weather each match — unless the user picked one (G/N/__setEnv)
     if (!this.envLocked){
       const gks = Object.keys(GRASS_TYPES);
-      this.grassKey = gks[Math.floor(Math.random() * gks.length)];
+      this.grassKey = gks[Math.floor(srand() * gks.length)];
       const wPool = ['sunny','sunny','sunny','cloudy','cloudy','sunset','night','night','drizzle',
         'rainy','storm','fog','mist','windy','cold','hot','afterrain','snow'];
-      this.weatherKey = wPool[(Math.random() * wPool.length) | 0];
-    }
-    this.windDir = Math.random() * Math.PI * 2;
-    this.surfaceSeed = (Math.random() * 1e9) | 0;
+      this.weatherKey = wPool[(srand() * wPool.length) | 0];
+    } else { srand(); srand(); } // env locked: burn the same dice so the stream stays aligned
+    this.windDir = srand() * Math.PI * 2;
+    this.surfaceSeed = (srand() * 1e9) | 0;
     this.applyEnv();
     this.statsFor = null;
-    const rng = mulberry32((Math.random() * 1e9) | 0);
+    const rng = mulberry32(this.matchSeed ^ 0x9E3779B9); // squad-generation stream
     this.teams = [
       new Team(0, {
         name: 'RED FALCONS', code: 'RED',
@@ -4963,17 +6734,27 @@ class Game {
     this.pendingPass = null; this.lastShooter = null;
     this.events = [];
     this.counts = { foul:0, advantage:0, corner:0, throwin:0, goalkick:0, freekick:0, header:0, save:0, cross:0 };
-    this.match.firstKick = Math.random() < 0.5 ? 0 : 1;
+    this.match.firstKick = srand() < 0.5 ? 0 : 1;
     this.match.setupKickoff(this.match.firstKick);
     this.announce(ENV.grass.label + ' · ' + ENV.weather.label, 3);
     this.panel = null; this.followPlayer = null;
     this.history = []; this.histScroll = 0;
     this.lastCallT = -1e9; this.lastChanceT = -1e9; // fresh match, fresh voices
     this.frameNo = 0;
+    this.celebration = null;
+    this.replayMode = false; this.simRate = 1;
+    // a bare reset (R key) during a script session must end it cleanly,
+    // or the recorder would stay disabled for the fresh live match
+    if (this.replay && this.replay.session) this.replay.stop();
+    this.scriptRunner = null;
+    if (this.goalReplay) this.goalReplay.abort(true);
     if (this.fx) this.fx.list.length = 0;
+    if (this.broadcast) this.broadcast.clear();
+    this.takeRequested = false; this.takeShoot = false;
     this.positionBenches();
     if (this.renderer) this.renderer.buildBackground();
     if (this.selected) this.selected = this.teams[0].players[9];
+    if (this.recorder) this.recorder.start(); // pristine-kickoff snapshot + fresh timeline
   }
   other(team){ return this.teams[1 - team.idx]; }
   possessionTeam(){
@@ -4982,6 +6763,7 @@ class Game {
     return this.ball.lastTouchTeam;
   }
   announce(text, dur){
+    if (this.replayMode) return;
     const last = this.events[this.events.length - 1];
     if (last && last.text === text && last.until > this.animT) return;
     this.events.push({ text, until: this.animT + (dur || 2.2) });
@@ -4990,6 +6772,16 @@ class Game {
   handleGlobalKeys(){
     const inp = this.input;
     if (this.coachOpen) return; // console captures the keyboard
+    if (this.goalReplay && this.goalReplay.playing){
+      // replay owns the shortcuts: space/escape skips, everything else waits
+      if (inp.once('Space') || inp.once('Escape') || inp.once('Enter')) this.goalReplay.skip();
+      inp.passReleased = null; inp.shootReleased = null;
+      return;
+    }
+    if (inp.once('KeyV')){
+      if (this.panel && this.panel.type === 'script') this.closePanel();
+      else this.openPanel('script');
+    }
     if (inp.once('KeyC') || inp.once('Enter')){ this.openCoach(); return; }
     if (inp.once('KeyM')) this.showMap = !this.showMap;
     if (inp.once('KeyT')){
@@ -5025,11 +6817,26 @@ class Game {
       if (dTap && !this.humanMode) this.debug = !this.debug; }
     if (inp.once('KeyH')){
       this.humanMode = !this.humanMode;
+      if (this.recorder) this.recorder.log('human_mode', { on: this.humanMode });
       this.selected = this.humanMode ? this.nearestToBall(this.teams[0]) : null;
       // discard any releases recorded while spectating
       inp.passReleased = null; inp.shootReleased = null; this.kickBuffer = null;
+      // a pending human set piece reverts to the AI when the coach walks away
+      const rsH = this.match.restart;
+      if (!this.humanMode && rsH && rsH.humanTaker){
+        rsH.humanTaker = false; rsH.awaiting = false;
+        rsH.force = Math.min(rsH.force || 4, (rsH.wait || 1.2) + 3.6);
+        this.takeRequested = false; this.takeShoot = false;
+      }
     }
-    if (this.humanMode && inp.once('KeyE')) this.selected = this.nextSelection();
+    if (this.humanMode && inp.once('KeyE')){
+      // no cycling away from the taker while a set piece waits on the coach
+      const rsE = this.match.restart;
+      if (!(rsE && rsE.humanTaker && this.match.state !== 'PLAYING')){
+        this.selected = this.nextSelection();
+        if (this.recorder && this.selected) this.recorder.log('human_select', { actor: this.selected.pid });
+      }
+    }
   }
   nearestToBall(team){
     let best = null, bd = 1e9;
@@ -5046,6 +6853,21 @@ class Game {
     const i = list.indexOf(this.selected);
     return list[(i + 1) % list.length];
   }
+  // ScriptParser -> ReplayController: validate then start a script session
+  loadScript(src, opts = {}){
+    const res = ScriptParser.parse(src);
+    this.scriptReport = { errors: res.errors, warnings: res.warnings, when: this.animT };
+    if (!res.ok){
+      this.announce('SCRIPT REJECTED: ' + res.errors.length + ' error(s)', 3.2);
+      this.openPanel('script');
+      return { ok: false, errors: res.errors, warnings: res.warnings };
+    }
+    const mode = opts.mode || this.nextLoadMode || 'strict';
+    this.replay.load(res.script, mode);
+    this.announce('SCRIPT LOADED · ' + mode.toUpperCase() + (res.warnings.length ? ' · ' + res.warnings.length + ' warning(s)' : ''), 3);
+    this.openPanel('script');
+    return { ok: true, errors: [], warnings: res.warnings };
+  }
   humanControl(dt){
     if (!this.humanMode) return;
     let p = this.selected;
@@ -5061,20 +6883,48 @@ class Game {
       p.target = p.pos; p.speedWish = 0;
       return;
     }
-    const dir = this.input.moveDir();
+    const rsx = this.match.restart;
+    if (this.match.state !== 'PLAYING' && this.match.state !== 'RESET' && rsx && rsx.taker === p){
+      // Match.update owns the taker's walk-in and polls the trigger keys —
+      // releases are left un-consumed so an early press buffers until ready
+      this.kickBuffer = null;
+      return;
+    }
+    let dir = this.input.moveDir();
+    if (this.scriptRunner && this.scriptRunner.moveDir !== undefined) dir = this.scriptRunner.moveDir;
+    const dirKey = dir ? Math.round(dir.x * 500) + ',' + Math.round(dir.y * 500) : '';
+    if (dirKey !== this._lastMoveKey){
+      this._lastMoveKey = dirKey;
+      // full precision: these values are RE-INJECTED in strict replay, and
+      // any rounding becomes physical divergence
+      if (this.recorder) this.recorder.log('human_move', { actor: p.pid,
+        dir: dir ? { x: dir.x, y: dir.y } : null });
+    }
     if (dir){
       p.target = add(p.pos, scl(dir, 6));
       p.speedWish = 1;
       p.facing = turnToward(p.facing, Math.atan2(dir.y, dir.x), CFG.TURN_RATE * dt * 1.4);
+    } else if (this.match.state !== 'PLAYING' && rsx && rsx.spTargets && rsx.spTargets.has(p)){
+      // dead-ball choreography: with no stick input the selected player walks
+      // to the staged spot like everyone else (arrows still override)
+      const sp = rsx.spTargets.get(p);
+      p.target = { x: sp.x, y: sp.y };
+      p.speedWish = dist(p.pos, p.target) < 1.2 ? 0 : (sp.sw !== undefined ? sp.sw : 0.8);
     } else {
       p.target = p.pos; p.speedWish = 0;
     }
     const pwr = this.input.passReleased, swr = this.input.shootReleased;
     this.input.passReleased = null; this.input.shootReleased = null;
+    if (pwr || swr){
+      // exogenous input: recorded so strict replay can re-arm it identically
+      if (this.recorder) this.recorder.log('human_kick', { actor: p.pid,
+        pass: pwr || undefined, shoot: swr || undefined }); // full precision — re-injected in strict replay
+    }
     if (this.match.state !== 'PLAYING'){ this.kickBuffer = null; return; } // no kicking at dead balls
     // buffer a released kick briefly so a slightly-early release still fires
-    if (pwr || swr) this.kickBuffer = { pw: pwr, sw: swr, until: this.animT + 0.35 };
-    if (this.kickBuffer && this.animT > this.kickBuffer.until) this.kickBuffer = null;
+    // (sim ticks, not wall time — the buffer must replay deterministically)
+    if (pwr || swr) this.kickBuffer = { pw: pwr, sw: swr, untilTick: this.simTick + 21 };
+    if (this.kickBuffer && this.simTick > this.kickBuffer.untilTick) this.kickBuffer = null;
     if (this.kickBuffer && canKick(p, this.ball)){
       const pw = this.kickBuffer.pw, sw = this.kickBuffer.sw;
       this.kickBuffer = null;
@@ -5112,7 +6962,10 @@ class Game {
   update(dt){
     const m = this.match;
     m.update(dt);
-    if (m.state === 'GOAL' || m.state === 'HALFTIME' || m.state === 'FULLTIME') return;
+    if (m.state === 'GOAL' || m.state === 'HALFTIME' || m.state === 'FULLTIME'){
+      if (m.state === 'GOAL' && this.celebration) this.celebration.update(dt, this);
+      return;
+    }
     const frozen = m.state === 'KICKOFF';
     for (const t of this.teams) for (const p of t.players) p.human = false;
     this.frameNo = (this.frameNo || 0) + 1; // per-frame claims (runner tracking)
@@ -5129,9 +6982,9 @@ class Game {
       for (const p of t.players){
         p.thinkT -= dt;
         if (p.thinkT <= 0){
-          p.thinkInterval = 0.13 + Math.random() * 0.07;
+          p.thinkInterval = 0.13 + srand() * 0.07;
           p.thinkT = p.thinkInterval;
-          if (p.duty !== 'taker' && !(this.humanMode && p === this.selected)) playerThink(p, this);
+          if (p.duty !== 'taker' && !p.scripted && !(this.humanMode && p === this.selected)) playerThink(p, this);
         }
       }
     }
@@ -5170,6 +7023,15 @@ class Game {
       this.ball.vx = this.ball.vy = this.ball.vz = 0;
     }
   }
+  // one fixed simulation step — the ONLY way sim time advances. Determinism
+  // depends on every path (live loop, __simulate, replays) using this.
+  step(){
+    this.simTick = (this.simTick || 0) + 1;
+    if (this.scriptRunner) this.scriptRunner.tick();
+    this.update(SIM_STEP);
+    if (this.recorder) this.recorder.tick();
+    if (this.goalReplay) this.goalReplay.tick();
+  }
   loop(){
     const now = performance.now();
     let dt = Math.min(0.05, (now - this.lastT) / 1000);
@@ -5177,9 +7039,12 @@ class Game {
     this.fps = lerp(this.fps, 1 / Math.max(dt, 1e-4), 0.05);
     this.animT += dt;
     this.handleGlobalKeys();
+    if (this.replay && this.replay.session) this.replay.tickLoop();
     if (!this.paused){
-      const steps = dt > 0.028 ? 2 : 1;
-      for (let i = 0; i < steps; i++) this.update(dt / steps);
+      // fixed-timestep accumulator; simRate is the replay slow-mo/fast-forward
+      const rate = this.simRate !== undefined ? this.simRate : 1;
+      this.simAcc = Math.min((this.simAcc || 0) + dt * rate, SIM_STEP * 6);
+      while (this.simAcc >= SIM_STEP){ this.step(); this.simAcc -= SIM_STEP; }
     }
     // the stadium is purely cosmetic and stays alive even when paused;
     // it runs on the render clock so headless __simulate skips it entirely
@@ -5195,11 +7060,14 @@ class Game {
   }
   simulate(seconds){
     const n = Math.floor(seconds * 60);
-    for (let i = 0; i < n; i++){
-      this.animT += 1 / 60;
-      this.update(1 / 60);
-      if (!isFinite(this.ball.x + this.ball.y + this.ball.z)) throw new Error('NaN ball at step ' + i);
-    }
+    this.headless = true; // broadcast replays are for live viewing only
+    try {
+      for (let i = 0; i < n; i++){
+        this.animT += SIM_STEP;
+        this.step();
+        if (!isFinite(this.ball.x + this.ball.y + this.ball.z)) throw new Error('NaN ball at step ' + i);
+      }
+    } finally { this.headless = false; }
     return this.stats();
   }
   stats(){
@@ -5221,7 +7089,7 @@ class Game {
 const game = new Game();
 window.game = game;
 window.__simulate = s => game.simulate(s);
-window.__reset = () => game.reset();
+window.__reset = seed => game.reset(seed);
 window.__stats = () => game.stats();
 // programmatic coach API: __coach("press high and attack the wings")
 window.__coach = t => {
@@ -5238,6 +7106,22 @@ window.__setEnv = (grass, weather) => {
   return ENV.grass.label + ' · ' + ENV.weather.label;
 };
 window.__unlockEnv = () => { game.envLocked = false; return 'env re-randomizes each match'; };
+// ---- scripting / replay console API ----
+window.__exportScript = () => game.recorder ? game.recorder.export() : null;
+window.__exportScriptJSON = () => JSON.stringify(window.__exportScript());
+window.__downloadScript = () => {
+  const doc = window.__exportScript();
+  if (!doc) return 'no recording';
+  const blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'fobal-match-' + (doc.match.seed >>> 0) + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  return a.download;
+};
+window.__loadScript = (src, opts) => game.loadScript(src, opts || {});
+window.__validateScript = src => { const r = ScriptParser.parse(src); return { ok: r.ok, errors: r.errors, warnings: r.warnings }; };
 </script>
 </body>
 </html>
