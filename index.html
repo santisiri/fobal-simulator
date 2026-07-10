@@ -4897,9 +4897,9 @@ class Renderer {
         row([
           ['GO', { cb: () => rp.seek(Math.max(0, selEv.time - 1)) }],
           ['DEL', { cb: () => mut(() => { const k = sess.script.timeline.indexOf(selEv); if (k >= 0) sess.script.timeline.splice(k, 1); ed.sel = -1; }) }],
-          ['DUP', { cb: () => mut(() => sess.script.timeline.push({ ...selEv, id: selEv.id + 'c', time: +(selEv.time + 0.5).toFixed(3) })) }],
-          ['−.5s', { cb: () => mut(() => { selEv.time = Math.max(0, +(selEv.time - 0.5).toFixed(3)); }) }],
-          ['+.5s', { cb: () => mut(() => { selEv.time = +(selEv.time + 0.5).toFixed(3); }) }],
+          ['DUP', { cb: () => mut(() => { const c = { ...selEv, id: selEv.id + 'c', time: +(selEv.time + 0.5).toFixed(3) }; delete c.tick; sess.script.timeline.push(c); }) }],
+          ['−.5s', { cb: () => mut(() => { selEv.time = Math.max(0, +(selEv.time - 0.5).toFixed(3)); delete selEv.tick; }) }],
+          ['+.5s', { cb: () => mut(() => { selEv.time = +(selEv.time + 0.5).toFixed(3); delete selEv.tick; }) }],
         ], 20);
         row([
           ['ACTOR ▸', { dim: !selEv.actor, cb: () => mut(() => {
@@ -4909,8 +4909,8 @@ class Renderer {
           }) }],
           ['PWR −', { dim: selEv.power === undefined, cb: () => mut(() => { if (selEv.power !== undefined) selEv.power = +clamp(selEv.power - 0.1, 0.05, 1).toFixed(2); }) }],
           ['PWR +', { dim: selEv.power === undefined, cb: () => mut(() => { if (selEv.power !== undefined) selEv.power = +clamp(selEv.power + 0.1, 0.05, 1).toFixed(2); }) }],
-          ['+ PASS', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +tNow.toFixed(2), type: 'pass', actor: selEv.actor || 'home_10', power: 0.5, trajectory: 'ground' })) }],
-          ['+ MOVE', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +tNow.toFixed(2), type: 'move', actor: selEv.actor || 'home_10', to: { x: +game.ball.x.toFixed(1), y: +game.ball.y.toFixed(1) }, speed: 0.9 })) }],
+          ['+ PASS', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +(tNow + 0.05).toFixed(2), type: 'pass', actor: selEv.actor || 'home_10', power: 0.5, trajectory: 'ground' })) }],
+          ['+ MOVE', { cb: () => mut(() => sess.script.timeline.push({ id: 'u' + ((Math.random() * 1e6) | 0), time: +(tNow + 0.05).toFixed(2), type: 'move', actor: selEv.actor || 'home_10', to: { x: +game.ball.x.toFixed(1), y: +game.ball.y.toFixed(1) }, speed: 0.9 })) }],
         ], 20);
       }
     } else {
@@ -4956,7 +4956,7 @@ class Renderer {
   // human-controlled set piece: two option chips (tap or SPACE/SHIFT)
   drawTakeControls(game){
     const m = game.match, r = m.restart;
-    if (!r || !r.humanTaker || !r.awaiting || !game.humanMode || game.coachOpen) return;
+    if (!r || !r.humanTaker || !r.awaiting || !game.humanMode || game.coachOpen || game.scriptSession) return;
     const labels = {
       THROWIN: ['THROW SAFE', 'THROW LONG'],
       CORNER: ['SHORT CORNER', 'DELIVER CROSS'],
@@ -5349,13 +5349,19 @@ class SubstitutionAnimation {
   }
 }
 // CoachInstructionAnimation: the coach barks, nearby players glance over.
+// sim-relevant side effect of a coach shout: nearby players glance at the
+// bench (glanceT turns facing, which feeds kick error) — shared so strict
+// script replay reproduces it exactly
+function coachGlance(team){
+  for (const p of team.players)
+    if (!p.isGK && p.pos.y < 24 && Math.abs(p.pos.x - 52.5) < 34) p.glanceT = 0.9;
+}
 class CoachInstructionAnimation {
   constructor(game, team, label){
     this.dur = 2.4;
     this.label = label.length > 26 ? label.slice(0, 25) + '…' : label;
     this.coach = game.stadium && game.stadium.actors.find(a => a instanceof BenchStaff && a.role === 'coach' && a.team === team);
-    for (const p of team.players)
-      if (!p.isGK && p.pos.y < 24 && Math.abs(p.pos.x - 52.5) < 34) p.glanceT = 0.9;
+    coachGlance(team);
   }
   update(dt, game){
     if (this.coach && ((this.t * 3) | 0) % 2 === 0) this.coach.setAction('point', 0.4);
@@ -5564,7 +5570,8 @@ const EventSerializer = {
 const SnapshotManager = {
   PLAYER_FIELDS: ['facing','runPhase','stamina','speedWish','duty','thinkT','thinkInterval','decideT',
     'kickCooldown','touchCd','tackleCd','slowT','blockCd','holdT','holdCd','diving','action','actionT',
-    'actionDur','slideHit','glanceT','callT','callCd','callText','wallJumpT','walkOff','role','line','isGK'],
+    'actionDur','slideHit','glanceT','callT','callCd','callText','wallJumpT','walkOff','role','line','isGK',
+    'form','value','valueDelta'],
   BALL_FIELDS: ['x','y','z','vx','vy','vz','spin','roll','flightT','isShot','px','py','pz',
     'lastKickShot','lastKickClock','shotCredited','prevTouchClock','prevTouch2Clock'],
   BALL_REFS: ['controller','holder','intendedReceiver','lastToucher','lastKicker','prevToucher','prevToucher2'],
@@ -5584,6 +5591,8 @@ const SnapshotManager = {
         lastShooter: E.pid(game.lastShooter),
         pendingPass: game.pendingPass
           ? { team: E.tid(game.pendingPass.team), passer: E.pid(game.pendingPass.passer), t: game.pendingPass.t } : null,
+        human: { on: game.humanMode, sel: EventSerializer.pid(game.selected) },
+        kickBuffer: game.kickBuffer ? { ...game.kickBuffer } : null,
         celebration: game.celebration && game.celebration.scorer ? {
           scorer: E.pid(game.celebration.scorer),
           mates: game.celebration.mates.map(p => E.pid(p)),
@@ -5604,6 +5613,7 @@ const SnapshotManager = {
         action: r.action, actionT: r.actionT, actionDur: r.actionDur,
         target: { ...r.target }, signalT: r.signalT || 0 }))(game.ref),
       teams: game.teams.map(t => ({
+        assignedFormation: t.assignedFormation,
         tactics: { ...t.tactics }, attackDir: t.attackDir, subsUsed: t.subsUsed, lastAutoSub: t.lastAutoSub || 0,
         shots: t.shots, onTarget: t.onTarget, passAtt: t.passAtt, passCmp: t.passCmp, possT: t.possT, fouls: t.fouls,
         gk: E.pid(t.gk),
@@ -5662,7 +5672,7 @@ const SnapshotManager = {
         p.pos = { ...ps.pos }; p.vel = { ...ps.vel }; p.target = { ...ps.target };
         p.slot = { ...ps.slot }; p.stats = { ...ps.stats };
         p.decision = ps.decision ? { ...ps.decision, receiver: P(ps.decision.receiver) } : { type: 'dribble' };
-        for (const k of this.PLAYER_FIELDS) p[k] = ps[k];
+        for (const k of this.PLAYER_FIELDS) if (ps[k] !== undefined) p[k] = ps[k];
         p.human = false; p.trackClaim = 0;
       }
       team.players = ts.players.map(P).filter(Boolean);
@@ -5670,6 +5680,7 @@ const SnapshotManager = {
       team.offList = ts.offList.map(P).filter(Boolean);
       team.gk = P(ts.gk) || team.players[0];
       Object.assign(team.tactics, ts.tactics);
+      team.assignedFormation = ts.assignedFormation !== undefined ? ts.assignedFormation : ts.tactics.formation;
       team.attackDir = ts.attackDir; team.subsUsed = ts.subsUsed; team.lastAutoSub = ts.lastAutoSub;
       team.shots = ts.shots; team.onTarget = ts.onTarget; team.passAtt = ts.passAtt; team.passCmp = ts.passCmp;
       team.possT = ts.possT; team.fouls = ts.fouls;
@@ -5708,7 +5719,11 @@ const SnapshotManager = {
     if (game.offsideSys) game.offsideSys.watch = snap.offside
       ? { set: new Set(snap.offside.set.map(P).filter(Boolean)),
           team: E.team(game, snap.offside.team), t: snap.offside.t } : null;
-    game.kickBuffer = null;
+    game.kickBuffer = snap.g && snap.g.kickBuffer ? { ...snap.g.kickBuffer } : null;
+    if (snap.g && snap.g.human){
+      game.humanMode = !!snap.g.human.on;
+      game.selected = P(snap.g.human.sel);
+    }
     if (game.selected && !game.teams[0].players.includes(game.selected))
       game.selected = game.humanMode ? game.nearestToBall(game.teams[0]) : null;
     if (game.statsFor && game.statsFor.team && !map.has(game.statsFor.pid)) game.statsFor = null;
@@ -5764,13 +5779,17 @@ class MatchRecorder {
   log(type, data){
     if (!this.enabled || this.game.replayMode) return null;
     // tick is the authoritative timestamp (time is a rounded convenience —
-    // strict playback must fire on the exact sim step)
-    const e = { id: 'e' + (++this.eventSeq), time: this.t(), tick: this.game.simTick, type, ...(data || {}) };
+    // strict playback must fire on the exact sim step). Events logged from
+    // UI handlers between steps take effect on the NEXT tick, so stamp them
+    // there — otherwise every panel click becomes a one-tick drift seed.
+    const tick = this.game.simTick + (this.game._inStep ? 0 : 1);
+    const e = { id: 'e' + (++this.eventSeq), time: this.t(), tick, type, ...(data || {}) };
     this.timeline.push(e);
     return e;
   }
   tick(){
     if (!this.enabled || this.game.replayMode) return;
+    if (this.game.match.state === 'FULLTIME') return; // nothing left to record
     const g = this.game;
     if (g.simTick % this.snapEvery === 0) this.snapshots.push(SnapshotManager.capture(g));
     if (g.simTick % this.moveEvery === 0){
@@ -5852,6 +5871,20 @@ const ScriptValidator = {
     if (!doc.match || typeof doc.match !== 'object') errors.push('missing match section');
     else if (doc.match.seed === undefined && !doc.initialState)
       warnings.push('no seed and no initialState — strict playback unavailable');
+    // state sections must be structurally sound or seeking/restoring throws
+    const validSnap = s => s && typeof s === 'object' && Number.isFinite(s.tick)
+      && s.ball && typeof s.ball === 'object' && s.match && typeof s.match === 'object'
+      && Array.isArray(s.teams) && s.env && typeof s.env === 'object';
+    if (doc.initialState && !validSnap(doc.initialState)) errors.push('malformed initialState');
+    if (doc.finalState && !validSnap(doc.finalState)){ warnings.push('malformed finalState — ignored'); doc.finalState = null; }
+    if (doc.snapshots !== undefined){
+      if (!Array.isArray(doc.snapshots)){ warnings.push('snapshots is not an array — ignored'); doc.snapshots = []; }
+      else {
+        const n0 = doc.snapshots.length;
+        doc.snapshots = doc.snapshots.filter(validSnap);
+        if (doc.snapshots.length < n0) warnings.push((n0 - doc.snapshots.length) + ' malformed snapshot(s) dropped');
+      }
+    }
     const knownIds = new Set(['ball', 'home', 'away']);
     if (Array.isArray(doc.teams))
       for (const t of doc.teams)
@@ -5866,6 +5899,7 @@ const ScriptValidator = {
       const at = 'timeline[' + i + '] ';
       if (!e || typeof e !== 'object'){ errors.push(at + 'is not an object'); return; }
       if (typeof e.time !== 'number' || !isFinite(e.time) || e.time < 0) errors.push(at + 'invalid time ' + e.time);
+      if (e.tick !== undefined && !Number.isFinite(e.tick)) errors.push(at + 'invalid tick ' + e.tick);
       else { if (e.time < lastT) unsorted = true; lastT = Math.max(lastT, e.time); }
       if (!e.type) errors.push(at + 'missing type');
       else if (!this.KNOWN_TYPES.includes(e.type)) warnings.push(at + 'unknown type "' + e.type + '" (will be skipped)');
@@ -5905,7 +5939,8 @@ class ScriptRunner {
     this.mode = mode || 'strict';
     this.timeline = script.timeline;
     this.cursor = 0;
-    this.moveDir = undefined;          // strict human-move injection
+    // strict sessions never read the live keyboard: null = no stick input
+    this.moveDir = mode === 'strict' ? null : undefined;
     this.warnings = [];
     this.pending = [];                 // adaptive: deferred kicks awaiting the ball
     this.orders = new Map();           // adaptive: player -> scripted move order
@@ -5927,13 +5962,22 @@ class ScriptRunner {
     return e.tick !== undefined ? e.tick <= this.game.simTick : e.time <= now;
   }
   tick(){
+    if (this.mode === 'strict'){
+      // stray live releases must not reach Match.update's restart poll —
+      // recorded human_kick events re-arm them below when due
+      this.game.input.passReleased = null;
+      this.game.input.shootReleased = null;
+    }
     const now = this.t() + 1e-9;
     while (this.cursor < this.timeline.length && this.due(this.timeline[this.cursor], now)){
       try { this.exec(this.timeline[this.cursor]); }
       catch (err){ this.warn('event ' + this.timeline[this.cursor].id + ' failed: ' + err.message); }
       this.cursor++;
     }
-    if (this.mode === 'strict') this.checkDrift(now);
+    if (this.mode === 'strict'){
+      try { this.checkDrift(now); }
+      catch (err){ this.warn('drift check failed: ' + err.message); }
+    }
     else { this.retryPending(now); this.applyOrders(now); }
   }
   // strict-mode drift watchdog: compare against recorded snapshots
@@ -5975,6 +6019,7 @@ class ScriptRunner {
         const team = E.team(g, e.team) || g.teams[0];
         if (e.tactics) Object.assign(team.tactics, e.tactics);
         if (e.formation && g.setFormation) g.setFormation(team, e.formation);
+        coachGlance(team); // same sim side effect as the live notifyTactic path
         break;
       }
       case 'substitution': {
@@ -6120,7 +6165,14 @@ class ReplayController {
     const g = this.game;
     this.stop();
     g.reset(script.match && script.match.seed !== undefined ? script.match.seed : undefined);
-    if (mode === 'strict' && script.initialState) SnapshotManager.restore(g, script.initialState);
+    if (mode === 'strict' && script.initialState){
+      try { SnapshotManager.restore(g, script.initialState); }
+      catch (err){
+        g.scriptReport = { errors: ['initialState restore failed: ' + err.message], warnings: [], when: g.animT };
+        g.reset(); // bad state must never leak into play
+        return null;
+      }
+    }
     g.scriptSession = true;
     if (g.recorder) g.recorder.enabled = false; // don't re-record a replay
     if (mode === 'strict' && script.match && script.match.human){
@@ -6160,16 +6212,35 @@ class ReplayController {
     const snaps = this.session.script.snapshots || [];
     let snap = this.session.script.initialState;
     for (const s of snaps){ if (s.tick / 60 <= target + 1e-6) snap = s; else break; }
-    if (!snap) return;
     const runner = g.scriptRunner;
+    if (!snap){
+      // no snapshots to restore from: at least re-derive the cursor so the
+      // editor's post-edit reseek can't skip or double-execute events
+      if (runner){
+        runner.cursor = 0;
+        const now = g.simTick / 60 + 1e-9;
+        while (runner.cursor < runner.timeline.length && runner.due(runner.timeline[runner.cursor], now))
+          runner.cursor++;
+        runner.pending.length = 0;
+        for (const p of runner.orders.keys()) p.scripted = false;
+        runner.orders.clear();
+      }
+      return;
+    }
     SnapshotManager.restore(g, snap);
     if (runner){
       runner.cursor = 0;
+      let lastDir;
       while (runner.cursor < runner.timeline.length){
         const e = runner.timeline[runner.cursor];
-        if (e.tick !== undefined ? e.tick <= snap.tick : e.time <= snap.tick / 60) runner.cursor++;
-        else break;
+        if (e.tick !== undefined ? e.tick <= snap.tick : e.time <= snap.tick / 60){
+          if (e.type === 'human_move') lastDir = e.dir ? { x: e.dir.x, y: e.dir.y } : null;
+          runner.cursor++;
+        } else break;
       }
+      // rebuild the injected stick state from the consumed prefix (the
+      // snapshot restores humanMode/selected, but moveDir is runner state)
+      runner.moveDir = runner.mode === 'strict' ? (lastDir === undefined ? null : lastDir) : lastDir;
       runner.snapIdx = 0; runner.pending.length = 0;
       for (const p of runner.orders.keys()) p.scripted = false;
       runner.orders.clear();
@@ -6257,12 +6328,13 @@ class GoalReplayManager {
   onGoal(){
     const g = this.game;
     if (!this.cfg.enabled || g.replayMode || g.scriptSession || g.headless) return;
+    if (!g.recorder || !g.recorder.enabled) return; // nothing trustworthy to roll back
     this.armed = { tick: g.simTick, scorer: g.match.goalScorer ? g.match.goalScorer.pid : null };
   }
   tick(){
     const g = this.game;
     if (this.armed){
-      if (g.match.state !== 'GOAL') this.armed = null;
+      if (g.match.state !== 'GOAL' || !this.cfg.enabled) this.armed = null;
       else if (g.match.stateT >= this.cfg.preRoll){ this.begin(); }
     }
     if (this.playing){
@@ -6283,11 +6355,28 @@ class GoalReplayManager {
     let snap = null;
     for (const s of rec.snapshots){ if (s.tick / 60 <= startT + 1e-6) snap = s; else break; }
     if (!snap || goalTick - snap.tick < 90) return; // nothing meaningful to roll back
+    // a recording gap (REC toggled off) leaves only stale snapshots: skip the
+    // replay rather than re-simulate minutes of match or show wrong footage
+    if (Math.round(startT * 60) - snap.tick > rec.snapEvery + rec.moveEvery) return;
+    const endTick = goalTick + Math.round(1.1 * 60);
+    // recorded human input is re-fed during the rolled-back window so the
+    // footage shows the REAL buildup, and live keys can't steer it
+    const HUMAN_EVS = ['human_move', 'human_kick', 'human_select', 'human_mode'];
+    let seedDir;
+    for (const e of rec.timeline){
+      if (e.tick === undefined || e.tick > snap.tick) break;
+      if (e.type === 'human_move') seedDir = e.dir ? { x: e.dir.x, y: e.dir.y } : null;
+    }
     this.playing = {
       liveSnap: SnapshotManager.capture(g),
       goalTick,
-      endTick: goalTick + Math.round(1.1 * 60),
+      endTick,
       fadeIn: 0.35,
+      feed: {
+        i: 0, dir: seedDir === undefined ? null : seedDir,
+        evs: rec.timeline.filter(e => HUMAN_EVS.includes(e.type) && e.tick !== undefined
+          && e.tick > snap.tick && e.tick <= endTick),
+      },
     };
     g.replayMode = true;
     SnapshotManager.restore(g, snap);
@@ -6298,9 +6387,36 @@ class GoalReplayManager {
     this.cams.start(scorer, this.playing.goalTick / 60, this.playing.endTick / 60);
     this.t0 = g.animT;
   }
+  // re-inject the recorded human input at its exact ticks (called from step)
+  applyFeed(){
+    const g = this.game, f = this.playing && this.playing.feed;
+    if (!f) return;
+    while (f.i < f.evs.length && f.evs[f.i].tick <= g.simTick){
+      const e = f.evs[f.i++];
+      if (e.type === 'human_move') f.dir = e.dir ? { x: e.dir.x, y: e.dir.y } : null;
+      else if (e.type === 'human_kick'){
+        if (e.pass) g.input.passReleased = e.pass;
+        if (e.shoot) g.input.shootReleased = e.shoot;
+      } else if (e.type === 'human_select'){
+        const p = EventSerializer.player(g, e.actor);
+        if (p) g.selected = p;
+      } else if (e.type === 'human_mode'){
+        g.humanMode = !!e.on;
+        g.selected = e.on ? g.nearestToBall(g.teams[0]) : null;
+      }
+    }
+    g.replayHumanDir = f.dir;
+  }
   end(){ this.finish(false); }
   skip(){ if (this.playing) this.finish(true); }
-  abort(silent){ if (this.playing) this.finish(true); this.armed = null; }
+  abort(){ // discard without restoring — reset() owns the fresh state
+    this.playing = null;
+    this.armed = null;
+    this.game.replayMode = false;
+    this.game.simRate = 1;
+    this.game.replayHumanDir = undefined;
+    this.cams.stop();
+  }
   finish(){
     const g = this.game;
     if (!this.playing) return;
@@ -6308,6 +6424,7 @@ class GoalReplayManager {
     this.playing = null;
     g.replayMode = false;
     g.simRate = 1;
+    g.replayHumanDir = undefined;
     this.cams.stop();
     g.replayFadeT = g.animT; // renderer: short fade back to live
   }
@@ -6743,6 +6860,7 @@ class Game {
     this.frameNo = 0;
     this.celebration = null;
     this.replayMode = false; this.simRate = 1;
+    this._lastMoveKey = undefined; this.replayHumanDir = undefined;
     // a bare reset (R key) during a script session must end it cleanly,
     // or the recorder would stay disabled for the fresh live match
     if (this.replay && this.replay.session) this.replay.stop();
@@ -6781,6 +6899,15 @@ class Game {
     if (inp.once('KeyV')){
       if (this.panel && this.panel.type === 'script') this.closePanel();
       else this.openPanel('script');
+    }
+    if (this.scriptSession){
+      // viewer isolation: during playback only transport keys work — the
+      // keyboard must never steer a deterministic script session
+      inp.passReleased = null; inp.shootReleased = null;
+      if (inp.once('KeyP')) this.paused = !this.paused;
+      if (inp.once('KeyM')) this.showMap = !this.showMap;
+      if (inp.once('KeyR')) this.reset();
+      return;
     }
     if (inp.once('KeyC') || inp.once('Enter')){ this.openCoach(); return; }
     if (inp.once('KeyM')) this.showMap = !this.showMap;
@@ -6863,7 +6990,12 @@ class Game {
       return { ok: false, errors: res.errors, warnings: res.warnings };
     }
     const mode = opts.mode || this.nextLoadMode || 'strict';
-    this.replay.load(res.script, mode);
+    const session = this.replay.load(res.script, mode);
+    if (!session){
+      this.announce('SCRIPT REJECTED: initial state could not be restored', 3.2);
+      this.openPanel('script');
+      return { ok: false, errors: (this.scriptReport && this.scriptReport.errors) || ['initial state restore failed'], warnings: res.warnings };
+    }
     this.announce('SCRIPT LOADED · ' + mode.toUpperCase() + (res.warnings.length ? ' · ' + res.warnings.length + ' warning(s)' : ''), 3);
     this.openPanel('script');
     return { ok: true, errors: [], warnings: res.warnings };
@@ -6890,15 +7022,21 @@ class Game {
       this.kickBuffer = null;
       return;
     }
-    let dir = this.input.moveDir();
-    if (this.scriptRunner && this.scriptRunner.moveDir !== undefined) dir = this.scriptRunner.moveDir;
+    // input source: replay feed > script runner > live keys — footage and
+    // script sessions must never read the viewer's keyboard
+    let dir;
+    if (this.goalReplay && this.goalReplay.playing) dir = this.replayHumanDir || null;
+    else if (this.scriptRunner) dir = this.scriptRunner.moveDir !== undefined ? this.scriptRunner.moveDir : null;
+    else dir = this.input.moveDir();
     const dirKey = dir ? Math.round(dir.x * 500) + ',' + Math.round(dir.y * 500) : '';
     if (dirKey !== this._lastMoveKey){
-      this._lastMoveKey = dirKey;
       // full precision: these values are RE-INJECTED in strict replay, and
-      // any rounding becomes physical divergence
-      if (this.recorder) this.recorder.log('human_move', { actor: p.pid,
+      // any rounding becomes physical divergence. The dedup key only advances
+      // when the event was actually recorded (suppressed logs must not eat
+      // the first real change after a replay/session).
+      const logged = this.recorder && this.recorder.log('human_move', { actor: p.pid,
         dir: dir ? { x: dir.x, y: dir.y } : null });
+      if (logged) this._lastMoveKey = dirKey;
     }
     if (dir){
       p.target = add(p.pos, scl(dir, 6));
@@ -7027,9 +7165,12 @@ class Game {
   // depends on every path (live loop, __simulate, replays) using this.
   step(){
     this.simTick = (this.simTick || 0) + 1;
+    this._inStep = true;
+    if (this.goalReplay && this.goalReplay.playing) this.goalReplay.applyFeed();
     if (this.scriptRunner) this.scriptRunner.tick();
     this.update(SIM_STEP);
     if (this.recorder) this.recorder.tick();
+    this._inStep = false;
     if (this.goalReplay) this.goalReplay.tick();
   }
   loop(){
