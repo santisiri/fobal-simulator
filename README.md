@@ -16,6 +16,7 @@ An AI vs AI match kicks off immediately — 90 compressed minutes in ~3.5 real m
 | **TACTICS / BENCH / FEED** chips | Tactics panel · substitutions · live commentary feed (also **Y** / **L**) |
 | **C** or **Enter** | Coach console — plain English: "press high", "offside trap", "park the bus" |
 | **H** | Take control of RED (WASD/arrows move, **Space** pass — hold for power, **Shift** shoot, **E** switch) |
+| **Space / Shift** at your set piece | Trigger the restart: safe option / attack option (or tap the on-screen chips) |
 | **G** / **N** | Cycle 15 pitch themes / 14 weather conditions |
 | **B** / **U** | Stadium theme (local / classic 90s / modern) / crowd density |
 | **M** / **T** / **D** | Minimap · stats card · debug overlay (AI intents, defensive lines, trap calls) |
@@ -26,9 +27,19 @@ An AI vs AI match kicks off immediately — 90 compressed minutes in ~3.5 real m
 - **Simulation**: utility-based AI (pass/dribble/shoot/cross/clear/shield), duties that prevent swarming, formations (4-4-2 / 4-3-3), real offside rule with traps, flat defensive lines, man/zonal marking, pressing forwards, sweeper keepers, transitions, per-player attributes and stamina.
 - **Physics**: independent 3D ball (gravity, bounce, skid, Magnus spin, wind drift, post/bar collisions), knock-ahead dribbling, surface-aware friction — mud grabs, puddles stop, hard ground kicks bounces sideways.
 - **Match rules**: kickoffs, throw-ins, corners (7 delivery types), goal kicks, staged free kicks with defensive walls, fouls with advantage, yellow/red cards and send-offs, substitutions (manual + AI, 5-sub limit), halftime side swap.
+- **Set-piece choreography**: every restart plays out as a short broadcast-style sequence (~2–5s) — players jog into tactical shape (walls, box crowds with late darts, throw-in lanes, build-out or launch shapes), markers pick up runners, the taker steps back and runs up, then play resumes automatically; after goals both teams walk back for the kickoff instead of teleporting. In human mode you pull the trigger on your own set pieces.
+- **Broadcast UI**: TV-style overlay — score bug, animated event banners (goal, cards, subs, corners, free kicks, throw-ins, goal kicks, offside, kickoff) with team colors and icons, glass panels, minimal typography. Never obscures play; works on phones.
 - **Environment**: 15 procedural pitch themes (checkerboard, mowing rings, mud bath, winter-worn…), organic field damage that drives both visuals and physics, 14 weather conditions (night matches, storms with lightning, fog, wind…).
 - **Stadium**: individualized generative crowd (~2,400 fans) reacting to momentum with moods, mexican waves and speech bubbles; linesmen, photographers, TV crews, VAR station, ball kids, medics, security, benches with warm-ups.
 - **Meta**: per-player match stats and ratings, market values with rarity tiers (collectible/NFT-style, no chain logic), match commentary feed, event animations (sub boards, coach shouts, celebrations).
+
+## Scripting, recording & replays
+
+Every match is **deterministic** (one seed drives environment, squads and every sim die; fixed 1/60s timestep) and **recorded** as it plays: semantic events (passes, tackles, restarts, cards, calls for the ball, tactic changes, human inputs…), movement samples, and periodic full-state snapshots.
+
+- **REPLAY chip / V key** — transport panel: play/pause, step by event or frame, seek bar with bookmarks, speed 0.25–4×, A-B loop, plus a script editor (delete/duplicate/retime/reassign/adjust power) and import/export.
+- **Match → script**: EXPORT downloads the match as versioned JSON (`fobal-match-script`). **Script → match**: IMPORT plays it back — *strict* mode reproduces the run exactly (human matches included; snapshots auto-resync if anything drifts), *adaptive* mode treats the timeline as intent and lets the live AI fill the gaps, so hand-written scenarios play out on a living pitch.
+- **Broadcast goal replays**: every goal automatically rolls back ~5–10s (configurable) and re-runs the real sim in slow motion under cinematic cameras (wide/sideline/tracking/behind-goal/scorer close-up) with letterbox + REPLAY graphic. Space/tap skips.
 
 ## Dev / QA harness
 
@@ -36,7 +47,11 @@ Open the console:
 
 ```js
 __simulate(210)        // fast-forward a full match headless, returns stats
-__reset()              // new match
+__reset(seed)          // new match (same seed → same match)
+__exportScript()       // the current recording as a MatchScript object
+__downloadScript()     // …as a .json download
+__loadScript(doc, { mode: 'strict' | 'adaptive' })
+__validateScript(json) // errors/warnings without loading
 __setEnv('mud','storm')// pin pitch/weather (deterministic QA); __unlockEnv()
 __coach('press high and attack the wings') // natural-language tactics API
 game                   // everything lives here
