@@ -755,7 +755,8 @@ function postMatchValueUpdate(game){
 function makeStats(){
   return { goals:0, assists:0, shots:0, shotsOn:0, passAtt:0, passCmp:0,
     tackAtt:0, tackWon:0, interceptions:0, foulsC:0, foulsS:0,
-    yellow:0, red:0, saves:0, distance:0, touches:0 };
+    yellow:0, red:0, saves:0, distance:0, touches:0,
+    clears:0, possLost:0, chancesCreated:0 };
 }
 // Simple contribution-based match rating (6.0 baseline, clamped 3..10).
 function matchRating(p){
@@ -2184,11 +2185,13 @@ function resolvePendingPass(game, gainer, canIntercept){
       if (gd < 30 && dist(pp.passer.pos, gainer.pos) > 16 &&
           game.match.tMatch - (game.lastChanceT || -1e9) > 120){
         game.lastChanceT = game.match.tMatch;
+        pp.passer.stats.chancesCreated = (pp.passer.stats.chancesCreated || 0) + 1;
         game.commentate('chance', { p: pp.passer, team: pp.team });
       }
     }
   } else if (canIntercept && gainer !== pp.passer){
     gainer.stats.interceptions++;
+    if (pp.passer) pp.passer.stats.possLost = (pp.passer.stats.possLost || 0) + 1;
     if (game.recorder) game.recorder.log('interception', { actor: gainer.pid, target: pp.passer ? pp.passer.pid : undefined });
   }
   game.pendingPass = null;
@@ -2244,6 +2247,7 @@ function doKick(p, game, opt){
     p.team.passAtt++; p.stats.passAtt++;
     game.pendingPass = { team: p.team, passer: p, t: 0 };
   }
+  if (opt.type === 'clear') p.stats.clears = (p.stats.clears || 0) + 1;
   // OffsideSystem: freeze attacker positions at the moment of any touch that
   // can create involvement (passes, crosses, clears — and rebounds off shots)
   if (game.offsideSys) game.offsideSys.snapshot(p);
@@ -2860,6 +2864,7 @@ function resolveTackles(game, dt){
           : 0.9;
         if (srand() < winCh){
           p.stats.tackWon++;
+          if (victim) victim.stats.possLost = (victim.stats.possLost || 0) + 1;
           if (game.recorder) game.recorder.log('tackle', { actor: p.pid, target: victim ? victim.pid : undefined, slide: true, won: true });
           const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (srand() - 0.5) * 6, y: (srand() - 0.5) * 8 });
           const kb = 6 + srand() * 5;
@@ -2915,6 +2920,7 @@ function resolveTackles(game, dt){
       p.stats.tackAtt++;
       if (srand() < chance){
         p.stats.tackWon++;
+        c.stats.possLost = (c.stats.possLost || 0) + 1;
         if (game.recorder) game.recorder.log('tackle', { actor: p.pid, target: c.pid, slide: false, won: true });
         const dir = norm({ x: (p.team.oppGoalX() - ball.x) * 0.3 + (ball.x - c.pos.x), y: (ball.y - c.pos.y) + (srand() - 0.5) * 4 });
         const kb = 5 + srand() * 4;
@@ -3953,7 +3959,8 @@ const UITheme = {
   shadow: 'rgba(0,0,0,0.38)',
 };
 function rrPath(ctx, x, y, w, h, r){
-  r = Math.min(r, w / 2, h / 2);
+  if (!(w > 0) || !(h > 0)){ ctx.beginPath(); return; } // degenerate viewport: draw nothing
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -4391,27 +4398,23 @@ class Renderer {
   frame(game){
     const ctx = this.ctx, W = this.W, H = this.H;
     const b = game.ball;
-    // camera: replay cinematics override; else follow player/ball as usual
-    const rc = game.replayCam;
-    const fp = game.followPlayer;
-    let tx, ty, camK = 0.06;
-    if (rc){
-      const s = project(rc.target.x, rc.target.y, 0);
-      tx = s.x; ty = s.y; camK = rc.lerp || 0.08;
-    } else {
-      const bp = fp ? project(lerp(fp.pos.x, b.x, 0.3), lerp(fp.pos.y, b.y, 0.3), 0) : project(b.x, b.y, 0);
-      const lead = fp ? bp : project(b.x + b.vx * 0.3, b.y + b.vy * 0.3, 0);
-      tx = lerp(bp.x, lead.x, 0.5); ty = lerp(bp.y, lead.y, 0.5);
-    }
-    this.cam.x = lerp(this.cam.x, tx, camK);
-    this.cam.y = lerp(this.cam.y, ty, camK);
+    // CameraSystem decides the target: replay cinematics > free inspection >
+    // follow (ball or followed player); zoom applies about the screen centre
+    const cam = game.camera
+      ? game.camera.frameTarget()
+      : { x: (() => { const s = project(b.x, b.y, 0); return s.x; })(), y: project(b.x, b.y, 0).y, k: 0.06, zoom: 1 };
+    this.cam.x = lerp(this.cam.x, cam.x, cam.k);
+    this.cam.y = lerp(this.cam.y, cam.y, cam.k);
+    const zoom = cam.zoom || 1;
+    this.lastZoom = zoom; // for zoom-aware click hit-testing
     const ox = Math.round(W / 2 - this.cam.x);
     const oy = Math.round(H / 2 - this.cam.y + 12);
     this.lastOx = ox; this.lastOy = oy; // for click hit-testing
     ctx.fillStyle = '#23292e'; ctx.fillRect(0, 0, W, H);
-    if (rc){ // cinematic zoom about the screen centre
+    const zoomed = Math.abs(zoom - 1) > 1e-3;
+    if (zoomed){
       ctx.save();
-      ctx.translate(W / 2, H / 2); ctx.scale(rc.zoom, rc.zoom); ctx.translate(-W / 2, -H / 2);
+      ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-W / 2, -H / 2);
     }
     ctx.drawImage(this.bg, ox - this.bgOrigin.x, oy - this.bgOrigin.y);
     this.drawPitchLines(ctx, ox, oy);
@@ -4534,7 +4537,7 @@ class Renderer {
         ctx.fillRect(s.x + ox - 11, s.y + oy - 5, Math.round(22 * pw), 3);
       }
     }
-    if (rc) ctx.restore();
+    if (zoomed) ctx.restore();
     // brief fade returning from a replay to live coverage
     if (game.replayFadeT !== undefined && game.animT - game.replayFadeT < 0.4){
       ctx.fillStyle = 'rgba(0,0,0,' + (0.8 * (1 - (game.animT - game.replayFadeT) / 0.4)).toFixed(2) + ')';
@@ -4684,6 +4687,30 @@ class Renderer {
     }
     /* ---- broadcast event banners ---- */
     if (game.broadcast) game.broadcast.draw(this);
+    /* ---- free camera indicator + controls ---- */
+    if (game.camera && (game.camera.mode === 'free' || Math.abs(game.camera.zoom - 1) > 1e-3)){
+      const camY = W < 720 ? 44 : 42;
+      let cxr = W - 8;
+      const camBtn = (label, w2, cb, active) => {
+        cxr -= w2;
+        this.btn(game, cxr, camY, w2, 24, label, { font: 10.5, active, cb });
+        cxr -= 6;
+      };
+      camBtn('1:1', 34, () => game.camera.resetView());
+      camBtn('+', 28, () => game.camera.zoomBy(1.18));
+      camBtn('−', 28, () => game.camera.zoomBy(1 / 1.18));
+      if (game.camera.mode === 'free') camBtn('⌖ RETURN TO BALL', 118, () => game.camera.returnToBall(), true);
+      if (game.camera.mode === 'free'){
+        ctx.font = UITheme.sans('700', 10);
+        const fw = ctx.measureText('FREE CAMERA').width + 26;
+        glassPanel(ctx, cxr - fw, camY, fw, 24, 8);
+        ctx.fillStyle = UITheme.accent;
+        ctx.beginPath(); ctx.arc(cxr - fw + 11, camY + 12, 3, 0, 7); ctx.fill();
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = UITheme.dim; ctx.fillText('FREE CAMERA', cxr - fw + 19, camY + 12.5);
+        ctx.textBaseline = 'top';
+      }
+    }
     // hints bar (short on phones — keyboard shortcuts are desktop-only)
     ctx.font = UITheme.sans('500', 10.5);
     const hint = W < 720
@@ -5033,10 +5060,11 @@ class Renderer {
     const a = clamp((game.animT - (game.panelT || 0)) / 0.22, 0, 1);
     const ease = a * a * (3 - 2 * a);
     if (mobile){
-      const h = Math.min(hWant, this.H * 0.62);
+      // ResponsivePlayerPanel: partial sheet by default, expandable to full
+      const h = Math.min(hWant, this.H * (game.panelExpand ? 0.87 : 0.55));
       return { x: 8, y: this.H - 30 - h * ease, w: this.W - 16, h, mobile, bh: 42 };
     }
-    return { x: this.W - 306, y: 34, w: 298, h: hWant, mobile, bh: 26 };
+    return { x: this.W - 306, y: 34, w: 298, h: Math.min(hWant, this.H - 44), mobile, bh: 26 };
   }
   panelShell(game, box, title, color){
     const ctx = this.ctx;
@@ -5052,91 +5080,192 @@ class Renderer {
     this.btn(game, box.x + box.w - bw - 8, box.y + 8, bw, box.mobile ? 30 : 20, '✕',
       { cb: () => { game.closePanel(); game.statsFor = null; } });
   }
-  // PlayerProfilePanel: identity + live match stats + rating + follow
+  // PlayerProfileV2: dense broadcast-card profile — identity + on-chain
+  // avatar, Ethereum valuation, live form, key metrics, full match stats,
+  // grouped attributes with tap-tips, and actions. Desktop side panel;
+  // mobile bottom sheet (partial, expandable).
   drawProfilePanel(game){
     const p = game.statsFor;
     if (!p || !p.stats){ game.closePanel(); return; }
-    const box = this.panelBox(game, 452);
-    this.panelShell(game, box, '#' + p.num + ' ' + p.name, p.team.kit.shirt);
+    const box = this.panelBox(game, 560);
+    this.panelShell(game, box, '', p.team.kit.shirt);
     const ctx = this.ctx;
-    let y = box.y + 36;
+    ctx.save();
+    rrPath(ctx, box.x, box.y, box.w, box.h, 12);
+    ctx.clip(); // the collapsed sheet must not paint (or tap) below its fold
+    const fold = box.y + box.h - 6;
+    const vis = yy => yy < fold;
+    const L = box.x + 12, Rt = box.x + box.w - 12, cw = box.w - 24;
     const on = p.team.players.includes(p);
-    ctx.font = '12px monospace'; ctx.fillStyle = '#9ab0be';
-    ctx.fillText(p.team.name + ' · ' + p.role + ' · ' + (p.foot === 1 ? 'right' : 'left') + ' foot · age ' + p.age
-      + (on ? '' : (p.stats.red ? ' · SENT OFF' : (p.team.offList.includes(p) ? ' · SUBSTITUTED' : ' · BENCH'))), box.x + 12, y);
-    y += 18;
-    // collectible identity: rarity badge + market value, front and centre
-    {
-      const R = RARITY[p.rarity];
-      ctx.font = 'bold 10px monospace';
-      const rw2 = ctx.measureText(R.label).width + 10;
-      ctx.fillStyle = R.col; ctx.fillRect(box.x + 12, y, rw2, 14);
-      ctx.fillStyle = '#101418'; ctx.fillText(R.label, box.x + 17, y + 2);
-      ctx.font = 'bold 16px monospace'; ctx.fillStyle = '#ffe24a';
-      ctx.fillText('Ξ ' + p.value.toFixed(3), box.x + rw2 + 22, y - 1);
-      if (p.valueDelta){
-        const up = p.valueDelta > 0;
-        ctx.font = 'bold 11px monospace'; ctx.fillStyle = up ? '#5ac26a' : '#d86a4a';
-        ctx.fillText((up ? '▲ +' : '▼ ') + (p.valueDelta * 100).toFixed(1) + '%', box.x + rw2 + 118, y + 2);
-      }
-      y += 22;
-    }
     const s = p.stats;
+    let y = box.y + 10;
+    /* ---- identity header + procedural avatar ---- */
+    const av = AvatarCache.get(game, p);
+    rrPath(ctx, L, y, 42, 42, 7);
+    ctx.save(); ctx.clip();
+    if (av.ready) ctx.drawImage(av.img, L, y, 42, 42);
+    else { ctx.fillStyle = '#151a21'; ctx.fillRect(L, y, 42, 42); }
+    ctx.restore();
+    ctx.strokeStyle = hexA(p.team.kit.shirt, 0.8); ctx.lineWidth = 1.5;
+    rrPath(ctx, L + 0.5, y + 0.5, 41, 41, 7); ctx.stroke();
+    ctx.font = UITheme.sans('800', 14); ctx.fillStyle = UITheme.ink;
+    ctx.fillText('#' + p.num + '  ' + p.name.toUpperCase(), L + 52, y + 3);
+    ctx.font = UITheme.sans('500', 9.5); ctx.fillStyle = UITheme.dim;
+    ctx.fillText(p.team.name + ' · ' + p.role + ' · ' + (p.foot === 1 ? 'RIGHT' : 'LEFT') + ' · ' + p.age + 'y'
+      + (on ? '' : (p.stats.red ? ' · SENT OFF' : (p.team.offList.includes(p) ? ' · SUBBED' : ' · BENCH'))), L + 52, y + 20);
+    const Rr = RARITY[p.rarity];
+    ctx.font = UITheme.sans('800', 8);
+    const rw = ctx.measureText(Rr.label).width + 10;
+    ctx.fillStyle = Rr.col; rrPath(ctx, Rt - rw, y + 1, rw, 13, 4); ctx.fill();
+    ctx.fillStyle = '#10151b'; ctx.fillText(Rr.label, Rt - rw + 5, y + 4);
+    if (box.mobile) this.btn(game, Rt - rw, y + 18, rw, 16, game.panelExpand ? 'LESS' : 'MORE',
+      { font: 8, cb: () => { game.panelExpand = !game.panelExpand; } });
+    y += 50;
+    /* ---- EthereumValueDisplay: unmistakably an ETH asset valuation ---- */
+    glassPanel(ctx, L, y, cw, 42, 9, { top: 'rgba(255,255,255,0.05)', bot: 'rgba(255,255,255,0.02)' });
+    const ex = L + 16, ey2 = y + 20;
+    ctx.fillStyle = '#8ea6f0';
+    ctx.beginPath(); ctx.moveTo(ex, ey2 - 10); ctx.lineTo(ex - 6.5, ey2 + 0.5); ctx.lineTo(ex, ey2 + 4); ctx.lineTo(ex + 6.5, ey2 + 0.5); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 0.65;
+    ctx.beginPath(); ctx.moveTo(ex, ey2 + 6.5); ctx.lineTo(ex - 6.5, ey2 + 3); ctx.lineTo(ex, ey2 + 11); ctx.lineTo(ex + 6.5, ey2 + 3); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.font = UITheme.sans('800', 19); ctx.fillStyle = UITheme.ink;
+    const vTxt = 'Ξ ' + p.value.toFixed(3);
+    const vW = ctx.measureText(vTxt).width;
+    ctx.fillText(vTxt, ex + 14, y + 6);
+    if (p.valueDelta){
+      const up = p.valueDelta > 0;
+      ctx.font = UITheme.sans('700', 9.5); ctx.fillStyle = up ? UITheme.good : UITheme.bad;
+      ctx.fillText((up ? '▲' : '▼') + Math.abs(p.valueDelta * 100).toFixed(1) + '%', ex + 22 + vW, y + 8);
+    }
+    ctx.font = UITheme.sans('600', 7.5); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('P L A Y E R   V A L U E', ex + 14, y + 29);
+    ctx.font = UITheme.mono('600', 9); ctx.fillStyle = UITheme.dim;
+    const tk = 'TOKEN #' + playerTokenId(game, p);
+    ctx.fillText(tk, Rt - 8 - ctx.measureText(tk).width, y + 8);
+    ctx.font = UITheme.sans('600', 7.5); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('ON-CHAIN SVG', Rt - 8 - ctx.measureText('ON-CHAIN SVG').width, y + 29);
+    y += 50;
+    /* ---- live: rating ring · stamina · AI intent ---- */
+    const r10 = matchRating(p);
+    const ringX = L + 20, ringY = y + 20;
+    ctx.lineWidth = 3.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.beginPath(); ctx.arc(ringX, ringY, 15, 0, 7); ctx.stroke();
+    ctx.strokeStyle = r10 < 5.5 ? UITheme.bad : (r10 < 7 ? UITheme.warn : UITheme.good);
+    ctx.beginPath(); ctx.arc(ringX, ringY, 15, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (r10 / 10)); ctx.stroke();
+    ctx.font = UITheme.sans('800', 11); ctx.fillStyle = UITheme.ink; ctx.textAlign = 'center';
+    ctx.fillText(r10.toFixed(1), ringX, ringY - 5);
+    ctx.font = UITheme.sans('600', 6.5); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('RATING', ringX, ringY + 6);
+    ctx.textAlign = 'left';
+    const stX = L + 48;
+    ctx.font = UITheme.sans('600', 8); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('STAMINA', stX, y + 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.10)'; rrPath(ctx, stX, y + 17, 74, 7, 3.5); ctx.fill();
+    ctx.fillStyle = p.stamina > 0.55 ? UITheme.good : (p.stamina > 0.3 ? UITheme.warn : UITheme.bad);
+    rrPath(ctx, stX, y + 17, Math.max(5, 74 * p.stamina), 7, 3.5); ctx.fill();
+    ctx.font = UITheme.sans('700', 9); ctx.fillStyle = UITheme.mid;
+    ctx.fillText(Math.round(p.stamina * 100) + '%', stX + 78, y + 16);
+    ctx.font = UITheme.sans('600', 8); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('INTENT', stX, y + 30);
+    ctx.font = UITheme.sans('600', 9); ctx.fillStyle = UITheme.mid;
+    ctx.fillText(on ? (p.duty + ' / ' + (p.decision ? p.decision.type : '-') + ' / ' + p.action).toUpperCase()
+      : 'WATCHING FROM THE BENCH', stX + 38, y + 29);
+    y += 46;
+    /* ---- key metric cards ---- */
     const acc = s.passAtt ? Math.round(s.passCmp / s.passAtt * 100) : 0;
-    const colW = (box.w - 24) / 2;
-    const rows = [
-      ['GOALS', s.goals, 'ASSISTS', s.assists],
-      ['SHOTS', s.shots, 'ON TARGET', s.shotsOn],
-      ['PASSES', s.passCmp + '/' + s.passAtt, 'PASS ACC', acc + '%'],
-      ['TACKLES', s.tackWon + '/' + s.tackAtt, 'INTERCEPTS', s.interceptions],
-      ['FOULS', s.foulsC, 'FOULED', s.foulsS],
-      ['CARDS', (s.yellow ? s.yellow + 'Y' : '·') + (s.red ? ' R' : ''), p.isGK ? 'SAVES' : 'TOUCHES', p.isGK ? s.saves : s.touches],
-      ['DISTANCE', (s.distance / 1000).toFixed(2) + 'km', 'STAMINA', Math.round(p.stamina * 100) + '%'],
+    const cards = p.isGK
+      ? [[s.saves, 'SAVES'], [s.goals, 'GOALS'], [acc + '%', 'PASS'], [s.touches, 'TOUCH'], [s.clears || 0, 'CLEAR']]
+      : [[s.goals, 'GOALS'], [s.assists, 'ASSIST'], [acc + '%', 'PASS'], [s.shotsOn, 'ON TGT'], [s.tackWon, 'TACKLE']];
+    const cwd = (cw - 4 * 5) / 5;
+    cards.forEach(([v, lab], i) => {
+      const cx0 = L + i * (cwd + 5);
+      glassPanel(ctx, cx0, y, cwd, 34, 7, { top: 'rgba(255,255,255,0.05)', bot: 'rgba(255,255,255,0.02)' });
+      ctx.textAlign = 'center';
+      ctx.font = UITheme.sans('800', 12); ctx.fillStyle = UITheme.ink;
+      ctx.fillText(String(v), cx0 + cwd / 2, y + 6);
+      ctx.font = UITheme.sans('600', 6.5); ctx.fillStyle = UITheme.faint;
+      ctx.fillText(lab, cx0 + cwd / 2, y + 22);
+      ctx.textAlign = 'left';
+    });
+    y += 42;
+    /* ---- detailed stats grid ---- */
+    ctx.font = UITheme.sans('700', 8); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('MATCH STATS', L, y); y += 12;
+    const grid = [
+      ['Touches', s.touches], ['Passes', s.passCmp + '/' + s.passAtt],
+      ['Chances created', s.chancesCreated || 0], ['Shots (on)', s.shots + ' (' + s.shotsOn + ')'],
+      ['Tackles', s.tackWon + '/' + s.tackAtt], ['Interceptions', s.interceptions],
+      ['Clearances', s.clears || 0], ['Possession lost', s.possLost || 0],
+      ['Fouls c / s', s.foulsC + ' / ' + s.foulsS], ['Cards', (s.yellow ? s.yellow + 'Y ' : '') + (s.red ? '1R' : (s.yellow ? '' : '—'))],
+      ['Distance', (s.distance / 1000).toFixed(2) + 'km'], [p.isGK ? 'Saves' : 'Goals + assists', p.isGK ? s.saves : s.goals + ' + ' + s.assists],
     ];
-    ctx.font = '12px monospace';
-    for (const [l1, v1, l2, v2] of rows){
-      ctx.fillStyle = '#7a8894'; ctx.fillText(l1, box.x + 12, y);
-      ctx.fillStyle = '#e8eef4'; ctx.fillText(String(v1), box.x + 90, y);
-      ctx.fillStyle = '#7a8894'; ctx.fillText(l2, box.x + 12 + colW, y);
-      ctx.fillStyle = '#e8eef4'; ctx.fillText(String(v2), box.x + 96 + colW, y);
-      y += 17;
-    }
-    ctx.fillStyle = '#7a8894'; ctx.fillText('NOW', box.x + 12, y);
-    ctx.fillStyle = '#c8d8e0';
-    ctx.fillText(on ? (p.duty + ' / ' + (p.decision ? p.decision.type : '-') + ' / ' + p.action) : 'watching from the bench', box.x + 56, y);
-    y += 19;
-    const r = matchRating(p);
-    ctx.fillStyle = '#7a8894'; ctx.fillText('RATING', box.x + 12, y + 1);
-    ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(box.x + 70, y, box.w - 140, 12);
-    ctx.fillStyle = r < 5.5 ? '#d86a4a' : (r < 7 ? '#e8c23a' : '#5ac26a');
-    ctx.fillRect(box.x + 70, y, (box.w - 140) * (r / 10), 12);
-    ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#f0f0e8';
-    ctx.fillText(r.toFixed(1), box.x + box.w - 58, y);
-    y += 22;
-    const attrs = [['PAC','pace'],['PAS','passing'],['SHO','shooting'],['TCK','tackling'],
-      ['DRB','dribbling'],['STA','stamina'],['CMP','composure'],['POS','positioning']];
-    ctx.font = '11px monospace';
-    for (let i = 0; i < attrs.length; i += 2){
-      for (let k = 0; k < 2; k++){
-        const [lab, key] = attrs[i + k];
-        const v = p.a[key];
-        const x0 = box.x + 12 + k * colW;
-        ctx.fillStyle = '#7a8894'; ctx.fillText(lab, x0, y);
-        ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(x0 + 32, y + 2, colW - 66, 7);
-        ctx.fillStyle = v < 0.45 ? '#d86a4a' : (v < 0.68 ? '#e8c23a' : '#5ac26a');
-        ctx.fillRect(x0 + 32, y + 2, (colW - 66) * v, 7);
-        ctx.fillStyle = '#c8d8e0'; ctx.fillText(String(Math.round(v * 99)), x0 + colW - 30, y);
-      }
-      y += 15;
-    }
-    y += 7;
-    const bw2 = (box.w - 36) / 3;
-    this.btn(game, box.x + 12, y, bw2, box.bh, game.followPlayer === p ? 'FOLLOWING' : 'FOLLOW',
-      { font: 11, active: game.followPlayer === p, cb: () => { game.followPlayer = game.followPlayer === p ? null : p; } });
-    this.btn(game, box.x + 18 + bw2, y, bw2, box.bh, game.paused ? 'RESUME' : 'PAUSE',
-      { font: 11, active: game.paused, cb: () => { game.paused = !game.paused; } });
-    this.btn(game, box.x + 24 + bw2 * 2, y, bw2, box.bh, 'CLOSE',
-      { font: 11, cb: () => { game.closePanel(); game.statsFor = null; } });
+    const colW2 = cw / 2;
+    grid.forEach(([lab, v], i) => {
+      const gx0 = L + (i % 2) * colW2, gy0 = y + Math.floor(i / 2) * 13;
+      ctx.font = UITheme.sans('500', 8.5); ctx.fillStyle = UITheme.dim;
+      ctx.fillText(lab, gx0, gy0);
+      ctx.font = UITheme.sans('700', 8.5); ctx.fillStyle = UITheme.mid;
+      const vs = String(v);
+      ctx.fillText(vs, gx0 + colW2 - 14 - ctx.measureText(vs).width, gy0);
+    });
+    y += Math.ceil(grid.length / 2) * 13 + 8;
+    /* ---- grouped attributes with tap explanations ---- */
+    const TIPS = {
+      shooting: 'finishing power and accuracy', dribbling: 'close control at speed',
+      composure: 'stays calm under pressure', passing: 'short and long distribution',
+      vision: 'spots runs and through balls', tackling: 'wins the ball cleanly',
+      positioning: 'reads play off the ball', pace: 'top speed on the run',
+      stamina: 'endurance across 90 minutes', strength: 'shielding and aerial duels',
+    };
+    const groups = [
+      ['ATTACK', [['SHO', 'shooting'], ['DRB', 'dribbling'], ['CMP', 'composure']]],
+      ['CREATION', [['PAS', 'passing'], ['VIS', 'vision']]],
+      ['DEFENSE', [['TCK', 'tackling'], ['POS', 'positioning']]],
+      ['PHYSICAL', [['PAC', 'pace'], ['STA', 'stamina'], ['STR', 'strength']]],
+    ];
+    const gW = (cw - 6) / 2, gH = 58;
+    groups.forEach(([title, rows], gi) => {
+      const gx0 = L + (gi % 2) * (gW + 6), gy0 = y + Math.floor(gi / 2) * (gH + 6);
+      glassPanel(ctx, gx0, gy0, gW, gH, 7, { top: 'rgba(255,255,255,0.04)', bot: 'rgba(255,255,255,0.015)' });
+      ctx.font = UITheme.sans('700', 7); ctx.fillStyle = UITheme.faint;
+      ctx.fillText(title, gx0 + 8, gy0 + 5);
+      rows.forEach(([lab, key], ri) => {
+        const ry = gy0 + 16 + ri * 13;
+        const v = p.a[key] || 0;
+        ctx.font = UITheme.sans('600', 8); ctx.fillStyle = game.attrTip === key ? UITheme.accent : UITheme.dim;
+        ctx.fillText(lab, gx0 + 8, ry);
+        const segs = 8, segW = (gW - 66) / segs;
+        for (let k = 0; k < segs; k++){
+          ctx.fillStyle = k / segs < v ? (v < 0.45 ? UITheme.bad : (v < 0.68 ? UITheme.warn : UITheme.good)) : 'rgba(255,255,255,0.10)';
+          ctx.fillRect(gx0 + 32 + k * segW, ry + 1, segW - 1.5, 6);
+        }
+        ctx.font = UITheme.sans('700', 8); ctx.fillStyle = UITheme.mid;
+        ctx.fillText(String(Math.round(v * 99)), gx0 + gW - 22, ry);
+        if (vis(ry + 10)) this.zone(game, gx0 + 4, ry - 2, gW - 8, 12, () => { game.attrTip = game.attrTip === key ? null : key; });
+      });
+    });
+    y += gH * 2 + 12 + 4;
+    ctx.font = UITheme.sans('500', 8.5); ctx.fillStyle = game.attrTip ? UITheme.accent : UITheme.faint;
+    ctx.fillText(game.attrTip ? TIPS[game.attrTip] : 'tap an attribute for details', L, y);
+    y += 15;
+    /* ---- actions ---- */
+    const bw3 = (cw - 12) / 3;
+    const act = (i, row, label, opts) => {
+      const by2 = y + row * (box.bh + 6);
+      if (!vis(by2 + 4)) return; // below the collapsed fold: no ghost taps
+      this.btn(game, L + i * (bw3 + 6), by2, bw3, box.bh, label, opts);
+    };
+    act(0, 0, game.followPlayer === p ? 'FOLLOWING' : 'FOLLOW',
+      { font: 10, active: game.followPlayer === p, cb: () => { game.followPlayer = game.followPlayer === p ? null : p; } });
+    act(1, 0, '⌖ TO BALL', { font: 10, cb: () => { game.followPlayer = null; if (game.camera) game.camera.resetView(); } });
+    act(2, 0, game.paused ? 'RESUME' : 'PAUSE', { font: 10, active: game.paused, cb: () => { game.paused = !game.paused; } });
+    const canSub = on && p.team === game.teams[0] && !p.isGK;
+    act(0, 1, 'SUB', { font: 10, dim: !canSub, cb: () => game.openPanel('sub', { stage: 'bench' }) });
+    act(1, 1, 'ROLE', { font: 10, cb: () => game.openPanel('tactics') });
+    act(2, 1, 'CLOSE', { font: 10, cb: () => { game.closePanel(); game.statsFor = null; } });
+    ctx.restore(); // panel clip
   }
   // SubstitutionManager UI: bench list -> pick who comes off -> confirm
   drawSubPanel(game){
@@ -6026,7 +6155,11 @@ class ScriptRunner {
         if (strict && e.auto) break; // deterministic AI subs reproduce themselves
         const team = E.team(g, e.team);
         const on = E.player(g, e.on), off = E.player(g, e.off);
-        if (team && on && off && team.bench.includes(on) && team.players.includes(off)) g.performSub(team, off, on);
+        if (team && on && off && team.bench.includes(on) && team.players.includes(off)){
+          g._runnerSub = true;
+          g.performSub(team, off, on);
+          g._runnerSub = false;
+        }
         else if (!strict) this.warn('substitution impossible (' + e.on + ' for ' + e.off + ')');
         break;
       }
@@ -6482,6 +6615,259 @@ const BroadcastReplayOverlay = {
   },
 };
 
+/* ============== PROCEDURAL ON-CHAIN AVATARS & TOKEN METADATA =============== */
+// ProceduralAvatarGenerator: a unique pixel face for every player, generated
+// deterministically from a numeric seed as compact SVG — suitable for full
+// on-chain storage (no files, no IPFS). Same seed -> same face, always.
+function shadeHex(hex, k){
+  const n = parseInt(hex.slice(1), 16);
+  const c = v => Math.max(0, Math.min(255, Math.round(v * k)));
+  return '#' + ((c(n >> 16) << 16) | (c((n >> 8) & 255) << 8) | c(n & 255)).toString(16).padStart(6, '0');
+}
+const ProceduralAvatarGenerator = {
+  HAIR_STYLES: ['crew', 'spiky', 'side part', 'curly', 'bald', 'headband'],
+  EYES: ['forward', 'left', 'right', 'focused'],
+  MOUTHS: ['neutral', 'smile', 'frown', 'open'],
+  FACIAL: ['clean', 'stubble', 'mustache', 'beard'],
+  ACC: ['none', 'earring', 'scar', 'glasses'],
+  FACES: ['oval', 'wide', 'square'],
+  traits(seed, over = {}){
+    const r = mulberry32(seed | 0);
+    const pick = arr => arr[(r() * arr.length) | 0];
+    // every roll is consumed unconditionally: cosmetic overrides (matching a
+    // player's sprite) must never shift the stream, or the same token id
+    // would render differently with and without overrides
+    const skinRoll = SKIN[(r() * SKIN.length) | 0];
+    const t = {
+      face: (r() * 3) | 0,
+      skin: over.skin || skinRoll,
+      hairStyle: (r() * 6) | 0,
+      hair: (h => over.hair || h)(HAIR[(r() * HAIR.length) | 0]),
+      brows: (r() * 3) | 0,
+      eyes: (r() * 4) | 0,
+      nose: (r() * 3) | 0,
+      mouth: (r() * 4) | 0,
+      facial: (r() * 4) | 0,
+      acc: (r() * 4) | 0,
+      shirt: (c => over.shirt || c)(pick(['#d8342c', '#57b8e8', '#3aa84e', '#e8a531', '#8a5ac2', '#e8e4da'])),
+    };
+    t.expression = t.mouth === 1 ? 'smiling' : (t.mouth === 2 ? 'fierce' : (t.eyes === 3 ? 'focused' : 'calm'));
+    return t;
+  },
+  svg(seed, over){
+    const t = this.traits(seed, over);
+    const skinD = shadeHex(t.skin, 0.72), ink = '#141210';
+    let s = '';
+    const R = (x, y, w, h, f, o) =>
+      { s += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="' + f + '"' + (o ? ' fill-opacity="' + o + '"' : '') + '/>'; };
+    R(0, 0, 16, 16, '#151a21');                       // card background
+    R(2, 14, 12, 2, t.shirt);                         // shoulders / shirt
+    R(6, 12, 4, 2, skinD);                            // neck
+    // head shapes
+    if (t.face === 0){ R(4, 3, 8, 9, t.skin); R(5, 12, 6, 1, t.skin); }
+    else if (t.face === 1){ R(3, 4, 10, 8, t.skin); R(5, 12, 6, 1, t.skin); }
+    else { R(4, 3, 8, 10, t.skin); }
+    R(3, 7, 1, 2, t.skin); R(12, 7, 1, 2, t.skin);    // ears
+    // hair
+    if (t.hairStyle === 0){ R(4, 2, 8, 2, t.hair); R(4, 4, 1, 2, t.hair); R(11, 4, 1, 2, t.hair); }
+    else if (t.hairStyle === 1){ R(4, 1, 2, 3, t.hair); R(7, 1, 2, 3, t.hair); R(10, 1, 2, 3, t.hair); R(4, 3, 8, 1, t.hair); }
+    else if (t.hairStyle === 2){ R(4, 2, 8, 2, t.hair); R(9, 4, 3, 1, t.hair); }
+    else if (t.hairStyle === 3){ R(3, 1, 10, 3, t.hair); R(3, 4, 2, 2, t.hair); R(11, 4, 2, 2, t.hair); }
+    else if (t.hairStyle === 5){ R(4, 1, 8, 2, t.hair); R(3, 3, 10, 1, '#e8e4da'); }
+    // brows
+    if (t.brows === 0){ R(5, 6, 2, 1, t.hair); R(9, 6, 2, 1, t.hair); }
+    else if (t.brows === 1){ R(5, 6, 2, 1, t.hair); R(9, 5, 2, 1, t.hair); }
+    else { R(5, 5, 3, 1, t.hair); R(9, 5, 3, 1, t.hair); }
+    // eyes
+    if (t.eyes === 3){ R(5, 7, 2, 1, ink); R(9, 7, 2, 1, ink); }
+    else {
+      R(5, 7, 2, 1, '#f2f2ea'); R(9, 7, 2, 1, '#f2f2ea');
+      const px = t.eyes === 1 ? 0 : 1;
+      R(5 + px, 7, 1, 1, ink); R(9 + px, 7, 1, 1, ink);
+    }
+    // nose
+    if (t.nose === 0) R(7, 8, 1, 2, skinD);
+    else if (t.nose === 1) R(7, 9, 2, 1, skinD);
+    else R(7, 9, 1, 1, skinD);
+    // mouth
+    if (t.mouth === 0) R(6, 11, 4, 1, ink);
+    else if (t.mouth === 1){ R(5, 11, 1, 1, ink); R(6, 12, 4, 1, ink); R(10, 11, 1, 1, ink); }
+    else if (t.mouth === 2){ R(5, 12, 1, 1, ink); R(6, 11, 4, 1, ink); R(10, 12, 1, 1, ink); }
+    else R(6, 11, 3, 2, '#7a2e2e');
+    // facial hair
+    if (t.facial === 1) R(4, 10, 8, 3, t.hair, '0.28');
+    else if (t.facial === 2) R(5, 10, 6, 1, t.hair);
+    else if (t.facial === 3){ R(4, 10, 1, 3, t.hair); R(11, 10, 1, 3, t.hair); R(5, 12, 6, 1, t.hair); R(5, 10, 1, 1, t.hair); R(10, 10, 1, 1, t.hair); }
+    // accessory
+    if (t.acc === 1) R(12, 9, 1, 1, '#e8c23a');
+    else if (t.acc === 2) R(10, 4, 1, 3, shadeHex(t.skin, 1.25));
+    else if (t.acc === 3){ R(4, 6, 4, 3, ink, '0.18'); R(9, 6, 4, 3, ink, '0.18'); R(8, 7, 1, 1, ink); }
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">' + s + '</svg>';
+  },
+};
+// OnChainSVGEncoder: raw SVG -> base64 data URI (EVM-storable, no externals)
+const OnChainSVGEncoder = {
+  encode(svg){ return 'data:image/svg+xml;base64,' + btoa(svg); },
+  forSeed(seed, over){ return this.encode(ProceduralAvatarGenerator.svg(seed, over)); },
+};
+// stable numeric token id per player, derived from the match seed
+function playerTokenId(game, p){
+  return (((game.matchSeed >>> 0) ^ Math.imul(p.team.idx + 1, 0x9E3779B9) ^ Math.imul(p.num, 2654435761)) >>> 0) % 1000000;
+}
+// PlayerTokenMetadata: ERC-721-style metadata, fully self-contained
+const PlayerTokenMetadata = {
+  build(game, p){
+    const seed = playerTokenId(game, p);
+    const over = { skin: p.app.skin, hair: p.app.hair, shirt: p.app.shirt };
+    const t = ProceduralAvatarGenerator.traits(seed, over);
+    const G = ProceduralAvatarGenerator;
+    return {
+      name: p.name,
+      tokenId: String(seed),
+      image: OnChainSVGEncoder.forSeed(seed, over),
+      attributes: [
+        { trait_type: 'Position', value: p.role },
+        { trait_type: 'Preferred Foot', value: p.foot === 1 ? 'Right' : 'Left' },
+        { trait_type: 'Rarity', value: p.rarity[0].toUpperCase() + p.rarity.slice(1) },
+        { trait_type: 'Age', value: p.age },
+        { trait_type: 'Face', value: G.FACES[t.face] },
+        { trait_type: 'Hair', value: G.HAIR_STYLES[t.hairStyle] },
+        { trait_type: 'Facial Hair', value: G.FACIAL[t.facial] },
+        { trait_type: 'Accessory', value: G.ACC[t.acc] },
+        { trait_type: 'Expression', value: t.expression },
+      ],
+    };
+  },
+};
+// canvas-side avatar cache: the exact on-chain SVG rendered via an Image
+const AvatarCache = {
+  map: new Map(),
+  get(game, p){
+    const seed = playerTokenId(game, p);
+    const key = p.pid + ':' + seed;
+    let e = this.map.get(key);
+    if (!e){
+      e = { img: new Image(), ready: false };
+      e.img.onload = () => { e.ready = true; };
+      e.img.src = OnChainSVGEncoder.forSeed(seed, { skin: p.app.skin, hair: p.app.hair, shirt: p.app.shirt });
+      this.map.set(key, e);
+    }
+    return e;
+  },
+  clear(){ this.map.clear(); },
+};
+
+/* ==================== FREE CAMERA & GESTURE INPUT ========================== */
+// CameraPanController + CameraFollowController + CameraIdleReturn in one
+// place: normally glued to the ball; a drag enters free inspection mode;
+// after a quiet spell (configurable) it eases home. Cinematic replay cameras
+// always win. Camera state is render-only — determinism is untouched.
+class CameraSystem {
+  constructor(game){
+    this.game = game;
+    this.mode = 'follow';
+    this.zoom = 1;
+    this.free = { x: 0, y: 0 };   // projected screen-space target
+    this.cfg = { idleReturn: 5 }; // seconds; 0 disables the auto-return
+    this.lastGestureT = -1e9;
+    this.panning = false;
+  }
+  gesture(){ this.lastGestureT = this.game.animT; }
+  beginPan(){
+    if (this.game.replayCam) return; // broadcast replays own the camera
+    if (this.mode !== 'free'){
+      this.mode = 'free';
+      this.free = { x: this.game.renderer.cam.x, y: this.game.renderer.cam.y };
+    }
+    this.panning = true;
+    this.gesture();
+  }
+  pan(dx, dy){
+    if (this.game.replayCam || this.mode !== 'free') return;
+    this.free.x -= dx / this.zoom;
+    this.free.y -= dy / this.zoom;
+    // sensible bounds: the pitch plus stands, benches and camera crews
+    this.free.x = clamp(this.free.x, -780, 1120);
+    this.free.y = clamp(this.free.y, -170, 950);
+    this.gesture();
+  }
+  endPan(){ this.panning = false; this.gesture(); }
+  setZoom(z){ this.zoom = clamp(z, 0.55, 2.4); this.gesture(); }
+  zoomBy(f){ this.setZoom(this.zoom * f); }
+  resetView(){ this.zoom = 1; this.returnToBall(); }
+  returnToBall(){ this.mode = 'follow'; this.panning = false; }
+  frameTarget(){
+    const g = this.game, rc = g.replayCam;
+    if (rc){
+      const s = project(rc.target.x, rc.target.y, 0);
+      return { x: s.x, y: s.y, k: rc.lerp || 0.08, zoom: rc.zoom };
+    }
+    // CameraIdleReturn: drift back to the ball after the idle window
+    if (this.mode === 'free' && !this.panning && this.cfg.idleReturn > 0 &&
+        g.animT - this.lastGestureT > this.cfg.idleReturn) this.returnToBall();
+    if (this.mode === 'free') return { x: this.free.x, y: this.free.y, k: 0.22, zoom: this.zoom };
+    const b = g.ball, fp = g.followPlayer;
+    const bp = fp ? project(lerp(fp.pos.x, b.x, 0.3), lerp(fp.pos.y, b.y, 0.3), 0) : project(b.x, b.y, 0);
+    const lead = fp ? bp : project(b.x + b.vx * 0.3, b.y + b.vy * 0.3, 0);
+    return { x: lerp(bp.x, lead.x, 0.5), y: lerp(bp.y, lead.y, 0.5), k: 0.06, zoom: this.zoom };
+  }
+}
+// GestureInputManager: one pointer pipeline for mouse and touch. UI zones
+// respond on press; a small movement threshold separates player taps from
+// camera drags; two fingers pinch-zoom; middle-drag always pans.
+class GestureInputManager {
+  constructor(game){ this.game = game; this.pts = new Map(); this.pinch = null; }
+  down(e){
+    const g = this.game;
+    if (g.goalReplay && g.goalReplay.playing){ g.goalReplay.skip(); return; }
+    const pt = { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, kind: 'tap' };
+    if (e.button === 1) pt.kind = 'pan';
+    else if (g.onPointerZones(e.clientX, e.clientY)) pt.kind = 'ui';
+    this.pts.set(e.pointerId, pt);
+    if (this.pts.size === 2){
+      const [a, b] = [...this.pts.values()];
+      a.kind = b.kind = 'pinch';
+      this.pinch = { d0: Math.max(12, Math.hypot(a.x - b.x, a.y - b.y)), z0: g.camera.zoom };
+      g.camera.gesture();
+      return;
+    }
+    if (this.pts.size > 2) pt.kind = 'ui'; // extra fingers: ignore
+    if (pt.kind === 'pan') g.camera.beginPan();
+  }
+  move(e){
+    const g = this.game;
+    const pt = this.pts.get(e.pointerId);
+    if (!pt) return;
+    const dx = e.clientX - pt.x, dy = e.clientY - pt.y;
+    pt.x = e.clientX; pt.y = e.clientY;
+    if (this.pinch && this.pts.size >= 2){
+      const [a, b] = [...this.pts.values()];
+      g.camera.setZoom(this.pinch.z0 * Math.hypot(a.x - b.x, a.y - b.y) / this.pinch.d0);
+      return;
+    }
+    if (pt.kind === 'ui' || pt.kind === 'pinch') return;
+    if (pt.kind === 'tap' && Math.hypot(pt.x - pt.x0, pt.y - pt.y0) > 7){
+      pt.kind = 'pan'; // it's a drag: never fires the player click
+      g.camera.beginPan();
+    }
+    if (pt.kind === 'pan') g.camera.pan(dx, dy);
+  }
+  up(e){
+    const pt = this.pts.get(e.pointerId);
+    this.pts.delete(e.pointerId);
+    if (this.pts.size < 2) this.pinch = null;
+    if (!pt) return;
+    if (pt.kind === 'tap') this.game.onPointerWorld(pt.x, pt.y);
+    else if (pt.kind === 'pan') this.game.camera.endPan();
+  }
+  cancel(e){
+    const pt = this.pts.get(e.pointerId);
+    this.pts.delete(e.pointerId);
+    if (this.pts.size < 2) this.pinch = null;
+    if (pt && pt.kind === 'pan') this.game.camera.endPan();
+  }
+}
+
 class Game {
   constructor(){
     this.input = new Input();
@@ -6516,18 +6902,29 @@ class Game {
     });
     this.reset();
     this.renderer = new Renderer(document.getElementById('game'), this);
-    // pointerdown covers mouse AND touch (tap) with one code path
-    this.renderer.canvas.addEventListener('pointerdown', e => {
-      if (e.button !== undefined && e.button !== 0) return; // primary button/tap only
+    // GestureInputManager: one pipeline for mouse and touch — taps select,
+    // drags pan the free camera, two fingers pinch-zoom, wheel zooms
+    this.camera = new CameraSystem(this);
+    this.gestures = new GestureInputManager(this);
+    const cv = this.renderer.canvas;
+    cv.addEventListener('pointerdown', e => {
+      if (e.button === 2) return; // right button: context menu is suppressed anyway
       e.preventDefault();
-      this.onPointer(e.clientX, e.clientY);
+      if (cv.setPointerCapture){ try { cv.setPointerCapture(e.pointerId); } catch (err){} }
+      this.gestures.down(e);
     });
-    this.renderer.canvas.addEventListener('contextmenu', e => e.preventDefault());
-    this.renderer.canvas.addEventListener('wheel', e => {
+    cv.addEventListener('pointermove', e => this.gestures.move(e));
+    cv.addEventListener('pointerup', e => this.gestures.up(e));
+    cv.addEventListener('pointercancel', e => this.gestures.cancel(e));
+    cv.addEventListener('contextmenu', e => e.preventDefault());
+    cv.addEventListener('wheel', e => {
+      e.preventDefault();
       if (this.panel && this.panel.type === 'history'){
-        e.preventDefault();
         this.histScroll = Math.max(0, this.histScroll + Math.sign(e.deltaY) * 2);
+        return;
       }
+      if (this.goalReplay && this.goalReplay.playing) return; // cinematic camera owns zoom
+      this.camera.zoomBy(Math.exp(-e.deltaY * 0.0012)); // wheel & trackpad pinch
     }, { passive: false });
     this.paused = false; this.debug = false;
     this.humanMode = false; this.selected = null;
@@ -6595,30 +6992,41 @@ class Game {
   openPanel(type, extra){
     this.panel = { type, ...(extra || {}) };
     this.panelT = this.animT;
+    this.panelExpand = false;
+    this.attrTip = null;
   }
   closePanel(){ this.panel = null; }
   // SelectionManager: one pointer entry point for mouse and touch
-  onPointer(cx, cy){
-    if (this.goalReplay && this.goalReplay.playing){ this.goalReplay.skip(); return; }
+  // press phase: UI zones respond instantly (and swallow the gesture)
+  onPointerZones(cx, cy){
     const r = this.renderer;
-    if (r.lastOx === undefined || this.coachOpen) return;
+    if (r.lastOx === undefined || this.coachOpen) return true; // modal: swallow
     // a second finger in the same frame finds cleared zones — don't let it
     // fall through the open panel onto players underneath
-    if (this.panel && !this.ui.zones.length) return;
-    // UI zones first (registered in draw order; topmost = last)
+    if (this.panel && !this.ui.zones.length) return true;
     for (let i = this.ui.zones.length - 1; i >= 0; i--){
       const z = this.ui.zones[i];
       if (cx >= z.x && cx <= z.x + z.w && cy >= z.y && cy <= z.y + z.h){
         this.ui.zones.length = 0; // a second finger this frame must not act on stale zones
         if (z.cb) z.cb(cx, cy);
-        return;
+        return true;
       }
     }
+    return false;
+  }
+  // release phase: a genuine tap (no drag) selects players / closes panels
+  onPointerWorld(cx, cy){
+    const r = this.renderer;
+    if (r.lastOx === undefined || this.coachOpen) return;
+    // undo the camera zoom: world sprites are drawn scaled about the center
+    const z = r.lastZoom || 1;
+    const ux = (cx - r.W / 2) / z + r.W / 2;
+    const uy = (cy - r.H / 2) / z + r.H / 2;
     const hitIn = list => {
-      let best = null, bd = 30;
+      let best = null, bd = 30 / z;
       for (const p of list){
         const s = project(p.pos.x, p.pos.y, 0);
-        const d = Math.hypot(cx - (s.x + r.lastOx), cy - (s.y + r.lastOy - 12));
+        const d = Math.hypot(ux - (s.x + r.lastOx), uy - (s.y + r.lastOy - 12));
         if (d < bd){ bd = d; best = p; }
       }
       return best;
@@ -6663,6 +7071,8 @@ class Game {
     this.positionBenches();
   }
   performSub(team, out, sub){
+    // viewer isolation: during script playback only the runner may substitute
+    if (this.scriptSession && !this._runnerSub) return false;
     if (team.subsUsed >= CFG.MAX_SUBS) return false;
     if (!team.players.includes(out) || !team.bench.includes(sub)) return false;
     if (out.isGK !== (sub.slot.role === 'GK')) return false; // keepers swap like-for-like
@@ -6810,6 +7220,7 @@ class Game {
   }
   reset(seed){
     spriteCache.clear(); // appearances re-roll each match
+    if (typeof AvatarCache !== 'undefined') AvatarCache.clear();
     // DeterministicRandom: one seed drives environment, squads and every sim
     // die — the same seed always reproduces the same match
     this.matchSeed = (seed !== undefined ? seed : (Math.random() * 1e9)) | 0;
@@ -7263,6 +7674,15 @@ window.__downloadScript = () => {
 };
 window.__loadScript = (src, opts) => game.loadScript(src, opts || {});
 window.__validateScript = src => { const r = ScriptParser.parse(src); return { ok: r.ok, errors: r.errors, warnings: r.warnings }; };
+// ---- on-chain avatar / token API ----
+window.__tokenMetadata = pid => {
+  const p = EventSerializer.player(game, pid);
+  return p ? PlayerTokenMetadata.build(game, p) : null;
+};
+window.__avatarSVG = pid => {
+  const p = EventSerializer.player(game, pid);
+  return p ? ProceduralAvatarGenerator.svg(playerTokenId(game, p), { skin: p.app.skin, hair: p.app.hair, shirt: p.app.shirt }) : null;
+};
 </script>
 </body>
 </html>
