@@ -1270,7 +1270,7 @@ const StadiumBuilder = {
     {
       const nearTiers = [span(th.nearRows)];
       const split = bigGround && rng() < 0.4;
-      const segs = split ? [{ u0: -6, u1: 52 }, { u0: 53, u1: 111 }] : [{ u0: -6, u1: 111 }];
+      const segs = split ? [{ u0: -6, u1: 52 }, { u0: 52, u1: 111 }] : [{ u0: -6, u1: 111 }];
       for (const s of segs)
         mods.push(new StandModule(stadium, {
           ...base, edge: 'S', u0: s.u0, u1: s.u1, kind: 'straight', near: true,
@@ -1292,8 +1292,10 @@ const StadiumBuilder = {
         tiers: profile.tiers.slice(), roof: profile.roof,
         away: !!STADIUM.awaySection,
       }));
+      // modules butt-joint exactly: the entrance is a vomitory INSIDE the
+      // module, never a hole between two stands
       mods.push(new StandModule(stadium, {
-        ...base, edge: 'W', u0: STADIUM.awaySection ? (hasEntrance ? 30 : 27) : 46, u1: 72,
+        ...base, edge: 'W', u0: STADIUM.awaySection ? 26 : 44, u1: 72,
         kind: hasEntrance ? 'entrance' : 'straight',
         tiers: profile.tiers.slice(), roof: profile.roof,
         entrance: hasEntrance,
