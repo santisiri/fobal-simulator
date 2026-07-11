@@ -1232,24 +1232,33 @@ const StadiumBuilder = {
     const mkTiers = tall => tall && bigGround && rng() < 0.75
       ? [span(th.mainTiers[0]), span(th.mainTiers[Math.min(1, th.mainTiers.length - 1)])]
       : [span(th.mainTiers[0])];
-    const roofFor = () => rng() < th.roofChance ? (rng() < 0.35 ? 'pitched' : 'flat') : null;
-    const roofCol = () => pick(th.roofCols);
+    // ONE style profile per stadium: every side is built from the same kind
+    // of stand — same seating style, seat colour, roof family and silhouette —
+    // like a matched tabletop kit. Functional modules (VIP, tunnel, away
+    // block, ultras kop, entrances, corners) inherit it.
+    const profile = {
+      style: rng() < th.terraceChance ? 'terrace' : 'seats',
+      seatCol: pick(seatPals),
+      roof: rng() < th.roofChance ? (rng() < 0.35 ? 'pitched' : 'flat') : null,
+      roofCol: pick(th.roofCols),
+      tiers: mkTiers(true),
+      cornerRows: 4 + ((rng() * 3) | 0),
+    };
+    if (profile.style === 'terrace') profile.seatCol = null; // terraces are bare steps
+    const base = { style: profile.style, seatCol: profile.seatCol, roofCol: profile.roofCol };
     // ---- N: the main stand — tunnel + dugouts + VIP/press in the middle ----
     {
-      const segs = [];
-      const wingKind = rng() < th.terraceChance * 0.5 ? 'terrace' : (rng() < 0.5 ? 'covered' : 'straight');
-      segs.push({ u0: -6, u1: 34, kind: wingKind });
-      segs.push({ u0: 34, u1: 71, kind: bigGround && rng() < 0.75 ? (rng() < 0.5 ? 'vip' : 'press') : 'covered', main: true });
-      segs.push({ u0: 71, u1: 111, kind: wingKind });
+      const mainKind = bigGround && rng() < 0.75 ? (rng() < 0.5 ? 'vip' : 'press') : 'covered';
+      const segs = [
+        { u0: -6, u1: 34, kind: 'straight' },
+        { u0: 34, u1: 71, kind: mainKind, main: true },
+        { u0: 71, u1: 111, kind: 'straight' },
+      ];
       for (const s of segs){
-        const isTerr = s.kind === 'terrace';
         const m = new StandModule(stadium, {
-          edge: 'N', u0: s.u0, u1: s.u1, kind: s.kind,
-          tiers: s.main ? mkTiers(true) : mkTiers(bigGround),
-          style: isTerr ? 'terrace' : 'seats',
-          roof: s.main ? (th.roofChance > 0 ? 'flat' : null) : roofFor(),
-          roofCol: roofCol(),
-          seatCol: isTerr ? null : pick(seatPals),
+          ...base, edge: 'N', u0: s.u0, u1: s.u1, kind: s.kind,
+          tiers: profile.tiers.slice(),
+          roof: profile.roof,
           vip: s.main && s.kind === 'vip', press: s.main && s.kind === 'press',
           tunnel: !!s.main,
         });
@@ -1257,66 +1266,52 @@ const StadiumBuilder = {
         mods.push(m);
       }
     }
-    // ---- S: the near TV side — low stands so the pitch stays readable ----
+    // ---- S: the near TV side — same stand, kept low so the pitch reads ----
     {
       const nearTiers = [span(th.nearRows)];
       const split = bigGround && rng() < 0.4;
       const segs = split ? [{ u0: -6, u1: 52 }, { u0: 53, u1: 111 }] : [{ u0: -6, u1: 111 }];
-      for (const s of segs){
+      for (const s of segs)
         mods.push(new StandModule(stadium, {
-          edge: 'S', u0: s.u0, u1: s.u1, kind: 'straight', near: true,
-          tiers: nearTiers.slice(), style: rng() < th.terraceChance * 0.6 ? 'terrace' : 'seats',
-          roof: null, seatCol: pick(seatPals), d0: 8.0,
+          ...base, edge: 'S', u0: s.u0, u1: s.u1, kind: 'straight', near: true,
+          tiers: nearTiers.slice(), roof: null, d0: 8.0,
         }));
-      }
     }
-    // ---- E: the home end — an ultras terrace or kop behind the goal ----
-    {
-      const kop = rng() < th.terraceChance ? 'terrace' : 'seats';
-      // the home kop stays open: from the fixed iso viewpoint a roof on the
-      // near-facing end would hide its own crowd (and open ends sing louder)
-      mods.push(new StandModule(stadium, {
-        edge: 'E', u0: -4, u1: 72, kind: 'goalTerrace',
-        tiers: mkTiers(bigGround), style: kop,
-        roof: null,
-        seatCol: kop === 'seats' ? homeCol : null,
-        ultras: true,
-      }));
-    }
-    // ---- W: away end — travelling section + neutral wing + entrance gap ----
+    // ---- E: the home end — the same stand serving as the ultras kop.
+    // Near-facing ends stay open: a roof here would hide its own crowd
+    // from the fixed iso viewpoint (and open ends sing louder).
+    mods.push(new StandModule(stadium, {
+      ...base, edge: 'E', u0: -4, u1: 72, kind: 'goalTerrace',
+      tiers: profile.tiers.slice(), roof: null, ultras: true,
+    }));
+    // ---- W: away end — travelling section + wing with an entrance gap ----
     {
       const hasEntrance = rng() < 0.65;
       mods.push(new StandModule(stadium, {
-        edge: 'W', u0: -4, u1: STADIUM.awaySection ? 26 : 44, kind: 'straight',
-        tiers: mkTiers(false), style: rng() < th.terraceChance ? 'terrace' : 'seats',
-        roof: roofFor(), roofCol: roofCol(), seatCol: pick(seatPals),
+        ...base, edge: 'W', u0: -4, u1: STADIUM.awaySection ? 26 : 44, kind: 'straight',
+        tiers: profile.tiers.slice(), roof: profile.roof,
         away: !!STADIUM.awaySection,
       }));
       mods.push(new StandModule(stadium, {
-        edge: 'W', u0: STADIUM.awaySection ? (hasEntrance ? 30 : 27) : 46, u1: 72, kind: hasEntrance ? 'entrance' : 'straight',
-        tiers: mkTiers(false), style: 'seats',
-        roof: roofFor(), roofCol: roofCol(), seatCol: pick(seatPals),
+        ...base, edge: 'W', u0: STADIUM.awaySection ? (hasEntrance ? 30 : 27) : 46, u1: 72,
+        kind: hasEntrance ? 'entrance' : 'straight',
+        tiers: profile.tiers.slice(), roof: profile.roof,
         entrance: hasEntrance,
       }));
     }
-    // ---- corners: wedge modules close the bowl on bigger grounds ----
+    // ---- corners: matching wedges close the bowl on bigger grounds ----
     if (rng() < th.corners){
-      for (const c of ['NW', 'NE']){
+      for (const c of ['NW', 'NE'])
         mods.push(new StandModule(stadium, {
-          edge: c, u0: -6.5, u1: 6.5, kind: 'corner',
-          tiers: [4 + ((rng() * 3) | 0)], style: 'seats',
-          roof: null, seatCol: pick(seatPals), d0: 10.2,
+          ...base, edge: c, u0: -6.5, u1: 6.5, kind: 'corner',
+          tiers: [profile.cornerRows], roof: null, d0: 10.2,
         }));
-      }
-      if (th.size === 2 && rng() < 0.8){
-        for (const c of ['SE', 'SW']){
+      if (th.size === 2 && rng() < 0.8)
+        for (const c of ['SE', 'SW'])
           mods.push(new StandModule(stadium, {
-            edge: c, u0: -5.5, u1: 5.5, kind: 'corner', near: true,
-            tiers: [3 + ((rng() * 2) | 0)], style: 'seats',
-            roof: null, seatCol: pick(seatPals), d0: 10.6,
+            ...base, edge: c, u0: -5.5, u1: 5.5, kind: 'corner', near: true,
+            tiers: [Math.max(3, profile.cornerRows - 1)], roof: null, d0: 10.6,
           }));
-        }
-      }
     }
     return mods;
   },
