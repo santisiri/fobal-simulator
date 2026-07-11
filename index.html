@@ -241,21 +241,23 @@ const STADIUM = {
   wave: true,               // spontaneous mexican waves
   rivalry: 0.6,             // 0..1: how hostile the chants get
 };
+// Themes are StadiumBuilder BIASES now: size class, module preferences and a
+// palette era. The actual stadium is assembled per match from modules.
 const STADIUM_THEMES = {
   local: {
-    label:'LOCAL GROUND', tiers:[5], nearRows:2, rowDepth:1.1, rise:0.5,
-    treadA:'#4a5058', treadB:'#40464e', wall:'#5a5f66',
-    roof:null, floodlights:true, fence:true,
+    label:'LOCAL GROUND', size:0, roofChance:0.3, terraceChance:0.8, corners:0.25,
+    nearRows:[2,3], mainTiers:[[4,6]], floodlights:true, fence:true,
+    treadA:'#4a5058', treadB:'#40464e', wall:'#5a5f66', roofCols:['#3a4038','#463f36'],
   },
   classic90s: {
-    label:'CLASSIC 90S', tiers:[7,6], nearRows:4, rowDepth:1.05, rise:0.55,
-    treadA:'#464c55', treadB:'#3b414a', wall:'#565c64',
-    roof:{ col:'#2c3138', depth:5 }, floodlights:true, fence:false,
+    label:'CLASSIC 90S', size:1, roofChance:0.75, terraceChance:0.4, corners:0.8,
+    nearRows:[3,5], mainTiers:[[6,8],[4,6]], floodlights:true, fence:false,
+    treadA:'#464c55', treadB:'#3b414a', wall:'#565c64', roofCols:['#2c3138','#37424e','#4a3540'],
   },
   modern: {
-    label:'MODERN ARENA', tiers:[8,8], nearRows:5, rowDepth:1.0, rise:0.6,
-    treadA:'#353b44', treadB:'#2c323a', wall:'#454c56',
-    roof:{ col:'#20242a', depth:7 }, floodlights:false, fence:false,
+    label:'MODERN ARENA', size:2, roofChance:1, terraceChance:0.1, corners:1,
+    nearRows:[4,6], mainTiers:[[7,9],[5,7]], floodlights:false, fence:false,
+    treadA:'#353b44', treadB:'#2c323a', wall:'#454c56', roofCols:['#20242a','#232c36'],
   },
 };
 // Fictional sponsor designs — add a descriptor here and it enters the rotation.
@@ -968,7 +970,7 @@ class Referee {
 
 /* ------------------------ STADIUM & SIDELINE WORLD ------------------------- */
 // Modular environment assets. Nothing in here influences the simulation:
-//   StandAsset    — terrace geometry for one side, builds its CrowdSections
+//   StandModule   — one modular grandstand piece; StadiumBuilder assembles them
 //   CrowdSection  — a block of fans, animated via pre-rendered frame swapping
 //   AdBoard       — one perimeter panel; groups rotate fictional sponsors
 //   SidelineActor — linesmen, photographers, TV crews, bench staff, stewards
@@ -978,7 +980,7 @@ const CROWD_PALETTE = ['#c9c2b8','#a83a3a','#3a5aa8','#d8c25a','#7a4a8a','#4a8a5
 // A block of individually generated fans. Eight pre-rendered animation frames
 // per section keep the per-frame cost at one drawImage while every fan stays
 // an individual: own build, clothes, hair, accessories and enthusiasm.
-const CROWD_FRAME_KINDS = ['sit0','sit1','stand0','stand1','jump0','jump1','wave0','wave1'];
+const CROWD_FRAME_KINDS = ['sit0','sit1','stand0','stand1','jump0','jump1','wave0','wave1','clap0','clap1','scarf0','scarf1'];
 class CrowdSection {
   constructor(fans, info){
     this.fans = fans;
@@ -1011,16 +1013,21 @@ class CrowdSection {
     if (waveHit) return this.vip ? seq(2, 'stand0', 'stand1') : seq(6, 'jump0', 'jump1');
     let k;
     switch (this.mood){
-      case 'celebrate':  k = ((ph | 0) % 3 === 0) ? seq(4, 'wave0', 'wave1') : seq(4.5, 'jump0', 'jump1'); break;
-      case 'excited':    k = seq(3, 'stand1', 'jump0'); break;
-      case 'cheer':      k = seq(2.8, 'wave0', 'wave1'); break;
+      case 'celebrate':
+        k = this.ultras ? (((ph | 0) % 2) ? seq(4.5, 'jump0', 'jump1') : seq(4, 'scarf0', 'scarf1'))
+          : (((ph | 0) % 3 === 0) ? seq(4, 'wave0', 'wave1') : seq(4.5, 'jump0', 'jump1'));
+        break;
+      case 'excited':    k = this.ultras ? seq(3.4, 'jump0', 'jump1') : seq(3, 'stand1', 'jump0'); break;
+      case 'cheer':      k = ((ph | 0) % 2) ? seq(3, 'clap0', 'clap1') : seq(2.8, 'wave0', 'wave1'); break;
+      case 'applaud':    k = seq(3.4, 'clap0', 'clap1'); break;
+      case 'chant':      k = seq(2.2, 'scarf0', 'scarf1'); break;
       case 'tense':      k = seq(1.7, 'sit1', 'stand0'); break;
-      case 'boo':        k = seq(4, 'stand0', 'stand1'); break;
+      case 'boo':        k = seq(4.2, 'stand0', 'stand1'); break;
       case 'frustrated': k = ((t * 0.7 + ph) | 0) % 4 === 0 ? 'stand0' : 'sit0'; break;
       case 'gutted':     k = 'sit0'; break;
       default:           k = seq(0.8, 'sit0', 'sit1');
     }
-    if (this.vip && (k[0] === 'j' || k[0] === 'w')) k = seq(2, 'stand0', 'stand1'); // box decorum
+    if (this.vip && (k[0] === 'j' || k[0] === 'w' || k[0] === 's' && k[1] === 'c')) k = seq(2, 'stand0', 'stand1');
     return k;
   }
   frame(kind){
@@ -1068,6 +1075,16 @@ class CrowdSection {
         c.fillRect(x0 - 1, ty - 2, 1, 2);
         c.fillRect(px + wx, ty - 4, 1, 3);
         if (f.scarf && hi){ c.fillStyle = f.scarf; c.fillRect(px + wx - 2, ty - 5, 5, 1); c.fillStyle = f.skin; }
+      } else if (!seated && mode === 'clap'){
+        // hands together above the head on the on-beat
+        if (alt){ c.fillRect(px, ty - 4, 2, 2); }
+        else { c.fillRect(x0 - 1, ty - 3, 1, 2); c.fillRect(x0 + w, ty - 3, 1, 2); }
+      } else if (!seated && mode === 'scarf'){
+        // both arms up holding the scarf line overhead — the ultras look
+        c.fillRect(x0 - 1, ty - 3 - (alt ? 1 : 0), 1, 3); c.fillRect(x0 + w, ty - 3 - (alt ? 1 : 0), 1, 3);
+        c.fillStyle = f.scarf || f.shirt;
+        c.fillRect(x0 - 1, ty - 4 - (alt ? 1 : 0), w + 2, 1);
+        c.fillStyle = f.skin;
       } else if (!seated && mode === 'stand' && alt){
         c.fillRect(x0 - 1, ty, 1, 2); c.fillRect(x0 + w, ty - 1, 1, 2); // complaining
       }
@@ -1093,14 +1110,34 @@ class CrowdSection {
   }
 }
 
-class StandAsset {
+// StandModule: one interchangeable grandstand piece on the shared iso grid.
+// Modules snap along an edge (or a 45° corner chamfer) and carry their own
+// tiers, seating style, roof type, seat colours and section character —
+// tabletop stadium pieces the StadiumBuilder assembles into whole grounds.
+const CORNER_GEOM = {
+  NW: { b: { x: 0,           y: 0           }, dir: { x:  0.707, y: -0.707 }, n: { x: -0.707, y: -0.707 } },
+  NE: { b: { x: CFG.PITCH_L, y: 0           }, dir: { x:  0.707, y:  0.707 }, n: { x:  0.707, y: -0.707 } },
+  SE: { b: { x: CFG.PITCH_L, y: CFG.PITCH_W }, dir: { x: -0.707, y:  0.707 }, n: { x:  0.707, y:  0.707 } },
+  SW: { b: { x: 0,           y: CFG.PITCH_W }, dir: { x: -0.707, y: -0.707 }, n: { x: -0.707, y:  0.707 } },
+};
+class StandModule {
   constructor(stadium, def){
     this.stadium = stadium;
-    this.edge = def.edge; this.u0 = def.u0; this.u1 = def.u1; this.near = def.near;
-    const th = stadium.themeDef;
-    this.tiers = def.near ? [th.nearRows] : th.tiers.slice();
-    this.rowDepth = th.rowDepth; this.rise = th.rise;
-    this.d0 = 9.5;
+    this.edge = def.edge; this.u0 = def.u0; this.u1 = def.u1; this.near = !!def.near;
+    this.kind = def.kind || 'straight';
+    this.tiers = def.tiers.slice();
+    this.style = def.style || 'seats';           // 'seats' | 'terrace'
+    this.roof = def.roof || null;                // null | 'flat' | 'pitched'
+    this.roofCol = def.roofCol;
+    this.seatCol = def.seatCol || null;          // coloured seat rows
+    this.vip = !!def.vip; this.press = !!def.press;
+    this.ultras = !!def.ultras; this.away = !!def.away;
+    this.tunnel = !!def.tunnel; this.entrance = !!def.entrance;
+    // terraces are shallow standing steps; seated tiers climb faster —
+    // and everything sits closer/taller than before, embracing the pitch
+    this.rowDepth = this.style === 'terrace' ? 1.05 : 1.0;
+    this.rise = this.style === 'terrace' ? 0.52 : 0.66;
+    this.d0 = def.d0 !== undefined ? def.d0 : (this.edge === 'N' ? 8.6 : 7.6);
   }
   world(u, d, z){
     switch (this.edge){
@@ -1108,18 +1145,23 @@ class StandAsset {
       case 'W': return { x: -d, y: u, z };
       case 'S': return { x: u, y: CFG.PITCH_W + d, z };
       case 'E': return { x: CFG.PITCH_L + d, y: u, z };
+      default: {
+        const g = CORNER_GEOM[this.edge];
+        return { x: g.b.x + g.dir.x * u + g.n.x * d, y: g.b.y + g.dir.y * u + g.n.y * d, z };
+      }
     }
   }
   rowGeom(row){
     let r = row, d = this.d0, z = 0.8;
     for (const t of this.tiers){
       if (r < t) return { d: d + r * this.rowDepth, z: z + r * this.rise };
-      d += t * this.rowDepth + 1.6; z += t * this.rise + 1.4; r -= t;
+      d += t * this.rowDepth + 1.6; z += t * this.rise + 1.6; r -= t;
     }
     return { d, z };
   }
   totalRows(){ return this.tiers.reduce((a, b) => a + b, 0); }
   topGeom(){ return this.rowGeom(this.totalRows() - 1); }
+  // CrowdGenerator: every seat gets an individual, procedurally built fan
   buildSections(rng){
     const secs = [];
     const chunk = 13;
@@ -1130,15 +1172,17 @@ class StandAsset {
         const info = this.stadium.sectionInfo(this, ti, u, u1);
         if (info.skip) continue;
         // LOD: pitch-side rows get full detail, distant upper tiers simplify
-        info.lod = (this.near || ti === 0) ? 'hi' : 'lo';
+        info.lod = (this.near || ti === 0) && this.edge.length === 1 ? 'hi' : 'lo';
         const fans = [];
-        // CrowdFan generation — back rows first so nearer fans overlap them
+        // back rows first so nearer fans overlap them
         for (let r = rows - 1; r >= 0; r--){
           const g = this.rowGeom(tierStart + r);
-          for (let su = u + 0.5; su < u1 - 0.3; su += 0.95){
+          const um2 = (this.u0 + this.u1) / 2;
+          for (let su = u + 0.5; su < u1 - 0.3; su += 1.02){
+            if (this.entrance && su > um2 - 2.8 && su < um2 + 2.8 && (tierStart + r) < 4) continue;
             if (rng() > info.density) continue;
             const w = this.world(su + (rng() - 0.5) * 0.3, g.d, g.z);
-            const teamCol = info.shirt && rng() < 0.6 ? info.shirt : null;
+            const teamCol = info.shirt && rng() < (info.loyal || 0.6) ? info.shirt : null;
             fans.push({ ...w,
               shirt: teamCol || CROWD_PALETTE[(rng() * CROWD_PALETTE.length) | 0],
               jacket: rng() < 0.22 ? ['#3a3f48','#5a4632','#2e4632','#4a3550'][(rng() * 4) | 0] : null,
@@ -1147,21 +1191,136 @@ class StandAsset {
               hair: HAIR[(rng() * HAIR.length) | 0],
               hairStyle: rng() < 0.14 ? 2 : (rng() < 0.1 ? 3 : (rng() < 0.25 ? 1 : 0)), // cap/beanie/spiky/flat
               capCol: info.shirt && rng() < 0.5 ? info.shirt : '#3a4a5a',
-              scarf: info.shirt && rng() < 0.3 ? info.shirt : null,
-              flag: info.shirt && rng() < 0.06 ? info.shirt : null,
-              h: 8 + ((rng() * 3) | 0),
-              w: 3 + (rng() < 0.3 ? 1 : 0),
-              zeal: 0.25 + rng() * 0.75,
+              scarf: info.shirt && rng() < (this.ultras || this.away ? 0.55 : 0.3) ? info.shirt : null,
+              flag: info.shirt && rng() < (this.ultras || this.away ? 0.14 : 0.05) ? info.shirt : null,
+              h: 9 + ((rng() * 3) | 0),
+              w: 4 + (rng() < 0.3 ? 1 : 0),
+              zeal: (this.ultras || this.away ? 0.5 : 0.25) + rng() * 0.5,
               joinR: rng() });
           }
         }
-        if (fans.length) secs.push(new CrowdSection(fans, info));
+        if (fans.length){
+          const sec = new CrowdSection(fans, info);
+          sec.ultras = this.ultras || this.away;
+          const mid = this.world((u + u1) / 2, this.rowGeom(tierStart)[
+            'd'], 0);
+          sec.cx = mid.x; sec.cy = mid.y; // attack-end momentum bias anchor
+          secs.push(sec);
+        }
       }
       tierStart += rows;
     });
     return secs;
   }
 }
+
+/* --------------------------- STADIUM BUILDER ------------------------------- */
+// StadiumBuilder: assembles complete grounds from StandModule pieces — from
+// tiny neighbourhood terraces to two-tier arenas — deterministically from the
+// match seed, so a strict replay always plays in the same stadium.
+const StadiumBuilder = {
+  MODULE_KINDS: ['straight','covered','terrace','double','vip','press','goalTerrace','corner','entrance'],
+  assemble(stadium, rng){
+    const th = stadium.themeDef;
+    const game = stadium.game;
+    const mods = [];
+    const pick = arr => arr[(rng() * arr.length) | 0];
+    const span = r => r[0] + ((rng() * (r[1] - r[0] + 1)) | 0);
+    const seatPals = [null, null, '#33507e', '#7e3333', '#33684a', '#6b5a2a', '#4a3d66'];
+    const bigGround = th.size >= 1;
+    const homeCol = game.teams[0].kit.shirt, awayCol = game.teams[1].kit.shirt;
+    const mkTiers = tall => tall && bigGround && rng() < 0.75
+      ? [span(th.mainTiers[0]), span(th.mainTiers[Math.min(1, th.mainTiers.length - 1)])]
+      : [span(th.mainTiers[0])];
+    const roofFor = () => rng() < th.roofChance ? (rng() < 0.35 ? 'pitched' : 'flat') : null;
+    const roofCol = () => pick(th.roofCols);
+    // ---- N: the main stand — tunnel + dugouts + VIP/press in the middle ----
+    {
+      const segs = [];
+      const wingKind = rng() < th.terraceChance * 0.5 ? 'terrace' : (rng() < 0.5 ? 'covered' : 'straight');
+      segs.push({ u0: -6, u1: 34, kind: wingKind });
+      segs.push({ u0: 34, u1: 71, kind: bigGround && rng() < 0.75 ? (rng() < 0.5 ? 'vip' : 'press') : 'covered', main: true });
+      segs.push({ u0: 71, u1: 111, kind: wingKind });
+      for (const s of segs){
+        const isTerr = s.kind === 'terrace';
+        const m = new StandModule(stadium, {
+          edge: 'N', u0: s.u0, u1: s.u1, kind: s.kind,
+          tiers: s.main ? mkTiers(true) : mkTiers(bigGround),
+          style: isTerr ? 'terrace' : 'seats',
+          roof: s.main ? (th.roofChance > 0 ? 'flat' : null) : roofFor(),
+          roofCol: roofCol(),
+          seatCol: isTerr ? null : pick(seatPals),
+          vip: s.main && s.kind === 'vip', press: s.main && s.kind === 'press',
+          tunnel: !!s.main,
+        });
+        if (s.main) stadium.mainStand = m;
+        mods.push(m);
+      }
+    }
+    // ---- S: the near TV side — low stands so the pitch stays readable ----
+    {
+      const nearTiers = [span(th.nearRows)];
+      const split = bigGround && rng() < 0.4;
+      const segs = split ? [{ u0: -6, u1: 52 }, { u0: 53, u1: 111 }] : [{ u0: -6, u1: 111 }];
+      for (const s of segs){
+        mods.push(new StandModule(stadium, {
+          edge: 'S', u0: s.u0, u1: s.u1, kind: 'straight', near: true,
+          tiers: nearTiers.slice(), style: rng() < th.terraceChance * 0.6 ? 'terrace' : 'seats',
+          roof: null, seatCol: pick(seatPals), d0: 8.0,
+        }));
+      }
+    }
+    // ---- E: the home end — an ultras terrace or kop behind the goal ----
+    {
+      const kop = rng() < th.terraceChance ? 'terrace' : 'seats';
+      // the home kop stays open: from the fixed iso viewpoint a roof on the
+      // near-facing end would hide its own crowd (and open ends sing louder)
+      mods.push(new StandModule(stadium, {
+        edge: 'E', u0: -4, u1: 72, kind: 'goalTerrace',
+        tiers: mkTiers(bigGround), style: kop,
+        roof: null,
+        seatCol: kop === 'seats' ? homeCol : null,
+        ultras: true,
+      }));
+    }
+    // ---- W: away end — travelling section + neutral wing + entrance gap ----
+    {
+      const hasEntrance = rng() < 0.65;
+      mods.push(new StandModule(stadium, {
+        edge: 'W', u0: -4, u1: STADIUM.awaySection ? 26 : 44, kind: 'straight',
+        tiers: mkTiers(false), style: rng() < th.terraceChance ? 'terrace' : 'seats',
+        roof: roofFor(), roofCol: roofCol(), seatCol: pick(seatPals),
+        away: !!STADIUM.awaySection,
+      }));
+      mods.push(new StandModule(stadium, {
+        edge: 'W', u0: STADIUM.awaySection ? (hasEntrance ? 30 : 27) : 46, u1: 72, kind: hasEntrance ? 'entrance' : 'straight',
+        tiers: mkTiers(false), style: 'seats',
+        roof: roofFor(), roofCol: roofCol(), seatCol: pick(seatPals),
+        entrance: hasEntrance,
+      }));
+    }
+    // ---- corners: wedge modules close the bowl on bigger grounds ----
+    if (rng() < th.corners){
+      for (const c of ['NW', 'NE']){
+        mods.push(new StandModule(stadium, {
+          edge: c, u0: -6.5, u1: 6.5, kind: 'corner',
+          tiers: [4 + ((rng() * 3) | 0)], style: 'seats',
+          roof: null, seatCol: pick(seatPals), d0: 10.2,
+        }));
+      }
+      if (th.size === 2 && rng() < 0.8){
+        for (const c of ['SE', 'SW']){
+          mods.push(new StandModule(stadium, {
+            edge: c, u0: -5.5, u1: 5.5, kind: 'corner', near: true,
+            tiers: [3 + ((rng() * 2) | 0)], style: 'seats',
+            roof: null, seatCol: pick(seatPals), d0: 10.6,
+          }));
+        }
+      }
+    }
+    return mods;
+  },
+};
 
 class AdBoard {
   constructor(a, b, hM){
@@ -1482,6 +1641,30 @@ class CrowdManager {
     this.wave = { active: false, pos: 0, cd: 25 + Math.random() * 25 };
     this.flashT = 0;
     this.warm = 0;
+    this.confetti = [];
+    // supporter culture props anchored to the character modules
+    this.flags = []; this.drummers = []; this.capos = [];
+    for (const st of stadium.standDefs){
+      if (!st.ultras && !st.away) continue;
+      const team = stadium.game.teams[st.away ? 1 : 0];
+      const n = st.ultras ? 3 : 2;
+      for (let i = 0; i < n; i++){
+        const u = lerp(st.u0 + 6, st.u1 - 6, (i + 0.5) / n);
+        const back = st.rowGeom(Math.max(0, st.totalRows() - 2));
+        const w = st.world(u, back.d, back.z);
+        this.flags.push({ x: w.x, y: w.y, z: w.z, h: 6 + (i % 2), ph: Math.random() * 7,
+          col: i % 2 ? '#e8e4da' : team.kit.shirt, col2: team.kit.shorts || '#22262c' });
+      }
+      const g0 = st.rowGeom(0);
+      const fw = st.world((st.u0 + st.u1) / 2, g0.d - 0.9, g0.z);
+      if (st.ultras){
+        this.drummers.push({ x: fw.x, y: fw.y, z: fw.z, ph: Math.random() * 7, col: team.kit.shirt });
+        const cw = st.world((st.u0 + st.u1) / 2 + 4, g0.d - 0.9, g0.z);
+        this.capos.push({ x: cw.x, y: cw.y, z: cw.z, ph: Math.random() * 7, col: team.kit.shirt });
+      } else {
+        this.drummers.push({ x: fw.x, y: fw.y, z: fw.z, ph: Math.random() * 7, col: team.kit.shirt });
+      }
+    }
   }
   sideOf(sec){
     const teams = this.stadium.game.teams;
@@ -1497,6 +1680,18 @@ class CrowdManager {
         each((s, side) => {
           if (!side) s.setMood('celebrate', 2.2 + Math.random());
           else s.setMood(side === team ? 'celebrate' : 'gutted', 4.2);
+          // confetti + streamers rain from the celebrating sections
+          if ((!side || side === team) && this.confetti.length < 260 && Math.random() < 0.5){
+            for (let i = 0; i < 26; i++){
+              this.confetti.push({
+                x: s.bx + Math.random() * s.w, y: s.by + Math.random() * s.h * 0.5,
+                vx: (Math.random() - 0.5) * 22, vy: -28 - Math.random() * 26,
+                col: [team ? team.kit.shirt : '#ffd257', '#e8e4da', '#ffd257', '#5ac2e8'][(Math.random() * 4) | 0],
+                life: 2.1 + Math.random() * 0.9,
+                str: Math.random() < 0.25, ph: Math.random() * 7,
+              });
+            }
+          }
         });
         break;
       case 'save':
@@ -1526,21 +1721,35 @@ class CrowdManager {
         break;
     }
   }
-  // momentum -> resting mood: the stands ARE the match-state indicator
+  // momentum -> resting mood: the stands ARE the match-state indicator.
+  // Sections close to the ball feel it more — an attack toward one end sets
+  // that end alight while the far end holds its breath.
   baseline(sec, mrs){
-    const favor = sec.affinity === 'home' || sec.affinity === 'vip' ? mrs.momentum
+    let favor = sec.affinity === 'home' || sec.affinity === 'vip' ? mrs.momentum
       : sec.affinity === 'away' ? -mrs.momentum : mrs.momentum * 0.45;
-    if (mrs.intensity < 0.22) return 'idle';
-    if (favor > 0.42) return mrs.intensity > 0.65 ? 'excited' : 'cheer';
+    if (sec.cx !== undefined){
+      const b = this.stadium.game.ball;
+      if (Math.hypot(sec.cx - b.x, sec.cy - b.y) < 38) favor *= 1.6;
+    }
+    if (mrs.intensity < 0.22) return sec.ultras && mrs.intensity > 0.12 ? 'chant' : 'idle';
+    if (favor > 0.42) return mrs.intensity > 0.65 ? 'excited' : (sec.ultras ? 'chant' : 'cheer');
     if (favor < -0.42) return 'tense';
-    return mrs.intensity > 0.55 ? 'tense' : 'idle';
+    return mrs.intensity > 0.55 ? 'tense' : (sec.ultras ? 'chant' : 'idle');
   }
   update(dt, mrs, game){
     this.flashT = Math.max(0, this.flashT - dt);
+    if (this.confetti.length){
+      for (const p of this.confetti){
+        p.life -= dt;
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        p.vy += 42 * dt; p.vx *= 1 - dt * 0.6;
+      }
+      this.confetti = this.confetti.filter(p => p.life > 0);
+    }
     for (let i = 0; i < 2 && this.warm < this.sections.length; i++, this.warm++){
       const s = this.sections[this.warm];
       for (const k of CROWD_FRAME_KINDS){
-        if (s.vip && (k[0] === 'j' || k[0] === 'w')) continue; // decorum: never used
+        if (s.vip && (k[0] === 'j' || k[0] === 'w' || k.startsWith('sc'))) continue; // decorum
         s.frame(k);
       }
     }
@@ -1560,12 +1769,66 @@ class CrowdManager {
   waveHit(s){ return this.wave.active && Math.abs(s.ring - this.wave.pos) < 0.045; }
   draw(ctx, ox, oy, t){
     for (const s of this.sections) s.draw(ctx, ox, oy, t, this.waveHit(s));
+    this.drawProps(ctx, ox, oy, t);
     if (this.flashT > 0){
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       for (let i = 0; i < 12; i++){
         const s = this.sections[(Math.random() * this.sections.length) | 0];
         ctx.fillRect(s.bx + ox + Math.random() * s.w, s.by + oy + Math.random() * s.h, 2, 2);
       }
+    }
+    for (const p of this.confetti){
+      ctx.globalAlpha = clamp(p.life, 0, 1);
+      ctx.fillStyle = p.col;
+      if (p.str) ctx.fillRect(p.x + ox, p.y + oy, 1.5, 6 + Math.sin(p.ph + p.life * 6) * 2);
+      else ctx.fillRect(p.x + ox, p.y + oy, 2.5, 2.5);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // Flag + Drum + capo props: the supporter ends breathe with the match
+  drawProps(ctx, ox, oy, t){
+    const en = 0.35 + this.stadium.mrs.intensity * 0.9;
+    for (const f of this.flags){
+      const s = project(f.x, f.y, f.z);
+      const bx2 = s.x + ox, by2 = s.y + oy;
+      ctx.strokeStyle = '#c8c2b2'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(bx2, by2); ctx.lineTo(bx2, by2 - f.h * 4); ctx.stroke();
+      // big waving cloth: two rippling slices, amplitude follows intensity
+      const w1 = Math.sin(t * (2 + en * 2.4) + f.ph) * 3 * en;
+      const w2 = Math.sin(t * (2 + en * 2.4) + f.ph + 1.2) * 4 * en;
+      const ty2 = by2 - f.h * 4;
+      ctx.fillStyle = f.col;
+      ctx.beginPath();
+      ctx.moveTo(bx2, ty2);
+      ctx.lineTo(bx2 + 11, ty2 + 2 + w1);
+      ctx.lineTo(bx2 + 21, ty2 + 1 + w2);
+      ctx.lineTo(bx2 + 21, ty2 + 8 + w2);
+      ctx.lineTo(bx2 + 11, ty2 + 9 + w1);
+      ctx.lineTo(bx2, ty2 + 7);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = f.col2;
+      ctx.fillRect(bx2 + 4, ty2 + 3 + w1 * 0.4, 6, 2.5);
+    }
+    const beat = (hz, ph) => ((t * hz + ph) | 0) % 2;
+    for (const d of this.drummers){
+      const s = project(d.x, d.y, d.z);
+      const x = s.x + ox, y = s.y + oy;
+      const hit = beat(2 + en * 4, d.ph);
+      ctx.fillStyle = '#6b4a2a'; ctx.fillRect(x - 3, y - 5, 7, 4);      // drum shell
+      ctx.fillStyle = '#e8e2d2'; ctx.fillRect(x - 3, y - 6, 7, 1.5);    // skin
+      ctx.fillStyle = d.col; ctx.fillRect(x - 2, y - 12, 5, 6);          // drummer
+      ctx.fillStyle = '#e8b48c';
+      ctx.fillRect(x - 2, y - 15, 3, 3);                                 // head
+      ctx.fillRect(x - 4, hit ? y - 10 : y - 13, 2, 2);                  // beating arms
+      ctx.fillRect(x + 3, hit ? y - 13 : y - 10, 2, 2);
+    }
+    for (const cpo of this.capos){
+      const s = project(cpo.x, cpo.y, cpo.z);
+      const x = s.x + ox, y = s.y + oy - (beat(3 + en * 3, cpo.ph) && en > 0.7 ? 2 : 0);
+      ctx.fillStyle = cpo.col; ctx.fillRect(x - 2, y - 11, 5, 6);
+      ctx.fillStyle = '#e8b48c'; ctx.fillRect(x - 2, y - 14, 3, 3);
+      ctx.fillStyle = '#f0e8d0';                                         // megaphone
+      ctx.beginPath(); ctx.moveTo(x + 3, y - 13); ctx.lineTo(x + 8, y - 15); ctx.lineTo(x + 8, y - 10); ctx.closePath(); ctx.fill();
     }
   }
 }
@@ -1599,18 +1862,22 @@ class CrowdEmotionSystem {
     this.nextAmbient = 5;
     this.spellTeam = null; this.spellT = 0;
   }
-  say(sec, key, dur){
+  say(sec, key, dur, sym){
     if (!sec) return;
-    const pool = CROWD_LINES[key];
-    if (!pool) return;
-    if (this.bubbles.length >= 3) this.bubbles.shift();
+    const pool = key ? CROWD_LINES[key] : null;
+    if (key && !pool) return;
+    if (this.bubbles.length >= 4) this.bubbles.shift();
     this.bubbles.push({
       x: sec.bx + 24 + Math.random() * Math.max(24, sec.w - 70),
       y: sec.by + 16 + Math.random() * 16,
-      text: pool[(Math.random() * pool.length) | 0],
+      text: pool ? pool[(Math.random() * pool.length) | 0] : '',
+      sym: sym || null,
       t: 0, dur: dur || 2.3,
     });
   }
+  // comic-style symbols above sections during emotional spikes — sparing,
+  // playful, readable: "!?", "…", "@#%!", angry clouds, applause bursts
+  saySym(sec, sym, dur){ this.say(sec, null, dur || 1.8, sym); }
   pick(aff){
     const list = this.stadium.crowd.sections.filter(s => aff ? s.affinity === aff : s.affinity !== 'vip');
     return list.length ? list[(Math.random() * list.length) | 0] : null;
@@ -1623,16 +1890,24 @@ class CrowdEmotionSystem {
       case 'goal': {
         this.say(this.pick(this.affOf(team)), 'goal_for');
         this.say(this.pick(this.otherAff(team)), 'goal_against');
+        this.saySym(this.pick(this.affOf(team)), 'burst', 2.4);
+        this.saySym(this.pick(this.otherAff(team)), 'dots', 2.6);
         const sc = game.match.goalScorer;
         if (sc && sc.value > 0.35) this.say(this.pick(this.affOf(team)), 'star'); // star quality
         break;
       }
-      case 'miss': if (team) this.say(this.pick(this.affOf(team)), 'miss_for'); break;
-      case 'save': this.say(this.pick(this.affOf(team)), 'save_for'); break;
-      case 'foul': if (Math.random() < 0.4 + riv * 0.5) this.say(this.pick(this.otherAff(team)), 'foul_against'); break;
+      case 'miss':
+        if (team) this.say(this.pick(this.affOf(team)), 'miss_for');
+        if (team && Math.random() < 0.6) this.saySym(this.pick(this.affOf(team)), 'shock');
+        break;
+      case 'save': this.say(this.pick(this.affOf(team)), 'save_for'); if (Math.random() < 0.5) this.saySym(this.pick(this.affOf(team)), 'burst'); break;
+      case 'foul':
+        if (Math.random() < 0.4 + riv * 0.5) this.say(this.pick(this.otherAff(team)), 'foul_against');
+        if (Math.random() < 0.35 + riv * 0.4) this.saySym(this.pick(this.otherAff(team)), 'angry');
+        break;
       case 'card':
         this.say(this.pick(this.otherAff(team)), 'card_them');
-        if (Math.random() < riv) this.say(this.pick(this.affOf(team)), 'card_us');
+        if (Math.random() < riv){ this.say(this.pick(this.affOf(team)), 'card_us'); this.saySym(this.pick(this.affOf(team)), 'angry'); }
         break;
       case 'offside':
         this.say(this.pick(this.affOf(team)), 'offside_att');
@@ -1669,6 +1944,39 @@ class CrowdEmotionSystem {
       const a = clamp(Math.min(b.t * 5, (b.dur - b.t) * 2.5), 0, 1);
       const x = b.x + ox, y = b.y + oy - b.t * 4; // gentle rise
       ctx.globalAlpha = a;
+      if (b.sym){
+        if (b.sym === 'angry'){
+          // small dark cloud with a curse string
+          ctx.fillStyle = '#2a2e35';
+          for (const [dx, dy, r] of [[-5, 0, 5], [0, -3, 6], [6, 0, 5]]){
+            ctx.beginPath(); ctx.arc(x + dx, y - 10 + dy, r, 0, 7); ctx.fill();
+          }
+          ctx.fillStyle = '#ffd257';
+          ctx.font = 'bold 7px monospace';
+          ctx.fillText('@#%!', x - 9, y - 13);
+        } else if (b.sym === 'burst'){
+          // applause / cheer burst
+          ctx.strokeStyle = '#ffd257'; ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i < 8; i++){
+            const an = i / 8 * Math.PI * 2 + b.t * 2;
+            ctx.moveTo(x + Math.cos(an) * 4, y - 10 + Math.sin(an) * 4);
+            ctx.lineTo(x + Math.cos(an) * (8 + Math.sin(b.t * 9) * 1.6), y - 10 + Math.sin(an) * (8 + Math.sin(b.t * 9) * 1.6));
+          }
+          ctx.stroke();
+        } else {
+          const txt = b.sym === 'shock' ? '!?' : '…';
+          ctx.font = 'bold 12px monospace';
+          const w2 = ctx.measureText(txt).width + 8;
+          ctx.fillStyle = b.sym === 'shock' ? '#ffd257' : '#c9ced6';
+          ctx.fillRect(x - w2 / 2, y - 16, w2, 15);
+          ctx.beginPath(); ctx.moveTo(x - 3, y - 1); ctx.lineTo(x + 3, y - 1); ctx.lineTo(x, y + 3); ctx.closePath(); ctx.fill();
+          ctx.fillStyle = '#14181d';
+          ctx.fillText(txt, x - w2 / 2 + 4, y - 4);
+        }
+        ctx.globalAlpha = 1;
+        continue;
+      }
       ctx.font = 'bold 10px monospace';
       const w = ctx.measureText(b.text).width + 10;
       ctx.fillStyle = '#f2f4f6';
@@ -1689,13 +1997,15 @@ class Stadium {
     this.themeDef = STADIUM_THEMES[STADIUM.theme] || STADIUM_THEMES.classic90s;
     this.t = 0;
     this.lastEvent = { type: '', team: null, t: -99, data: null };
-    const rng = mulberry32(20260709);
-    this.standDefs = [
-      new StandAsset(this, { edge:'N', u0:-4, u1:109, near:false }),
-      new StandAsset(this, { edge:'W', u0:-2, u1:70, near:false }),
-      new StandAsset(this, { edge:'S', u0:-4, u1:109, near:true }),
-      new StandAsset(this, { edge:'E', u0:-2, u1:70, near:true }),
-    ];
+    // layout is deterministic per match+theme: strict replays and headless
+    // runs rebuild the exact same ground (the sim never touches this stream)
+    let th2 = 0;
+    for (const ch of STADIUM.theme) th2 = (th2 * 31 + ch.charCodeAt(0)) | 0;
+    const rng = mulberry32(((game.matchSeed >>> 0) ^ 0x51AD10 ^ th2) | 0);
+    this.layoutRng = rng;
+    this.mainStand = null;
+    this.standDefs = StadiumBuilder.assemble(this, rng);
+    if (!this.mainStand) this.mainStand = this.standDefs[0];
     this.mrs = new MomentumReactionSystem();
     this.crowd = new CrowdManager(this, rng);
     this.emotion = new CrowdEmotionSystem(this);
@@ -1703,16 +2013,19 @@ class Stadium {
     this.buildActors();
   }
   get sections(){ return this.crowd.sections; }
-  sectionInfo(stand, tier, u0, u1){
+  sectionInfo(mod, tier, u0, u1){
     const base = clamp(STADIUM.crowdDensity, 0, 1);
-    if (STADIUM.awaySection && stand.edge === 'W' && tier === stand.tiers.length - 1 && u0 <= 8)
-      return { affinity:'away', density: Math.min(1, base + 0.12), shirt: this.game.teams[1].kit.shirt };
-    if (STADIUM.vipBox && stand.edge === 'N' && stand.tiers.length > 1 && tier === 1 && u0 > 39 && u1 < 67)
-      return { affinity:'vip', density: base * 0.5, shirt:'#23262e' };
-    if (stand.edge === 'N' && u0 > 26 && u1 < 79)
+    const r = this.layoutRng;
+    if (mod.away)
+      return { affinity:'away', density: Math.min(1, base + 0.1), shirt: this.game.teams[1].kit.shirt, loyal: 0.78 };
+    if ((mod.vip || mod.press) && STADIUM.vipBox && tier === mod.tiers.length - 1 && mod.tiers.length > 1)
+      return { affinity:'vip', density: base * (mod.press ? 0.45 : 0.5), shirt: mod.press ? '#2e3138' : '#23262e' };
+    if (mod.ultras)
+      return { affinity:'home', density: Math.min(1, base + 0.08), shirt: this.game.teams[0].kit.shirt, loyal: 0.78 };
+    if (mod.edge === 'N' && u0 > 26 && u1 < 79)
       return { affinity:'home', density: base, shirt: this.game.teams[0].kit.shirt };
-    return { affinity:'neutral', density: base * (0.8 + Math.random() * 0.2),
-      shirt: Math.random() < 0.25 ? this.game.teams[0].kit.shirt : null };
+    return { affinity:'neutral', density: base * (0.8 + r() * 0.2),
+      shirt: r() < 0.3 ? this.game.teams[0].kit.shirt : null };
   }
   buildBoards(){
     this.panels = []; this.groups = [];
@@ -1749,7 +2062,7 @@ class Stadium {
       for (const y of [23.5, 26.5, 41.5, 44.5]) this.actors.push(new Photographer(bx, y, gx));
       this.actors.push(new Photographer(bx, gx === 0 ? 4 : 63, gx));
     }
-    const nStand = this.standDefs[0];
+    const nStand = this.mainStand;
     let gy = -8.5, gz = 0;
     if (nStand.tiers.length > 1){
       const g = nStand.rowGeom(nStand.tiers[0]);
@@ -1874,20 +2187,41 @@ class Stadium {
       }
     }
   }
-  drawRoof(ctx, ox, oy){ // canopy above the far crowds
-    const th = this.themeDef;
-    if (!th.roof) return;
+  drawRoof(ctx, ox, oy){ // RoofModule canopies above the far crowds
     for (const st of this.standDefs){
-      if (st.near) continue;
+      if (st.near || !st.roof || st.edge.length > 1) continue;
       const top = st.topGeom();
       const S = (u, d, z) => { const w = st.world(u, d, z); const s = project(w.x, w.y, w.z); return { x: s.x + ox, y: s.y + oy }; };
-      const z = top.z + 3.2;
-      const a = S(st.u0, top.d - th.roof.depth, z), b = S(st.u1, top.d - th.roof.depth, z);
-      const c2 = S(st.u1, top.d + 1.6, z + 0.8), d2 = S(st.u0, top.d + 1.6, z + 0.8);
-      ctx.fillStyle = th.roof.col;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c2.x, c2.y); ctx.lineTo(d2.x, d2.y); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      const depth = Math.min(6.5, st.totalRows() * st.rowDepth * 0.75);
+      const col = st.roofCol || '#2c3138';
+      const quad = (a, b, c2, d2, f) => {
+        ctx.fillStyle = f;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c2.x, c2.y); ctx.lineTo(d2.x, d2.y); ctx.closePath(); ctx.fill();
+      };
+      if (st.roof === 'pitched'){
+        const zTop = top.z + 4.6, zEave = top.z + 3.0;
+        const ridgeD = top.d - depth * 0.45;
+        quad(S(st.u0, top.d - depth, zEave), S(st.u1, top.d - depth, zEave),
+             S(st.u1, ridgeD, zTop), S(st.u0, ridgeD, zTop), col);
+        quad(S(st.u0, ridgeD, zTop), S(st.u1, ridgeD, zTop),
+             S(st.u1, top.d + 1.6, zEave + 0.4), S(st.u0, top.d + 1.6, zEave + 0.4), shadeHex(col, 0.72));
+        const a = S(st.u0, st.u0 !== undefined ? ridgeD : ridgeD, zTop), b = S(st.u1, ridgeD, zTop);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      } else {
+        const z = top.z + 3.2;
+        const a = S(st.u0, top.d - depth, z), b = S(st.u1, top.d - depth, z);
+        const c2 = S(st.u1, top.d + 1.6, z + 0.8), d2 = S(st.u0, top.d + 1.6, z + 0.8);
+        quad(a, b, c2, d2, col);
+        ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      // fascia: an accent band with the module's own trim colour
+      const fz = top.z + 2.9;
+      const f0 = S(st.u0, top.d + 1.5, fz), f1 = S(st.u1, top.d + 1.5, fz);
+      ctx.strokeStyle = st.seatCol ? hexA(st.seatCol, 0.85) : 'rgba(232,226,210,0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(f0.x, f0.y); ctx.lineTo(f1.x, f1.y); ctx.stroke();
     }
   }
   // static structure baked into the pre-rendered background
@@ -1899,25 +2233,66 @@ class Stadium {
     };
     for (const st of this.standDefs){
       const W = (u, d, z) => { const w = st.world(u, d, z); return P(w.x, w.y, w.z); };
+      // front wall + module seam pillars — visibly separate assembled pieces
       poly([W(st.u0, st.d0 - 1.2, 0), W(st.u1, st.d0 - 1.2, 0), W(st.u1, st.d0, 0.8), W(st.u0, st.d0, 0.8)], th.wall);
       const rows = st.totalRows();
+      const seat = st.seatCol;
       for (let r = 0; r < rows; r++){
         const g = st.rowGeom(r);
-        poly([W(st.u0, g.d, g.z), W(st.u1, g.d, g.z), W(st.u1, g.d + st.rowDepth, g.z), W(st.u0, g.d + st.rowDepth, g.z)],
-          r % 2 ? th.treadA : th.treadB);
+        let col = r % 2 ? th.treadA : th.treadB;
+        if (st.style === 'seats' && seat) col = r % 2 ? shadeHex(seat, 0.52) : shadeHex(seat, 0.42);
+        poly([W(st.u0, g.d, g.z), W(st.u1, g.d, g.z), W(st.u1, g.d + st.rowDepth, g.z), W(st.u0, g.d + st.rowDepth, g.z)], col);
+        // terraces get crush barriers every third step
+        if (st.style === 'terrace' && r % 3 === 2 && st.edge.length === 1){
+          const a = W(st.u0 + 1, g.d, g.z + 0.7), b = W(st.u1 - 1, g.d, g.z + 0.7);
+          c.strokeStyle = 'rgba(210,214,220,0.4)'; c.lineWidth = 1;
+          c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+        }
       }
       const top = st.topGeom();
       poly([W(st.u0, top.d + st.rowDepth, top.z), W(st.u1, top.d + st.rowDepth, top.z),
             W(st.u1, top.d + st.rowDepth + 0.6, top.z + 2.2), W(st.u0, top.d + st.rowDepth + 0.6, top.z + 2.2)], th.wall);
-      if (th.fence){
+      // seam pillars at module ends (the tabletop-kit joint lines)
+      if (st.edge.length === 1){
+        for (const uu of [st.u0, st.u1]){
+          const a = W(uu, st.d0 - 1.1, 0), b = W(uu, top.d + st.rowDepth, top.z + 2.0);
+          c.strokeStyle = 'rgba(20,23,28,0.5)'; c.lineWidth = 2;
+          c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+        }
+      }
+      // supporter banner cloth on the front wall of character ends
+      if (st.ultras || st.away){
+        const team = this.game.teams[st.away ? 1 : 0];
+        const um = (st.u0 + st.u1) / 2;
+        const b0 = W(um - 11, st.d0 - 1.25, 0.15), b1 = W(um + 11, st.d0 - 1.25, 0.15);
+        const t0 = W(um - 11, st.d0 - 1.25, 1.05), t1 = W(um + 11, st.d0 - 1.25, 1.05);
+        poly([b0, b1, t1, t0].map((q, i) => i < 2 ? q : q), team.kit.shirt);
+        c.fillStyle = 'rgba(255,255,255,0.9)';
+        c.font = 'bold 7px monospace';
+        const mid = W(um, st.d0 - 1.3, 0.55);
+        c.textAlign = 'center';
+        c.fillText(st.away ? team.code + ' ON TOUR' : team.code + ' TIL I DIE', mid.x, mid.y);
+        c.textAlign = 'left';
+      }
+      // entrance module: a dark vomitory with steps instead of mid seats
+      if (st.entrance){
+        const um = (st.u0 + st.u1) / 2;
+        const g0 = st.rowGeom(0), g1 = st.rowGeom(Math.min(rows - 1, 3));
+        poly([W(um - 2.6, g0.d, g0.z + 0.05), W(um + 2.6, g0.d, g0.z + 0.05),
+              W(um + 2.6, g1.d + st.rowDepth, g1.z + 0.05), W(um - 2.6, g1.d + st.rowDepth, g1.z + 0.05)], '#12151a');
+        const ga = W(um - 2.6, g0.d - 0.2, g0.z + 1.9), gb = W(um + 2.6, g0.d - 0.2, g0.z + 1.9);
+        c.strokeStyle = '#5a6068'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(ga.x, ga.y); c.lineTo(gb.x, gb.y); c.stroke();
+      }
+      if (th.fence && st.style === 'terrace' && st.edge.length === 1){
         const a = W(st.u0, st.d0 - 1.2, 1.2), b = W(st.u1, st.d0 - 1.2, 1.2);
         c.strokeStyle = 'rgba(225,225,215,0.5)'; c.lineWidth = 1;
         c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
       }
     }
-    // directors box shell behind the VIP fans
-    const nStand = this.standDefs[0];
-    if (STADIUM.vipBox && nStand.tiers.length > 1){
+    // directors / press box shell behind the top-tier fans of the main stand
+    const nStand = this.mainStand;
+    if (STADIUM.vipBox && (nStand.vip || nStand.press) && nStand.tiers.length > 1){
       const g0 = nStand.rowGeom(nStand.tiers[0]);
       const g1 = nStand.topGeom();
       const W2 = (u, d, z) => { const w = nStand.world(u, d, z); return P(w.x, w.y, w.z); };
@@ -1933,7 +2308,7 @@ class Stadium {
       c.fillStyle = '#e8e8e8'; c.fillRect(cool.x, cool.y - 9, 4, 2);
     }
     // players tunnel: a dark mouth in the main stand between the dugouts
-    {
+    if (nStand.tunnel){
       const d = nStand.d0 - 1.21;
       const W3 = (u, dd, z) => { const w = nStand.world(u, dd, z); return P(w.x, w.y, w.z); };
       poly([W3(51, d, 0), W3(55.5, d, 0), W3(55.5, d, 2.6), W3(51, d, 2.6)], '#0e1116');
@@ -1942,6 +2317,7 @@ class Stadium {
       c.strokeStyle = '#5a6068'; c.lineWidth = 1;
       c.beginPath(); c.moveTo(t0.x, t0.y); c.lineTo(t0.x, t0.y - 21); c.moveTo(t1.x, t1.y); c.lineTo(t1.x, t1.y - 21); c.stroke();
     }
+    if (!nStand.tunnel){ /* small grounds: no tunnel arch, players emerge by the dugouts */ }
     // TV gantry platform (two-tier themes)
     if (nStand.tiers.length > 1){
       const g = nStand.rowGeom(nStand.tiers[0]);
