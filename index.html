@@ -298,6 +298,41 @@ const sub   = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
 const add   = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
 const scl   = (v, s) => ({ x: v.x * s, y: v.y * s });
 function norm(v){ const l = len(v); return l < 1e-6 ? {x:0,y:0} : {x:v.x/l, y:v.y/l}; }
+// FatigueEngine + StaminaModel: a continuous energy economy. Every stride,
+// press, duel and acceleration is paid for; endurance (a.stamina) slows the
+// drain and speeds recovery in quiet phases. Deterministic — no dice.
+function fatigueStep(p, dt, game){
+  const sp = len(p.vel), ms = Math.max(1e-3, p.maxSpeed());
+  const rel = sp / ms;
+  const endur = p.a.stamina;
+  let cost = 0;
+  if (rel > 0.85) cost += 0.011;        // flat-out sprint
+  else if (rel > 0.6) cost += 0.005;    // strong running
+  else if (rel > 0.3) cost += 0.0021;   // jogging
+  // repeated hard accelerations cost extra
+  const ax = (p.vel.x - p._pvx) / Math.max(dt, 1e-4);
+  const ay = (p.vel.y - p._pvy) / Math.max(dt, 1e-4);
+  if (Math.hypot(ax, ay) > 7 && rel > 0.25) cost += 0.0022;
+  p._pvx = p.vel.x; p._pvy = p.vel.y;
+  // pressing and tactical intensity are paid for
+  if (p.duty === 'press' || p.duty === 'press2')
+    cost += 0.0028 * (0.6 + p.team.tactics.pressing * 0.7);
+  cost *= ENV.staminaMul * (1.35 - endur * 0.6);
+  // recovery during walks and dead balls; fit players refill faster
+  let rec = 0;
+  if (rel < 0.22) rec = (0.0012 + endur * 0.002) * (game.match.state === 'PLAYING' ? 1 : 2.4);
+  p.stamina = clamp(p.stamina - (cost - rec) * dt * 2.1, 0.18, 1);
+  // EnergyUI trend buffer: one sample every ~5 real seconds
+  if (p._stamSampleT <= 0){
+    p._stamSampleT = 5;
+    p.stamHist.push(+p.stamina.toFixed(3));
+    if (p.stamHist.length > 13) p.stamHist.shift();
+  } else p._stamSampleT -= dt;
+}
+// one-off exertion: duels, tackles, leaps, strikes — scaled by strength
+function exert(p, base){
+  p.stamina = Math.max(0.18, p.stamina - base * (1.25 - p.a.strength * 0.5));
+}
 function gauss(){
   let u = 0, v = 0;
   while (u === 0) u = srand();
@@ -310,6 +345,8 @@ function turnToward(cur, target, maxStep){
   while (d < -Math.PI) d += Math.PI * 2;
   return cur + clamp(d, -maxStep, maxStep);
 }
+// GoalNetPhysics impact state per goal end — read by the deformable net
+const NET_FX = [null, null];
 function mulberry32(seed){
   return function(){
     seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -412,6 +449,7 @@ class Ball {
     this.isShot = false; this.flightT = 0;
     this.px = this.x; this.py = this.y; this.pz = this.z;
     this.roll = 0;
+    this.spinZ = 0; this.inNet = false;
     this.trail = [];
   }
   speed(){ return Math.hypot(this.vx, this.vy); }
@@ -434,6 +472,12 @@ class Ball {
       const ay =  this.vx / sp * this.spin * sp * curve;
       this.vx += ax * dt; this.vy += ay * dt;
     }
+    // BallSpinSystem: vertical spin — backspin floats and checks, topspin
+    // dips the ball down before gravity finishes the job
+    if (Math.abs(this.spinZ || 0) > 0.05 && sp > 3 && this.z > 0.2){
+      this.vz += this.spinZ * sp * 0.016 * dt * ENV.curveMul;
+      this.spinZ *= 1 - dt * 0.22;
+    }
     this.vz -= CFG.GRAV * dt;
     // WindPhysics: aerial balls drift with the match wind
     if (this.z > 0.5){ this.vx += ENV.wind.x * dt * 0.22; this.vy += ENV.wind.y * dt * 0.22; }
@@ -444,6 +488,10 @@ class Ball {
       if (this.vz < -1.2){
         // SurfacePhysicsModifier: mud deadens, rough ground kicks it sideways
         let rest = ENV.bounce;
+        const chk = clamp(this.spinZ || 0, -2.5, 2.5);
+        if (chk > 0.1){ this.vx *= 1 - chk * 0.07; this.vy *= 1 - chk * 0.07; } // backspin checks
+        else if (chk < -0.1){ this.vx *= 1 + Math.min(0.1, -chk * 0.045); this.vy *= 1 + Math.min(0.1, -chk * 0.045); } // topspin runs on
+        this.spinZ = (this.spinZ || 0) * 0.5;
         if (cell){
           rest *= 1 - cell.mud * 0.45;
           if (cell.rough > 0.25){
@@ -518,9 +566,22 @@ class Ball {
       }
       const behind = gx === 0 ? -this.x : this.x - CFG.PITCH_L;
       if (behind > 0.4 && Math.abs(this.y - 34) < CFG.GOAL_W/2 + 0.4 && this.z < CFG.GOAL_H + 0.2){
-        this.vx *= 0.72; this.vy *= 0.72; this.spin = 0;
+        // GoalNetPhysics: the FIRST mesh contact is physical — the net takes
+        // the ball's momentum, rings around the impact point, and throws a
+        // damped rebound back into the goalmouth. Slow rollers just settle.
+        if (!this.inNet){
+          this.inNet = true;
+          const spd = Math.hypot(this.vx, this.vy, this.vz);
+          const surf = this.z > CFG.GOAL_H - 0.35 ? 'roof'
+            : (Math.abs(this.y - 34) > CFG.GOAL_W / 2 - 0.55 ? 'side' : 'back');
+          NET_FX[gx === 0 ? 0 : 1] = { at: (typeof game !== 'undefined' ? game.animT : 0),
+            y: this.y, z: Math.min(this.z, CFG.GOAL_H - 0.1), power: Math.min(1, spd / 24), surf };
+          if (spd > 7){ this.vx *= -0.22; this.vy *= 0.45; this.vz *= 0.35; }
+          else { this.vx *= 0.6; this.vy *= 0.6; }
+          this.spin = 0; this.spinZ = 0;
+        } else { this.vx *= 0.72; this.vy *= 0.72; }
         if (behind > 1.7){ const cap = gx === 0 ? -1.7 : CFG.PITCH_L + 1.7; this.x = cap; this.vx = 0; }
-      }
+      } else if (behind < 0.2 && this.inNet) this.inNet = false;
     }
   }
 }
@@ -804,6 +865,7 @@ class Player {
     };
     this.pos = { x: 0, y: 0 }; this.vel = { x: 0, y: 0 };
     this.facing = 0; this.runPhase = 0; this.stamina = 1;
+    this._pvx = 0; this._pvy = 0; this._stamSampleT = 0; this.stamHist = [];
     this.target = { x: 0, y: 0 }; this.speedWish = 0.6;
     this.duty = 'position'; this.decision = { type: 'dribble' };
     this.thinkT = srand() * 0.15; this.decideT = 0;
@@ -861,7 +923,8 @@ class Player {
       }
       const scell = SURFACE ? SURFACE.at(this.pos.x, this.pos.y) : null;
       const grip = ENV.traction * (scell ? 1 - scell.mud * 0.3 - scell.wet * 0.15 : 1);
-      const acc = (CFG.PLAYER_BASE_ACCEL + this.a.accel * 9) * ENV.accelMul * grip * (this.slowT > 0 ? 0.4 : 1);
+      const acc = (CFG.PLAYER_BASE_ACCEL + this.a.accel * 9) * ENV.accelMul * grip * (this.slowT > 0 ? 0.4 : 1)
+      * (0.72 + 0.28 * this.stamina); // heavy legs accelerate late
       const dv = sub(want, this.vel);
       const dl = len(dv);
       if (dl > 1e-5){
@@ -879,8 +942,7 @@ class Player {
     this.pos.x = clamp(this.pos.x + this.vel.x * dt, -3, CFG.PITCH_L + 3);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt, -3, CFG.PITCH_W + 3);
     const sp = len(this.vel);
-    if (sp > 0.75 * this.maxSpeed()) this.stamina = Math.max(0.35, this.stamina - 0.007 * ENV.staminaMul * dt * (1.3 - this.a.stamina));
-    else this.stamina = Math.min(1, this.stamina + 0.005 * dt);
+    fatigueStep(this, dt, game);
     this.runPhase += sp * dt;
     this.stats.distance += sp * dt;
     if (this.actionT <= 0) this.deriveAction(game);
@@ -2595,12 +2657,28 @@ function doKick(p, game, opt){
   let ang = Math.atan2(dy, dx) + gauss() * sigma;
   const bodyOff = Math.abs(turnToward(0, ang - p.facing, 9));
   ang += gauss() * bodyOff * 0.02 * (2 - p.a.composure);
-  const sp = opt.speed * (1 + gauss() * 0.04) * (offFoot && !opt.header ? 0.94 : 1);
+  const sp = opt.speed * (1 + gauss() * 0.04) * (offFoot && !opt.header ? 0.94 : 1)
+    * (opt.type === 'shot' ? 0.9 + clamp(p.stamina, 0, 1) * 0.1 : 1); // tired strikes fade
   ball.vx = Math.cos(ang) * sp;
   ball.vy = Math.sin(ang) * sp;
   ball.vz = opt.vz || 0;
   ball.z = Math.max(ball.z, 0.12);
-  ball.spin = opt.spin || 0;
+  // BallSpinSystem: when the caller doesn't dictate spin, it emerges from
+  // technique, preferred foot and contact geometry — inside-foot wraps curl
+  // toward the target side, outside-foot bends away, chips carry backspin,
+  // driven balls dip with topspin. Trajectories bend before gravity and
+  // drag finish the flight.
+  const tech = (p.a.passing + p.a.shooting) * 0.5;
+  if (!opt.header && !opt.spin){
+    const inside = (p.foot === 1 && kickSide > 0.12) || (p.foot === -1 && kickSide < -0.12);
+    ball.spin = (kickSide > 0 ? 1 : -1) * Math.min(1.8, Math.abs(kickSide) * (0.4 + tech * 1.5))
+      * (inside ? 1 : -0.5) * clamp(sp / 24, 0.3, 1) * (offFoot ? 0.55 : 1);
+  } else ball.spin = opt.spin || 0;
+  if (opt.header){ ball.spinZ = 0; }
+  else if (opt.spinZ !== undefined){ ball.spinZ = opt.spinZ; }
+  else if ((opt.vz || 0) > 3.2) ball.spinZ = 0.9 + tech * 1.1;              // chipped: floats
+  else if ((opt.vz || 0) < 1.2 && sp > 17) ball.spinZ = -(0.5 + tech * 0.9); // driven: dips
+  else ball.spinZ = 0.15;
   ball.controller = null;
   ball.flightT = 0;
   ball.intendedReceiver = opt.receiver || null;
@@ -2643,6 +2721,7 @@ function doKick(p, game, opt){
   // can create involvement (passes, crosses, clears — and rebounds off shots)
   if (game.offsideSys) game.offsideSys.snapshot(p);
   if (opt.type === 'shot'){
+    exert(p, 0.005);
     p.team.shots++; p.stats.shots++; game.lastShooter = p;
     // ballistic on-target prediction for the ticker (ignores curve/blocks)
     const gx = p.team.oppGoalX();
@@ -2893,6 +2972,11 @@ function offBallTarget(p, game){
       const away = norm(sub({ x: tx, y: ty }, rs.spot));
       tx = rs.spot.x + away.x * rad; ty = rs.spot.y + away.y * rad;
     }
+  }
+  if (p.stamina < 0.45){
+    // exhausted players lose their spots by a stride or two
+    const w = (0.45 - p.stamina) * 9;
+    tx += (srand() - 0.5) * w; ty += (srand() - 0.5) * w;
   }
   p.target = { x: clamp(tx, 1, CFG.PITCH_L - 1), y: clamp(ty, 1, CFG.PITCH_W - 1) };
   const d = dist(p.pos, p.target);
@@ -3319,6 +3403,7 @@ function resolveTackles(game, dt){
         const victim = ball.controller && ball.controller.team !== p.team ? ball.controller : null;
         const behind = victim ? fromBehind(p, victim) : false;
         p.stats.tackAtt++;
+        exert(p, 0.012); if (victim) exert(victim, 0.005);
         const winCh = victim
           ? clamp(0.42 + (p.a.tackling - victim.a.dribbling) * 0.35 - (behind ? 0.22 : 0), 0.1, 0.8)
           : 0.9;
@@ -3378,6 +3463,7 @@ function resolveTackles(game, dt){
       const chance = clamp(0.32 + (p.a.tackling - c.a.dribbling) * 0.5 + p.a.aggression * 0.08 - (behind ? 0.12 : 0), 0.15, 0.75)
         * (0.85 + agg * 0.3);
       p.tackleCd = 1.7 - agg * 0.9; // aggressive sides go again sooner
+      exert(p, 0.008); if (c) exert(c, 0.005); // the duel costs both men
       p.setAction('tackle', 0.35);
       p.stats.tackAtt++;
       if (srand() < chance){
@@ -4043,6 +4129,9 @@ class Match {
           // celebration runs on the SIM clock (see Game.update) so headless
           // runs, live play and replays all reproduce the same positions
           g.celebration = new GoalCelebrationAnimation(g, og ? null : scorer, scorerTeam);
+          // GoalImpactEffects: every lens behind the goal fires at once
+          if (g.stadium) for (const a2 of g.stadium.actors)
+            if (a2 instanceof Photographer) a2.setAction('shoot_cam', 2.6);
           if (g.broadcast) g.broadcast.event({
             big: true, icon: 'goal', title: 'GOAL  ·  ' + scorerTeam.name,
             sub: (this.goalScorer ? this.goalScorer.name + (og ? ' (own goal)' : '') + '  ·  ' : '') + Math.min(90, Math.floor(this.tMatch / 60) + 1) + "'",
@@ -4377,6 +4466,7 @@ class Match {
             if (q === r.lying) continue;
             q.setAction('head', 0.55);
             q.wallJumpT = 0.5;
+            exert(q, 0.005); // the leap
           }
         }
       } else if (dGoal < 45 && r.humanChoice !== 'safe'){
@@ -4800,7 +4890,20 @@ class Renderer {
     const backX = gx - inward * 1.9;
     const y0 = 34 - CFG.GOAL_W/2, y1 = 34 + CFG.GOAL_W/2;
     const H = CFG.GOAL_H, BH = 1.7;
-    const S = (x, y, z) => { const s = project(x, y, z); return { x: s.x + ox, y: s.y + oy }; };
+    const S0 = (x, y, z) => { const s = project(x, y, z); return { x: s.x + ox, y: s.y + oy }; };
+    // GoalNetPhysics: stretch + ripple around the impact, decaying in ~1.4s.
+    // Displacement scales with ball speed and falls off from the hit point.
+    const fx2 = NET_FX[gx === 0 ? 0 : 1];
+    const age = fx2 ? this.game.animT - fx2.at : 99;
+    const act = fx2 && age >= 0 && age < 1.4;
+    const S = !act ? S0 : (x, y, z) => {
+      const d2 = (y - fx2.y) * (y - fx2.y) + (z - fx2.z) * (z - fx2.z) * 1.5;
+      const off = fx2.power * 1.15 * Math.exp(-d2 / 2.4) * Math.exp(-age * 2.8)
+        * Math.cos(age * 19 - Math.sqrt(d2) * 2.4);
+      return S0(x - inward * Math.max(-0.25, off),
+        y + (y - fx2.y) * off * 0.14,
+        z + Math.max(-0.3, (z - fx2.z) * off * 0.12));
+    };
     ctx.fillStyle = 'rgba(240,240,240,0.13)';
     const quad = (a, b, cc, d) => {
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(cc.x, cc.y); ctx.lineTo(d.x, d.y); ctx.closePath(); ctx.fill();
@@ -4992,6 +5095,16 @@ class Renderer {
       ctx.closePath(); ctx.fill();
     }
     if (game.humanMode && game.selected){
+      // EnergyUI: the controlled player's tank floats above his head
+      const selP = game.selected;
+      const ss = project(selP.pos.x, selP.pos.y, 3.4);
+      const st2 = clamp(selP.stamina, 0, 1);
+      ctx.fillStyle = 'rgba(10,13,17,0.7)';
+      ctx.fillRect(ss.x + ox - 9, ss.y + oy - 4, 18, 4);
+      ctx.fillStyle = st2 > 0.55 ? UITheme.good : (st2 > 0.35 ? UITheme.warn : (st2 > 0.22 ? '#e08a3a' : UITheme.bad));
+      if (st2 <= 0.22) ctx.globalAlpha = 0.55 + 0.45 * Math.sin(game.animT * 6);
+      ctx.fillRect(ss.x + ox - 8, ss.y + oy - 3, Math.max(2, 16 * st2), 2);
+      ctx.globalAlpha = 1;
       const pw = Math.max(game.input.chargingPass(), game.input.chargingShot());
       if (pw > 0){
         const p = game.selected;
@@ -5108,13 +5221,22 @@ class Renderer {
       const live = !!game.trackPlayer();
       ctx.font = UITheme.sans('600', 11);
       const label = '#' + tracked.num + ' ' + tracked.name;
-      const cw = ctx.measureText(label).width + 30;
+      const cw = ctx.measureText(label).width + 62;
       if (cx2 + cw < W - 190){ // skip on narrow windows so it can't hit the env chip
         glassPanel(ctx, cx2, bugY + 3, cw, bugH - 6, 8);
         ctx.fillStyle = tracked.team.kit.shirt;
         ctx.beginPath(); ctx.arc(cx2 + 12, bugY + bugH / 2, 4, 0, 7); ctx.fill();
         ctx.fillStyle = live ? UITheme.ink : UITheme.faint;
         ctx.fillText(label, cx2 + 20, cyd);
+        // EnergyUI: live stamina bar, green → yellow → orange → red
+        const st = clamp(tracked.stamina, 0, 1);
+        const bx3 = cx2 + cw - 34;
+        ctx.fillStyle = 'rgba(255,255,255,0.12)';
+        rrPath(ctx, bx3, bugY + bugH / 2 - 2.5, 26, 5, 2.5); ctx.fill();
+        ctx.fillStyle = st > 0.55 ? UITheme.good : (st > 0.35 ? UITheme.warn : (st > 0.22 ? '#e08a3a' : UITheme.bad));
+        if (st <= 0.22) ctx.globalAlpha = 0.55 + 0.45 * Math.sin(game.animT * 6); // gasping
+        rrPath(ctx, bx3, bugY + bugH / 2 - 2.5, Math.max(3, 26 * st), 5, 2.5); ctx.fill();
+        ctx.globalAlpha = 1;
       }
     }
     // pitch/weather chip, top-right (desktop only — no room on phones)
@@ -5649,8 +5771,15 @@ class Renderer {
     ctx.fillStyle = 'rgba(255,255,255,0.10)'; rrPath(ctx, stX, y + 17, 74, 7, 3.5); ctx.fill();
     ctx.fillStyle = p.stamina > 0.55 ? UITheme.good : (p.stamina > 0.3 ? UITheme.warn : UITheme.bad);
     rrPath(ctx, stX, y + 17, Math.max(5, 74 * p.stamina), 7, 3.5); ctx.fill();
-    ctx.font = UITheme.sans('700', 9); ctx.fillStyle = UITheme.mid;
-    ctx.fillText(Math.round(p.stamina * 100) + '%', stX + 78, y + 16);
+    const hist = p.stamHist || [];
+    const slope = hist.length > 2 ? hist[hist.length - 1] - hist[Math.max(0, hist.length - 4)] : 0;
+    const trend = slope < -0.012 ? '▼' : (slope > 0.008 ? '▲' : '→');
+    // samples land every 5 real s ≈ 2.5 game-min: estimate time to the red zone
+    const perMin = Math.min(3, Math.max(1, hist.length - 1)) * 2.5;
+    const est = slope < -0.004 ? Math.round((p.stamina - 0.25) / (-slope / perMin)) : null;
+    ctx.font = UITheme.sans('700', 9);
+    ctx.fillStyle = trend === '▼' ? UITheme.warn : UITheme.mid;
+    ctx.fillText(Math.round(p.stamina * 100) + '% ' + trend + (est !== null && est < 95 ? ' ·~' + est + "'" : ''), stX + 78, y + 16);
     ctx.font = UITheme.sans('600', 8); ctx.fillStyle = UITheme.faint;
     ctx.fillText('INTENT', stX, y + 30);
     ctx.font = UITheme.sans('600', 9); ctx.fillStyle = UITheme.mid;
@@ -6230,6 +6359,7 @@ const LLMProvider = {
       momentum: game.stadium ? +game.stadium.mrs.momentum.toFixed(2) : 0,
       myTactics: Object.fromEntries(Object.entries(t0.tactics).filter(([k, v]) => typeof v !== 'object')),
       opponent: { formation: t1.assignedFormation, style: t1.tactics.style, pressing: t1.tactics.pressing },
+      tired: t0.players.filter(p => p.stamina < 0.45).map(p => '#' + p.num + ' ' + p.role + ' ' + Math.round(p.stamina * 100) + '%'),
     };
   },
   SYSTEM: 'You are a football tactics coach inside a simulation. Reply ONLY with JSON: '
@@ -6433,8 +6563,8 @@ const SnapshotManager = {
   PLAYER_FIELDS: ['facing','runPhase','stamina','speedWish','duty','thinkT','thinkInterval','decideT',
     'kickCooldown','touchCd','tackleCd','slowT','blockCd','holdT','holdCd','diving','action','actionT',
     'actionDur','slideHit','glanceT','callT','callCd','callText','wallJumpT','walkOff','role','line','isGK',
-    'form','value','valueDelta'],
-  BALL_FIELDS: ['x','y','z','vx','vy','vz','spin','roll','flightT','isShot','px','py','pz',
+    'form','value','valueDelta','_pvx','_pvy','_stamSampleT'],
+  BALL_FIELDS: ['x','y','z','vx','vy','vz','spin','spinZ','inNet','roll','flightT','isShot','px','py','pz',
     'lastKickShot','lastKickClock','shotCredited','prevTouchClock','prevTouch2Clock'],
   BALL_REFS: ['controller','holder','intendedReceiver','lastToucher','lastKicker','prevToucher','prevToucher2'],
   capture(game){
@@ -6549,7 +6679,9 @@ const SnapshotManager = {
       Object.assign(team.dlm, ts.dlm);
     });
     const b = game.ball;
-    for (const k of this.BALL_FIELDS) b[k] = snap.ball[k];
+    for (const k of this.BALL_FIELDS) if (snap.ball[k] !== undefined) b[k] = snap.ball[k];
+    if (!isFinite(b.spinZ)) b.spinZ = 0;
+    b.inNet = !!b.inNet;
     for (const k of this.BALL_REFS) b[k] = P(snap.ball[k]);
     b.lastTouchTeam = E.team(game, snap.ball.lastTouchTeam);
     b.trail = [];
@@ -8012,6 +8144,7 @@ class Game {
     this.lastCallT = -1e9; this.lastChanceT = -1e9; // fresh match, fresh voices
     this.frameNo = 0;
     this.celebration = null;
+    NET_FX[0] = NET_FX[1] = null;
     this.replayMode = false; this.simRate = 1;
     this._lastMoveKey = undefined; this.replayHumanDir = undefined;
     // a bare reset (R key) during a script session must end it cleanly,
@@ -8273,7 +8406,7 @@ class Game {
       for (const p of t.players){
         p.thinkT -= dt;
         if (p.thinkT <= 0){
-          p.thinkInterval = 0.13 + srand() * 0.07;
+          p.thinkInterval = (0.13 + srand() * 0.07) * (1 + (1 - p.stamina) * 0.45); // tired minds react late
           p.thinkT = p.thinkInterval;
           if (p.duty !== 'taker' && !p.scripted && !(this.humanMode && p === this.selected)) playerThink(p, this);
         }
