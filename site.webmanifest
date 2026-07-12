@@ -1,0 +1,14 @@
+{
+  "name": "Fobal.ai — Web3 Football Management Simulator",
+  "short_name": "Fobal.ai",
+  "description": "Build your club, trade NFT players and compete on-chain in a retro-isometric football simulation with live AI matches, real tactics and broadcast replays.",
+  "icons": [
+    { "src": "assets/favicon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/favicon-512.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070b16",
+  "theme_color": "#070b16"
+}
