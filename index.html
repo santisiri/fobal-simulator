@@ -317,7 +317,7 @@ function fatigueStep(p, dt, game){
   // pressing and tactical intensity are paid for
   if (p.duty === 'press' || p.duty === 'press2')
     cost += 0.0028 * (0.6 + p.team.tactics.pressing * 0.7);
-  cost *= ENV.staminaMul * (1.35 - endur * 0.6);
+  cost *= ENV.staminaMul * (1.35 - endur * 0.6) * (1 + Math.max(0, p.age - 29) * 0.03);
   // recovery during walks and dead balls; fit players refill faster
   let rec = 0;
   if (rel < 0.22) rec = (0.0012 + endur * 0.002) * (game.match.state === 'PLAYING' ? 1 : 2.4);
@@ -798,6 +798,8 @@ function baseMarketValue(p){
   return clamp(core * posMul * ageMul * RARITY[p.rarity].mul * p.form * p.potential, 0.01, 3);
 }
 // PostMatchValueUpdate: small, believable drift from real match contribution.
+// age influences development: youth grows on form, veterans hold value
+function ageGrowth(p){ return p.age < 23 ? 1.6 : (p.age < 27 ? 1.15 : (p.age > 31 ? 0.6 : 1)); }
 function postMatchValueUpdate(game){
   for (const team of game.teams){
     for (const p of [...team.players, ...team.bench, ...team.offList]){
@@ -835,6 +837,13 @@ function matchRating(p){
 
 const SKIN = ['#e8b48c','#d19a6b','#c98d5f','#8d5a3b','#6b4226','#f0c8a0'];
 const HAIR = ['#1a1512','#3a2a18','#5c4326','#8a6a3a','#c9a55a','#222831'];
+// NationalityDatabase: gameplay identity, not decoration — age curves and
+// development read it, and every profile/token displays code + emoji flag.
+const NATIONS = [
+  ['AR','🇦🇷'],['BR','🇧🇷'],['ES','🇪🇸'],['FR','🇫🇷'],['DE','🇩🇪'],['IT','🇮🇹'],['EN','🏴󠁧󠁢󠁥󠁮󠁧󠁿'],['PT','🇵🇹'],
+  ['NL','🇳🇱'],['BE','🇧🇪'],['UY','🇺🇾'],['CO','🇨🇴'],['MX','🇲🇽'],['US','🇺🇸'],['JP','🇯🇵'],['KR','🇰🇷'],
+  ['NG','🇳🇬'],['SN','🇸🇳'],['GH','🇬🇭'],['CI','🇨🇮'],['MA','🇲🇦'],['HR','🇭🇷'],['PL','🇵🇱'],['SE','🇸🇪'],
+];
 const SYL1 = ['Bra','Kel','Dor','Var','Mal','Tor','Ren','Sil','Gar','Ost','Fen','Cal','Dun','Hol','Mar','Vin','Lom','Ash','Ber','Cro'];
 const SYL2 = ['son','ric','dan','ver','tos','ley','mar','den','ski','vic','ham','ford','ini','ero','ano','berg','sen','wick','ras','oni'];
 function makeName(rng){
@@ -878,6 +887,17 @@ class Player {
     this.glanceT = 0;
     // collectible identity: age, rarity (lifts ability), potential, form, value
     this.age = 18 + Math.floor(rng() * 17);
+    // PlayerIdentity: nationality + physique
+    const nat = NATIONS[(rng() * NATIONS.length) | 0];
+    this.nat = nat[0]; this.flag = nat[1];
+    this.heightCm = Math.round(168 + rng() * 22 + (this.role === 'GK' || this.role === 'CB' ? 6 : 0));
+    this.weightKg = Math.round(this.heightCm * 0.42 + rng() * 8);
+    // age curve: physical peak ~26, veterans trade legs for brains
+    const ageD = this.age - 26;
+    this.a.pace = clamp(this.a.pace - Math.max(0, ageD) * 0.012 - Math.max(0, -ageD - 4) * 0.008, 0.1, 0.97);
+    this.a.accel = clamp(this.a.accel - Math.max(0, ageD) * 0.01, 0.1, 0.97);
+    this.a.composure = clamp(this.a.composure + Math.max(0, ageD) * 0.010 - Math.max(0, -ageD - 3) * 0.012, 0.1, 0.97);
+    this.a.positioning = clamp(this.a.positioning + Math.max(0, ageD) * 0.008, 0.1, 0.97);
     this.rarity = rollRarity(rng);
     const lift = { common: 0, uncommon: 0.02, rare: 0.04, epic: 0.06, legendary: 0.09 }[this.rarity];
     if (lift) for (const k in this.a) this.a[k] = clamp(this.a[k] + lift, 0.1, 0.99);
@@ -2190,21 +2210,7 @@ class Stadium {
       const warming = m.tMatch > 40 * 60 && team.subsUsed < CFG.MAX_SUBS && m.state !== 'FULLTIME'
         ? team.bench.filter(b => b.slot.role !== 'GK').slice(0, 2) : [];
       [...team.bench, ...team.offList].forEach(p => {
-        if (p.walkOff){
-          // substituted / sent-off players walk to their seat, no teleporting
-          const offPitch = p.pos.y < -1.2;
-          const tx = offPitch ? p.seatPos.x : p.pos.x;
-          const ty = offPitch ? p.seatPos.y : -1.6;
-          const dx = tx - p.pos.x, dy = ty - p.pos.y, d = Math.hypot(dx, dy);
-          const step = 3.1 * dt;
-          if (d < 0.4 && offPitch){ p.walkOff = false; p.action = 'sit'; p.facing = Math.PI / 2; }
-          else if (d > 1e-4){
-            p.pos.x += dx / d * Math.min(d, step); p.pos.y += dy / d * Math.min(d, step);
-            p.facing = Math.atan2(dy, dx); p.runPhase += step;
-            p.action = 'jog';
-          }
-          return;
-        }
+        if (p.walkOff) return; // ceremony walks run on the SIM clock (Game.update)
         if (warming.includes(p)){
           // jogging and stretching along the touchline behind the boards
           p.warmPh = (p.warmPh || Math.random() * 6) + dt * 0.9;
@@ -3480,8 +3486,11 @@ function resolveTackles(game, dt){
         p.kickCooldown = 0.35;
       } else {
         p.slowT = 0.9;
-        const foulCh = 0.11 + (behind ? 0.2 : 0) + p.a.aggression * 0.1;
-        if (srand() < foulCh){
+        const pr = game.ref.profile || { strictness: 0.5 };
+        const foulCh = (0.11 + (behind ? 0.2 : 0) + p.a.aggression * 0.1) * (0.6 + pr.strictness * 0.8);
+        const roll = srand();
+        if (roll >= foulCh && roll < foulCh * 1.5 && game.ref.stats) game.ref.stats.foulsIgnored++;
+        if (roll < foulCh){
           const sev = 0.24 + (behind ? 0.2 : 0) + p.a.aggression * 0.1;
           game.match.registerFoul(p, c, behind ? 'challenge from behind' : 'late challenge', false, sev);
         }
@@ -3719,6 +3728,9 @@ class Match {
   }
   registerFoul(by, victim, desc, immediate, severity){
     if (this.state !== 'PLAYING') return;
+    if (this.game.ref.stats){ this.game.ref.stats.foulsCalled++; this.game.ref.stats.decisions++; }
+    // low-advantage referees whistle straight away
+    if (!immediate && this.game.ref.profile && srand() > this.game.ref.profile.advantage + 0.25) immediate = true;
     if (this.game.recorder) this.game.recorder.log('foul_committed', { actor: by.pid, target: victim.pid, severity: +(severity || 0.3).toFixed(2) });
     victim.setAction('fall', 0.8);
     victim.slowT = 1.0;
@@ -3773,9 +3785,15 @@ class Match {
   applyDiscipline(f){
     const g = this.game, off = f.by;
     if (!off || off.isGK) return; // subbed players can still be carded
+    // RefereeDecisionModel: personality moves the card thresholds, and an
+    // inconsistent official occasionally produces a controversial one
+    const pr = g.ref.profile || { cardTendency: 0.5, consistency: 0.8 };
+    let yT = 0.48 * (1.3 - pr.cardTendency * 0.6);
+    let rT = 0.92 * (1.15 - pr.cardTendency * 0.3);
+    if (srand() > pr.consistency){ const skew = (srand() - 0.5) * 0.3; yT += skew; rT += skew; g.announce('THE REF SEES IT DIFFERENTLY…', 2); }
     let card = null;
-    if (f.severity > 0.92) card = 'red';
-    else if (f.severity > 0.48 || off.stats.foulsC >= 3) card = 'yellow';
+    if (f.severity > rT) card = 'red';
+    else if (f.severity > yT || off.stats.foulsC >= 3) card = 'yellow';
     if (card === 'yellow' && off.stats.yellow >= 1) card = 'red2';
     if (!card) return;
     if (card === 'yellow'){
@@ -3784,9 +3802,11 @@ class Match {
       if (g.broadcast) g.broadcast.event({ icon: 'card', iconColor: UITheme.warn, title: 'YELLOW CARD',
         sub: off.name + ' · ' + off.team.code, color: off.team.kit.shirt, dur: 3, pri: 2.4 });
       g.commentate('yellow', { p: off, team: off.team, desc: f.desc });
+      if (g.ref.stats) g.ref.stats.yellows++;
       if (g.recorder) g.recorder.log('card', { actor: off.pid, card: 'yellow' });
       g.ref.showCard('y');
       if (g.fx) g.fx.play(new RefereeCardAnimation(g, off, 'yellow'));
+      if (!g.replayMode) g.present(off, 1.8);
     } else {
       if (card === 'red2') off.stats.yellow++;
       off.stats.red = 1;
@@ -3795,6 +3815,7 @@ class Match {
         sub: off.name + ' · ' + off.team.code + (card === 'red2' ? ' · second yellow' : ''),
         color: off.team.kit.shirt, dur: 3.6, pri: 2.6 });
       g.ref.showCard('r');
+      if (g.ref.stats) g.ref.stats.reds++;
       if (g.recorder) g.recorder.log('card', { actor: off.pid, card: card === 'red2' ? 'red2' : 'red' });
       if (g.fx) g.fx.play(new RefereeCardAnimation(g, off, 'red'));
       if (off.team.players.includes(off)) g.sendOff(off); // else: already off the pitch
@@ -3832,6 +3853,7 @@ class Match {
             const pt = g.possessionTeam();
             if (!f.immediate && pt === f.team){
               g.announce('ADVANTAGE'); g.counts.advantage++;
+              if (g.ref.stats) g.ref.stats.advantages++;
               if (g.recorder) g.recorder.log('advantage', { team: f.team.id });
               // play on — but a card-worthy offence is still punished
               if (f.severity > 0.48){ g.counts.foul++; f.byTeam.fouls++; this.applyDiscipline(f); }
@@ -3917,6 +3939,15 @@ class Match {
         } else {
           fire = (dist(r.taker.pos, r.spot) < 1.6 && this.stateT > wait && ready) || this.stateT > force;
         }
+        // ceremony hold: a substitution or dismissal in progress keeps the
+        // whistle in the referee's pocket until the player has left the field
+        const ch = this.ceremonyHold;
+        if (ch && fire){
+          const gone = !ch.p.walkOff || ch.p.pos.y < -0.9 || ch.p.pos.y > CFG.PITCH_W + 0.9
+            || !(this.game.presentCfg ? this.game.presentCfg.ceremonies : true);
+          if (!gone && this.stateT < force + (ch.kind === 'red' ? 7 : 5)) fire = false;
+          else this.ceremonyHold = null;
+        }
         if (fire){
           if (dist(r.taker.pos, r.spot) > 1.6){ r.taker.pos.x = r.spot.x + 0.5; r.taker.pos.y = r.spot.y; }
           const gkTaker = r.humanTaker && r.taker.isGK;
@@ -3948,7 +3979,10 @@ class Match {
           if (!p.team.players.includes(p)) continue; // subbed off mid-walk
           if (dist(p.pos, sp) > 2.4) missing++;
         }
-        if ((missing === 0 && this.stateT > 1.6) || this.stateT > (r.force || 6.5)){
+        const ch2 = this.ceremonyHold;
+        if (ch2 && (!ch2.p.walkOff || ch2.p.pos.y < -0.9 || ch2.p.pos.y > CFG.PITCH_W + 0.9
+          || this.stateT > (r.force || 6.5) + 6)) this.ceremonyHold = null;
+        if (!this.ceremonyHold && ((missing === 0 && this.stateT > 1.6) || this.stateT > (r.force || 6.5))){
           // stragglers and kickoff-law violators take their final step;
           // everyone settles for the whistle
           const half2 = CFG.PITCH_L / 2, center2 = { x: half2, y: 34 };
@@ -5367,6 +5401,7 @@ class Renderer {
       else if (game.panel.type === 'tactics') this.drawTacticsPanel(game);
       else if (game.panel.type === 'history') this.drawHistoryPanel(game);
       else if (game.panel.type === 'script') this.drawScriptPanel(game);
+      else if (game.panel.type === 'referee') this.drawRefereePanel(game);
     }
     if (game.coachOpen) this.drawCoachConsole(game);
   }
@@ -5586,6 +5621,61 @@ class Renderer {
       wy += 14;
     }
   }
+  // RefereeProfile panel: the official is a simulation entity — his profile
+  // and live officiating record, opened by clicking him on the pitch
+  drawRefereePanel(game){
+    const pr = game.ref.profile, st = game.ref.stats;
+    if (!pr){ game.closePanel(); return; }
+    const box = this.panelBox(game, 380);
+    this.panelShell(game, box, '', '#2a2a30');
+    const ctx = this.ctx;
+    const L = box.x + 12, cw = box.w - 24;
+    let y = box.y + 12;
+    ctx.font = UITheme.sans('800', 14); ctx.fillStyle = UITheme.ink;
+    ctx.fillText('REFEREE  ' + pr.name.toUpperCase(), L, y);
+    ctx.font = UITheme.sans('500', 9.5); ctx.fillStyle = UITheme.dim;
+    ctx.fillText(pr.flag + ' ' + pr.nat + ' · ' + pr.age + 'y · ' + pr.personality.toUpperCase()
+      + ' · exp ' + Math.round(pr.experience * 100), L, y + 18);
+    y += 40;
+    ctx.font = UITheme.sans('700', 8); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('DISCIPLINARY PROFILE', L, y); y += 13;
+    const meter = (label, v, col) => {
+      ctx.font = UITheme.sans('600', 9); ctx.fillStyle = UITheme.dim;
+      ctx.fillText(label, L, y);
+      ctx.fillStyle = 'rgba(255,255,255,0.10)'; rrPath(ctx, L + 92, y + 1, cw - 130, 7, 3.5); ctx.fill();
+      ctx.fillStyle = col || UITheme.accent; rrPath(ctx, L + 92, y + 1, Math.max(4, (cw - 130) * v), 7, 3.5); ctx.fill();
+      ctx.font = UITheme.sans('700', 9); ctx.fillStyle = UITheme.mid;
+      ctx.fillText(Math.round(v * 100), L + cw - 26, y);
+      y += 15;
+    };
+    meter('STRICTNESS', pr.strictness, pr.strictness > 0.66 ? UITheme.bad : UITheme.accent);
+    meter('CARD TENDENCY', pr.cardTendency, UITheme.warn);
+    meter('ADVANTAGE', pr.advantage, UITheme.good);
+    meter('CONSISTENCY', pr.consistency);
+    y += 6;
+    ctx.font = UITheme.sans('700', 8); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('THIS MATCH', L, y); y += 13;
+    const grid = [
+      ['Fouls called', st.foulsCalled], ['Fouls waved on', st.foulsIgnored],
+      ['Yellow cards', st.yellows], ['Red cards', st.reds],
+      ['Advantages', st.advantages], ['Decisions', st.decisions],
+    ];
+    const colW = cw / 2;
+    grid.forEach(([lab, v], i) => {
+      const gx0 = L + (i % 2) * colW, gy0 = y + Math.floor(i / 2) * 14;
+      ctx.font = UITheme.sans('500', 9); ctx.fillStyle = UITheme.dim; ctx.fillText(lab, gx0, gy0);
+      ctx.font = UITheme.sans('700', 9); ctx.fillStyle = UITheme.mid;
+      ctx.fillText(String(v), gx0 + colW - 24, gy0);
+    });
+    y += 3 * 14 + 10;
+    ctx.font = UITheme.sans('500', 8.5); ctx.fillStyle = UITheme.faint;
+    ctx.fillText(pr.personality === 'authoritarian' ? 'calls it tight — stay on your feet'
+      : pr.personality === 'permissive' ? 'lets the game flow — physical play tolerated'
+      : pr.personality === 'card-happy' ? 'reaches for the pocket early'
+      : 'even-handed official', L, y);
+    this.btn(game, box.x + box.w - 70, box.y + box.h - box.bh - 10, 58, box.bh, 'CLOSE',
+      { font: 10, cb: () => game.closePanel() });
+  }
   // human-controlled set piece: two option chips (tap or SPACE/SHIFT)
   drawTakeControls(game){
     const m = game.match, r = m.restart;
@@ -5717,7 +5807,8 @@ class Renderer {
     ctx.font = UITheme.sans('800', 14); ctx.fillStyle = UITheme.ink;
     ctx.fillText('#' + p.num + '  ' + p.name.toUpperCase(), L + 52, y + 3);
     ctx.font = UITheme.sans('500', 9.5); ctx.fillStyle = UITheme.dim;
-    ctx.fillText(p.team.name + ' · ' + p.role + ' · ' + (p.foot === 1 ? 'RIGHT' : 'LEFT') + ' · ' + p.age + 'y'
+    ctx.fillText((p.flag ? p.flag + ' ' + p.nat + ' · ' : '') + p.team.name.split(' ')[0] + ' · ' + p.role + ' · '
+      + (p.foot === 1 ? 'R' : 'L') + ' · ' + p.age + 'y · ' + (p.heightCm || 180) + 'cm'
       + (on ? '' : (p.stats.red ? ' · SENT OFF' : (p.team.offList.includes(p) ? ' · SUBBED' : ' · BENCH'))), L + 52, y + 20);
     const Rr = RARITY[p.rarity];
     ctx.font = UITheme.sans('800', 8);
@@ -6596,6 +6687,7 @@ const SnapshotManager = {
         state: m.state, stateT: m.stateT, half: m.half, tMatch: m.tMatch, score: [...m.score],
         firstKick: m.firstKick, concededIdx: m.concededIdx, banner: m.banner, bannerSub: m.bannerSub,
         goalScorer: E.pid(m.goalScorer),
+        ceremonyHold: m.ceremonyHold ? { p: E.pid(m.ceremonyHold.p), kind: m.ceremonyHold.kind } : null,
         pendingFoul: m.pendingFoul ? { ...m.pendingFoul, team: E.tid(m.pendingFoul.team),
           byTeam: E.tid(m.pendingFoul.byTeam), by: E.pid(m.pendingFoul.by),
           victim: E.pid(m.pendingFoul.victim), spot: { ...m.pendingFoul.spot } } : null,
@@ -6624,6 +6716,7 @@ const SnapshotManager = {
   capturePlayer(p){
     const o = { pid: p.pid, pos: { ...p.pos }, vel: { ...p.vel }, target: { ...p.target },
       slot: { ...p.slot }, stats: { ...p.stats },
+      seatPos: p.seatPos ? { ...p.seatPos } : null,
       decision: p.decision ? { ...p.decision, receiver: EventSerializer.pid(p.decision.receiver) } : null };
     for (const k of this.PLAYER_FIELDS) o[k] = p[k];
     return o;
@@ -6664,6 +6757,7 @@ const SnapshotManager = {
         p.pos = { ...ps.pos }; p.vel = { ...ps.vel }; p.target = { ...ps.target };
         p.slot = { ...ps.slot }; p.stats = { ...ps.stats };
         p.decision = ps.decision ? { ...ps.decision, receiver: P(ps.decision.receiver) } : { type: 'dribble' };
+        if (ps.seatPos) p.seatPos = { ...ps.seatPos };
         for (const k of this.PLAYER_FIELDS) if (ps[k] !== undefined) p[k] = ps[k];
         p.human = false; p.trackClaim = 0;
       }
@@ -6690,6 +6784,7 @@ const SnapshotManager = {
     m.score = [...ms.score]; m.firstKick = ms.firstKick; m.concededIdx = ms.concededIdx;
     m.banner = ms.banner; m.bannerSub = ms.bannerSub;
     m.goalScorer = P(ms.goalScorer);
+    m.ceremonyHold = ms.ceremonyHold && P(ms.ceremonyHold.p) ? { p: P(ms.ceremonyHold.p), kind: ms.ceremonyHold.kind } : null;
     m.pendingFoul = ms.pendingFoul ? { ...ms.pendingFoul, team: E.team(game, ms.pendingFoul.team),
       byTeam: E.team(game, ms.pendingFoul.byTeam), by: P(ms.pendingFoul.by),
       victim: P(ms.pendingFoul.victim), spot: { ...ms.pendingFoul.spot } } : null;
@@ -7595,6 +7690,8 @@ const PlayerTokenMetadata = {
         { trait_type: 'Preferred Foot', value: p.foot === 1 ? 'Right' : 'Left' },
         { trait_type: 'Rarity', value: p.rarity[0].toUpperCase() + p.rarity.slice(1) },
         { trait_type: 'Age', value: p.age },
+        { trait_type: 'Nationality', value: p.nat || 'AR' },
+        { trait_type: 'Height', value: (p.heightCm || 180) + 'cm' },
         { trait_type: 'Face', value: G.FACES[t.face] },
         { trait_type: 'Hair', value: G.HAIR_STYLES[t.hairStyle] },
         { trait_type: 'Facial Hair', value: G.FACIAL[t.facial] },
@@ -7671,6 +7768,12 @@ class CameraSystem {
     if (this.mode === 'free' && !this.panning && this.cfg.idleReturn > 0 &&
         g.animT - this.lastGestureT > this.cfg.idleReturn) this.returnToBall();
     if (this.mode === 'free') return { x: this.free.x, y: this.free.y, k: 0.22, zoom: this.zoom };
+    // MatchPresentationController: dwell briefly on ceremony subjects
+    const pf = g.presentFocus;
+    if (pf && g.animT < pf.until && pf.p){
+      const s = project(pf.p.pos.x, pf.p.pos.y, 0);
+      return { x: s.x, y: s.y, k: 0.09, zoom: this.zoom };
+    }
     const b = g.ball, fp = g.followPlayer;
     const bp = fp ? project(lerp(fp.pos.x, b.x, 0.3), lerp(fp.pos.y, b.y, 0.3), 0) : project(b.x, b.y, 0);
     const lead = fp ? bp : project(b.x + b.vx * 0.3, b.y + b.vy * 0.3, 0);
@@ -7746,6 +7849,7 @@ class Game {
     this.broadcast = new BroadcastOverlay(this);
     this.takeRequested = false; this.takeShoot = false;
     this.replayMode = false; this.simRate = 1;
+    this.presentCfg = { ceremonies: true }; // match presentation, skippable
     this.recorder = new MatchRecorder(this);
     this.scriptRunner = null;
     this.replay = new ReplayController(this);
@@ -7903,6 +8007,7 @@ class Game {
     if (otherSeated){ this.statsFor = otherSeated; this.openPanel('profile'); return; }
     const onPitch = hitIn([...this.teams[0].players, ...this.teams[1].players]);
     if (onPitch){ this.statsFor = onPitch; this.openPanel('profile'); return; }
+    if (hitIn([this.ref])){ this.openPanel('referee'); return; }
     // tap on empty space closes whatever is open
     this.closePanel(); this.statsFor = null;
   }
@@ -7912,6 +8017,14 @@ class Game {
     team.players = team.players.filter(q => q !== p);
     team.offList.push(p);
     p.walkOff = true; // the long walk to the dugout
+    // RedCardCeremony: the match does not restart until he has left the
+    // field; hot-headed players protest first, calm ones just go
+    if (!this.replayMode){
+      this.match.ceremonyHold = { p, kind: 'red' };
+      this.present(p, 4);
+      if (p.a.aggression > 0.6) p.setAction('shield', 2.2); // furious protest
+      else if (p.a.composure > 0.7) p.setAction('clap', 1.2); // sarcastic applause
+    }
     if (this.recorder) this.recorder.log('send_off', { actor: p.pid });
     const b = this.ball;
     if (b.controller === p) b.controller = null;
@@ -7935,6 +8048,8 @@ class Game {
     if (this.followPlayer === p) this.followPlayer = null;
     this.positionBenches();
   }
+  // MatchPresentationController: brief camera focus on ceremony subjects
+  present(p, dur){ this.presentFocus = { p, until: this.animT + (dur || 2.6) }; }
   performSub(team, out, sub){
     // viewer isolation: during script playback only the runner may substitute
     if (this.scriptSession && !this._runnerSub) return false;
@@ -7979,9 +8094,16 @@ class Game {
     if (this.followPlayer === out) this.followPlayer = sub;
     if (this.statsFor === out) this.statsFor = sub;
     out.walkOff = true; // walks to the dugout instead of teleporting
+    // SubstitutionCeremony: at a dead ball the restart waits for the walk;
+    // the camera dwells on the swap, the fourth official raises the board
+    if (this.match.state !== 'PLAYING' && !this.replayMode){
+      this.match.ceremonyHold = { p: out, kind: 'sub' };
+      this.present(out, 3);
+    }
     this.positionBenches();
     if (this.broadcast) this.broadcast.event({ icon: 'sub', title: 'SUBSTITUTION',
-      sub: sub.name + ' on · ' + out.name + ' off', color: team.kit.shirt, dur: 3.2, pri: 1.8 });
+      sub: (sub.flag || '') + ' ' + sub.name + ' on · ' + (out.flag || '') + ' ' + out.name + ' off',
+      color: team.kit.shirt, dur: 3.2, pri: 1.8 });
     if (this.stadium) this.stadium.react('sub', team);
     this.commentate('sub', { team, sin: sub, sout: out });
     if (this.recorder) this.recorder.log('substitution', { team: team.id, on: sub.pid, off: out.pid, auto: this._autoSub || undefined });
@@ -8129,6 +8251,25 @@ class Game {
     ];
     this.ball = new Ball();
     this.ref = new Referee();
+    // RefereeProfile: a real official with a personality that officiates
+    this.ref.profile = (() => {
+      const nat = NATIONS[(rng() * NATIONS.length) | 0];
+      const exp = rng();
+      return {
+        name: makeName(rng), nat: nat[0], flag: nat[1],
+        age: 32 + Math.floor(rng() * 16),
+        experience: +exp.toFixed(2),
+        strictness: +rng().toFixed(2),
+        cardTendency: +rng().toFixed(2),
+        advantage: +(0.25 + exp * 0.6).toFixed(2),
+        consistency: +(0.45 + exp * 0.5).toFixed(2),
+        personality: null,
+      };
+    })();
+    { const pr = this.ref.profile;
+      pr.personality = pr.strictness > 0.66 ? 'authoritarian' : pr.strictness < 0.33 ? 'permissive'
+        : pr.cardTendency > 0.6 ? 'card-happy' : 'balanced'; }
+    this.ref.stats = { foulsCalled: 0, foulsIgnored: 0, yellows: 0, reds: 0, advantages: 0, decisions: 0 };
     this.stadium = new Stadium(this);
     this.match = new Match(this);
     this.offsideSys = new OffsideSystem(this);
@@ -8413,6 +8554,28 @@ class Game {
       }
     }
     this.humanControl(dt);
+    // ceremony walks: dismissed and substituted players leave the field on
+    // the SIM clock, so restarts that wait for them stay deterministic in
+    // live play, headless runs and strict replays alike
+    for (const t of this.teams)
+      for (const p of [...t.bench, ...t.offList])
+        if (p.walkOff && p.seatPos){
+          // leave by the NEAREST touchline; a far-side exit heads for the
+          // tunnel there and the ceremony releases as soon as he's off
+          const south = p.pos.y > 40;
+          if (south && p.pos.y > CFG.PITCH_W + 1){ p.walkOff = false; p.pos = { ...p.seatPos }; p.action = 'sit'; p.facing = Math.PI / 2; continue; }
+          const offPitch = p.pos.y < -1.2;
+          const tx2 = offPitch ? p.seatPos.x : p.pos.x;
+          const ty2 = offPitch ? p.seatPos.y : (south ? CFG.PITCH_W + 1.6 : -1.6);
+          const dx2 = tx2 - p.pos.x, dy2 = ty2 - p.pos.y, d2 = Math.hypot(dx2, dy2);
+          const step2 = 4.1 * dt;
+          if (d2 < 0.4 && offPitch){ p.walkOff = false; p.action = 'sit'; p.facing = Math.PI / 2; }
+          else if (d2 > 1e-4){
+            p.pos.x += dx2 / d2 * Math.min(d2, step2); p.pos.y += dy2 / d2 * Math.min(d2, step2);
+            p.facing = Math.atan2(dy2, dx2); p.runPhase += step2;
+            p.action = 'jog';
+          }
+        }
     this.ref.think(this);
     if (!frozen){
       for (const t of this.teams) for (const p of t.players) p.update(dt, this);
@@ -8526,7 +8689,8 @@ window.__coach = t => {
   return msgs;
 };
 window.__tactics = script => TacticalEngine.apply(game, game.teams[0], script, 'scripted tactics');
-window.__llmConfig = patch => LLMSettings.save(patch || {}); // e.g. {provider:'openai', apiKey:'sk-…', model:'gpt-4o-mini', endpoint:'', temperature:0.4, maxTokens:400}
+window.__llmConfig = patch => LLMSettings.save(patch || {});
+window.__present = on => { game.presentCfg.ceremonies = on !== false; return game.presentCfg; }; // e.g. {provider:'openai', apiKey:'sk-…', model:'gpt-4o-mini', endpoint:'', temperature:0.4, maxTokens:400}
 window.__setEnv = (grass, weather) => {
   if (grass && GRASS_TYPES[grass]) game.grassKey = grass;
   if (weather && WEATHER_TYPES[weather]) game.weatherKey = weather;
