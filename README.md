@@ -12,7 +12,9 @@ An AI vs AI match kicks off immediately — 90 compressed minutes in ~3.5 real m
 
 | Key / action | Effect |
 |---|---|
-| **click / tap a player** | Profile panel: live stats, match rating, market value; FOLLOW camera toggle |
+| **click / tap a player** | Profile card: on-chain pixel avatar, Ξ valuation + token ID, rating ring, dense match stats, grouped attributes with tap-tips; FOLLOW camera |
+| **drag / middle-drag** | Free camera — pan anywhere (stands, benches, off-ball runs); auto-returns to the ball after 5s idle, or tap RETURN TO BALL |
+| **wheel / pinch** | Zoom 0.55–2.4× (tap-to-select still works while zoomed) |
 | **TACTICS / BENCH / FEED** chips | Tactics panel · substitutions · live commentary feed (also **Y** / **L**) |
 | **C** or **Enter** | Coach console — plain English: "press high", "offside trap", "park the bus" |
 | **H** | Take control of RED (WASD/arrows move, **Space** pass — hold for power, **Shift** shoot, **E** switch) |
