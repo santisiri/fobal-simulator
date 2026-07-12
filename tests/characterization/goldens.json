@@ -1,0 +1,147 @@
+{
+  "sourceHash": "cf2af6c8",
+  "fixedTimestep": {
+    "simTickAfter60": 60,
+    "tMatchAfter60": 0
+  },
+  "squads": {
+    "seed42": "c9c7bd5a",
+    "seed1": "84d98b9c",
+    "seed2": "11070f51"
+  },
+  "seed42": {
+    "hash300": "db2337f6",
+    "hash600": "a893f5ef",
+    "hash3600": "ad61acb8",
+    "timeline3600": [
+      {
+        "t": 0,
+        "s": "KICKOFF"
+      },
+      {
+        "t": 69,
+        "s": "PLAYING"
+      },
+      {
+        "t": 600,
+        "s": "FREEKICK"
+      },
+      {
+        "t": 846,
+        "s": "PLAYING"
+      },
+      {
+        "t": 1763,
+        "s": "THROWIN"
+      },
+      {
+        "t": 2007,
+        "s": "PLAYING"
+      },
+      {
+        "t": 3109,
+        "s": "THROWIN"
+      },
+      {
+        "t": 3400,
+        "s": "PLAYING"
+      },
+      {
+        "t": 3555,
+        "s": "THROWIN"
+      }
+    ]
+  },
+  "passShoot": {
+    "seed": 5,
+    "ticks": 3600,
+    "home": {
+      "passAtt": 10,
+      "passCmp": 6,
+      "shots": 0,
+      "onTarget": 0
+    },
+    "away": {
+      "passAtt": 10,
+      "passCmp": 5,
+      "shots": 0,
+      "onTarget": 0
+    }
+  },
+  "goal": {
+    "seed": 10,
+    "firstGoalTick": 5502,
+    "stateAtGoal": "GOAL",
+    "score": [
+      0,
+      1
+    ],
+    "scorer": "away_10",
+    "hashAfterReplay": "c863cb65"
+  },
+  "tacticsDefaults": {
+    "width": 0.5,
+    "scheme": "zonal",
+    "trap": 0,
+    "tempo": 0.5,
+    "crossing": 0.5,
+    "shootTendency": 0.5,
+    "overlap": 0.5,
+    "counter": 0.35,
+    "timeWaste": 0,
+    "pressAfterLoss": 0.5,
+    "defAggression": 0.5,
+    "gkLong": 0.5,
+    "attackSide": "both",
+    "markTarget": null,
+    "formation": "442",
+    "mentality": 0.55,
+    "defLine": 0.5,
+    "pressing": 0.68,
+    "risk": 0.45,
+    "compactness": 0.32,
+    "style": "direct"
+  },
+  "coach": {
+    "park the bus": {
+      "understood": true,
+      "changes": {
+        "mentality": 0.25,
+        "defLine": 0.3,
+        "risk": 0.3,
+        "compactness": 0.42
+      }
+    },
+    "press high": {
+      "understood": true,
+      "changes": {
+        "pressing": 0.9
+      }
+    },
+    "attack the left wing": {
+      "understood": true,
+      "changes": {
+        "width": 0.85,
+        "attackSide": "left"
+      }
+    },
+    "waste time": {
+      "understood": true,
+      "changes": {
+        "tempo": 0.2,
+        "timeWaste": 0.9,
+        "risk": 0.3
+      }
+    },
+    "play long balls": {
+      "understood": true,
+      "changes": {
+        "risk": 0.65
+      }
+    }
+  },
+  "script": {
+    "version": "1.0",
+    "kind": "fobal-match-script"
+  }
+}
