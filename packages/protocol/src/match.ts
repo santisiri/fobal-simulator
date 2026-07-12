@@ -12,7 +12,7 @@ const Unit = z.number().min(0).max(1);
 export const TacticalState = z.object({
   formation: Formation,
   width: Unit,
-  scheme: z.enum(['zonal', 'man']),
+  scheme: z.enum(['zonal', 'man', 'trap']),
   trap: Unit,
   tempo: Unit,
   crossing: Unit,
