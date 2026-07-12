@@ -2352,6 +2352,12 @@ const FORMATIONS = {
     { role:'CM', x:0.32, y:0.50 }, { role:'CM', x:0.40, y:0.67 }, { role:'CM', x:0.40, y:0.33 },
     { role:'RW', x:0.60, y:0.86 }, { role:'ST', x:0.63, y:0.50 }, { role:'LW', x:0.60, y:0.14 },
   ],
+  '352': [
+    { role:'GK', x:0.035, y:0.50 },
+    { role:'CB', x:0.13, y:0.72 }, { role:'CB', x:0.11, y:0.50 }, { role:'CB', x:0.13, y:0.28 },
+    { role:'RM', x:0.34, y:0.88 }, { role:'CM', x:0.34, y:0.63 }, { role:'CM', x:0.30, y:0.50 }, { role:'CM', x:0.34, y:0.37 }, { role:'LM', x:0.34, y:0.12 },
+    { role:'ST', x:0.60, y:0.60 }, { role:'ST', x:0.60, y:0.40 },
+  ],
 };
 class Team {
   constructor(idx, def, rng){
@@ -2359,7 +2365,12 @@ class Team {
     this.id = idx === 0 ? 'home' : 'away'; // stable script/replay id
     this.name = def.name; this.code = def.code;
     this.kit = def.kit; this.gkKit = def.gkKit;
-    this.tactics = { width: 0.5, scheme: 'zonal', trap: 0, ...def.tactics };
+    this.tactics = { width: 0.5, scheme: 'zonal', trap: 0,
+      tempo: 0.5, crossing: 0.5, shootTendency: 0.5, overlap: 0.5,
+      counter: def.tactics.style === 'counter' ? 0.8 : 0.35,
+      timeWaste: 0, pressAfterLoss: 0.5, defAggression: 0.5, gkLong: 0.5,
+      attackSide: 'both', markTarget: null,
+      ...def.tactics };
     this.baseTactics = { ...this.tactics }; // for "reset tactics" coach commands
     this.dlm = new DefensiveLineManager(this);
     this.attackDir = idx === 0 ? 1 : -1;
@@ -2574,10 +2585,17 @@ function resolvePendingPass(game, gainer, canIntercept){
 function doKick(p, game, opt){
   const ball = game.ball;
   const dx = opt.tx - ball.x, dy = opt.ty - ball.y;
-  let ang = Math.atan2(dy, dx) + gauss() * (opt.sigma || 0.05);
+  // AttributeInfluenceEngine: aim error grows with base sigma, across-body
+  // kicks on the weak foot, tired legs and body angle vs composure
+  let sigma = opt.sigma || 0.05;
+  const kickSide = Math.sin(Math.atan2(dy, dx) - p.facing); // + = kicking to his left
+  const offFoot = p.foot === 1 ? kickSide > 0.45 : kickSide < -0.45;
+  if (offFoot && !opt.header) sigma *= 1.3;
+  sigma *= 1 + (1 - clamp(p.stamina, 0, 1)) * 0.4;
+  let ang = Math.atan2(dy, dx) + gauss() * sigma;
   const bodyOff = Math.abs(turnToward(0, ang - p.facing, 9));
   ang += gauss() * bodyOff * 0.02 * (2 - p.a.composure);
-  const sp = opt.speed * (1 + gauss() * 0.04);
+  const sp = opt.speed * (1 + gauss() * 0.04) * (offFoot && !opt.header ? 0.94 : 1);
   ball.vx = Math.cos(ang) * sp;
   ball.vy = Math.sin(ang) * sp;
   ball.vz = opt.vz || 0;
@@ -2666,9 +2684,14 @@ function assignDuties(team, game){
   const field = team.players.filter(p => !p.isGK);
   if (!field.length) return; // heavily red-carded team
   field.sort((a, b) => dist(a.pos, ball) - dist(b.pos, ball));
+  // counter-press: the seconds after losing the ball, hunt in a pack
+  const gegen = game.transitionT > 0 && game.lastPoss && game.lastPoss !== team
+    && (team.tactics.pressAfterLoss || 0) > 0.6;
   if (c){
     field[0].duty = 'press';
-    if (field.length > 1 && team.tactics.pressing > 0.55 && dist(field[1].pos, ball) < 16) field[1].duty = 'press2';
+    if (field.length > 1 && (team.tactics.pressing > 0.45 || gegen) &&
+        dist(field[1].pos, ball) < (gegen ? 22 : 8 + team.tactics.pressing * 12)) field[1].duty = 'press2';
+    if (gegen && field.length > 2 && dist(field[2].pos, ball) < 18) field[2].duty = 'press';
     // pressing forward: hound keepers and center backs playing out
     if (team.tactics.pressing > 0.65 && (c.isGK || c.line === 'DEF') &&
         Math.abs(c.pos.x - c.team.ownGoalX()) < 26){
@@ -2717,6 +2740,15 @@ function offBallTarget(p, game){
   let speed = 0.62;
   if (own){
     tx += dir * (2.5 + T.mentality * 7);
+    // counter-attacking sides break the moment the ball turns over
+    if (game.transitionT > 0 && (T.counter || 0) > 0.6 && p.line !== 'DEF'){ tx += dir * 4; }
+    // overlapping fullbacks join the attack outside the winger
+    if ((T.overlap || 0) > 0.6 && (p.role === 'LB' || p.role === 'RB')){
+      const carrier2 = ball.controller;
+      const myFlank = base.y < 34 ? 'low' : 'high';
+      if (carrier2 && carrier2.team === team && ((carrier2.pos.y < 30 && myFlank === 'low') || (carrier2.pos.y > 38 && myFlank === 'high')))
+        tx += dir * (4 + T.overlap * 5);
+    }
     const carrier = ball.controller;
     if (p.line === 'ATT'){
       const oppGx = team.oppGoalX();
@@ -2790,6 +2822,17 @@ function offBallTarget(p, game){
       tx = lerp(ball.x, lm ? lm.lineX : tx, 0.45);
       ty = lerp(ball.y, 34, 0.4);
       speed = 0.8;
+    } else if (team.tactics.markTarget && (p.role === 'CM' || p.line === 'DEF') && !p.isGK &&
+               (team._marker === p || !team._marker || !team.players.includes(team._marker))){
+      // coach's order: shadow one named opponent everywhere sensible
+      const tgt = EventSerializer.player(game, team.tactics.markTarget);
+      if (tgt && tgt.team !== team && game.other(team).players.includes(tgt)){
+        team._marker = p;
+        const ownGx2 = team.ownGoalX();
+        tx = tgt.pos.x + (ownGx2 - tgt.pos.x) * 0.1;
+        ty = tgt.pos.y + (34 - tgt.pos.y) * 0.06;
+        speed = 0.92;
+      }
     } else if (p.line !== 'ATT'){
       // PassingLaneAnalyzer-lite: mids pick up the nearest free opponent
       const oppPlayers = game.other(team).players;
@@ -2807,8 +2850,18 @@ function offBallTarget(p, game){
       }
     }
   }
+  // TacticalEngine: focus play down a chosen flank — applied AFTER the
+  // per-line shaping so it actually sticks: that side pushes on and holds
+  // width, the other tucks toward the middle
+  if (own && T.attackSide && T.attackSide !== 'both' && !p.isGK){
+    const sideY = T.attackSide === 'left' ? (dir === 1 ? 8 : 60) : (dir === 1 ? 60 : 8);
+    if (Math.abs(base.y - sideY) < 22){ ty = lerp(ty, sideY, 0.4); tx += dir * 1.5; }
+    else ty = lerp(ty, 34, 0.3);
+  }
   // transition moments: everyone reacts a beat faster
-  if (game.transitionT > 0) speed = Math.min(1, speed + 0.15);
+  if (game.transitionT > 0) speed = Math.min(1, speed + 0.15 + (own && (T.counter || 0) > 0.6 ? 0.12 : 0));
+  // tempo: high tempo teams move sharper off the ball; time-wasters stroll
+  speed = clamp(speed * (0.86 + (T.tempo !== undefined ? T.tempo : 0.5) * 0.28) * (1 - (own ? (T.timeWaste || 0) * 0.18 : 0)), 0.15, 1);
   // PlayerCallForBallSystem: shout when open, running, or warning the carrier
   if (own && ball.controller && ball.controller !== p && st === 'PLAYING'){
     const now = game.match.tMatch;
@@ -2866,6 +2919,10 @@ function carrierDecide(p, game){
     const inBox = Math.abs(p.pos.x - gx) < 16.5 && Math.abs(p.pos.y - 34) < 20;
     shoot = (1 - dGoal / 34) * (0.55 + p.a.shooting * 0.8) * (0.25 + bestOpen * 0.85) * (1 - press * 0.3)
           + (inBox ? 0.44 : 0);
+    // coach's shot appetite: shoot-on-sight scales it up (and lets fly from
+    // range); patient sides hold for clearer chances
+    shoot *= 0.55 + (T.shootTendency !== undefined ? T.shootTendency : 0.5) * 0.9;
+    if (T.shootTendency > 0.7 && dGoal > 22 && p.a.shooting > 0.5) shoot += 0.12;
     shootAim = { x: gx, y: bestY };
   }
 
@@ -2888,6 +2945,12 @@ function carrierDecide(p, game){
     let sc = (0.48 + p.a.passing * 0.5) * (lane * 0.62 + space * 0.33) * (0.6 + adv * (0.5 + T.risk * 0.35));
     if (m.line === 'ATT' && adv > 0.25) sc *= 1.25;
     if (T.style === 'possession' && grounded) sc *= 1.12;
+    if (T.attackSide && T.attackSide !== 'both'){
+      const sideY2 = T.attackSide === 'left' ? (dir === 1 ? 8 : 60) : (dir === 1 ? 60 : 8);
+      if (Math.abs(m.pos.y - sideY2) < 20) sc *= 1.22; // feed the chosen flank
+    }
+    if ((T.timeWaste || 0) > 0.5 && adv < 0.1) sc *= 1.3; // recycle it backwards
+    if (T.tempo !== undefined) sc *= 0.9 + T.tempo * 0.2;
     if ((T.style === 'direct' || T.style === 'counter') && !grounded && adv > 0.3) sc *= 1.18;
     if (T.style === 'counter' && game.transitionT > 0 && adv > 0.3) sc *= 1.35; // break fast
     if (m.callT > 0) sc *= 1.1; // he's calling for it
@@ -2918,7 +2981,8 @@ function carrierDecide(p, game){
       if (inBoxArea){ runners++; const d = Math.abs(m.pos.y - 34); if (d < bd){ bd = d; tgt = m; } }
     }
     if (runners > 0){
-      cross = (0.42 + p.a.passing * 0.4) * Math.min(1, runners / 2 + 0.4) * (1 - press * 0.2) * (0.5 + T.width);
+      cross = (0.42 + p.a.passing * 0.4) * Math.min(1, runners / 2 + 0.4) * (1 - press * 0.2) * (0.5 + T.width)
+            * (0.55 + (T.crossing !== undefined ? T.crossing : 0.5) * 0.9);
       const aim = tgt ? { x: clamp(tgt.pos.x + tgt.vel.x * 0.6, gx === 0 ? 3 : 85, gx === 0 ? 20 : 102), y: clamp(tgt.pos.y, 24, 44) }
                       : { x: gx + (gx === 0 ? 9 : -9), y: 34 };
       crossOpt = { aim, tgt };
@@ -2939,6 +3003,26 @@ function carrierDecide(p, game){
   // SHIELD: nothing good and heavy pressure -> protect the ball
   const shieldU = (press > 0.55 && Math.max(shoot, bestPass, cross, drib) < 0.34) ? 0.35 : 0;
 
+  // DecisionEvaluator: every option scored, every modifier on the record —
+  // the debug view renders this verbatim, so nothing on the pitch is magic
+  p.lastEval = {
+    t: game.match.tMatch,
+    press: +press.toFixed(2),
+    options: [
+      { k: 'shoot', s: shoot, info: shootAim ? Math.round(dGoal) + 'm out' : '' },
+      { k: 'pass', s: bestPass, info: passOpt ? '#' + passOpt.mate.num + ' · lane ' + Math.round(laneClear(p.pos, passOpt.lead, opps, 0) * 100) + '%' : '' },
+      { k: 'cross', s: cross, info: crossOpt && crossOpt.tgt ? 'to #' + crossOpt.tgt.num : '' },
+      { k: 'dribble', s: drib, info: '' },
+      { k: 'clear', s: clear, info: '' },
+      { k: 'shield', s: shieldU, info: '' },
+    ].map(o => ({ ...o, s: +o.s.toFixed(3) })).sort((a, b) => b.s - a.s),
+    mods: {
+      style: T.style, tempo: +(T.tempo ?? 0.5).toFixed(2), risk: +T.risk.toFixed(2),
+      side: T.attackSide || 'both', shootBias: +(T.shootTendency ?? 0.5).toFixed(2),
+      crossBias: +(T.crossing ?? 0.5).toFixed(2), waste: +(T.timeWaste || 0).toFixed(2),
+      fatigue: +(1 - clamp(p.stamina, 0, 1)).toFixed(2),
+    },
+  };
   const best = Math.max(shoot, bestPass, cross, drib, clear, shieldU, 0.18);
   if (best === shoot && shootAim){
     p.decision = { type:'shot', tx: shootAim.x, ty: shootAim.y,
@@ -2971,7 +3055,10 @@ function carrierDecide(p, game){
   } else {
     p.decision = { type:'dribble', ang: dribAng, cautious: drib < 0.3 };
   }
-  p.decideT = 0.24 + srand() * 0.12;
+  if (p.lastEval) p.lastEval.chosen = p.decision.type;
+  // tempo drives how quickly the man on the ball makes up his mind
+  p.decideT = (0.24 + srand() * 0.12) * (1.35 - (T.tempo !== undefined ? T.tempo : 0.5) * 0.55)
+    * (1 + (T.timeWaste || 0) * 0.7);
 }
 
 function playerThink(p, game){
@@ -3121,7 +3208,7 @@ function keeperResolve(game, dt){
       const sp3 = Math.hypot(ball.vx, ball.vy, ball.vz);
       const wasShot = ball.isShot;
       if (sp3 < 11 + k.a.gk * 7 && srand() < 0.28 + k.a.gk * 0.34 + ENV.catchMod){
-        ball.holder = k; k.holdT = 1.3 + srand() * 0.6;
+        ball.holder = k; k.holdT = (1.3 + srand() * 0.6) * (1 + (k.team.tactics.timeWaste || 0) * 1.1);
         if (game.recorder) game.recorder.log('gk_catch', { actor: k.pid, position: EventSerializer.pos(k.pos), save: !!wasShot });
         ball.controller = null; ball.isShot = false;
         creditTouch(game, k);
@@ -3287,8 +3374,10 @@ function resolveTackles(game, dt){
     // STANDING tackle
     if (dBall < 1.6 && dCar < 2.2){
       const behind = fromBehind(p, c);
-      const chance = clamp(0.32 + (p.a.tackling - c.a.dribbling) * 0.5 + p.a.aggression * 0.08 - (behind ? 0.12 : 0), 0.15, 0.75);
-      p.tackleCd = 1.25;
+      const agg = p.team.tactics.defAggression !== undefined ? p.team.tactics.defAggression : 0.5;
+      const chance = clamp(0.32 + (p.a.tackling - c.a.dribbling) * 0.5 + p.a.aggression * 0.08 - (behind ? 0.12 : 0), 0.15, 0.75)
+        * (0.85 + agg * 0.3);
+      p.tackleCd = 1.7 - agg * 0.9; // aggressive sides go again sooner
       p.setAction('tackle', 0.35);
       p.stats.tackAtt++;
       if (srand() < chance){
@@ -4114,7 +4203,8 @@ class Match {
     if (type === 'FREEKICK') TacticalPositioningSystem.stageFreeKickExtras(r, this.game);
     // RestartState pacing: broadcast-length pauses with a hard force-resume
     // (the force timer keeps headless __simulate runs moving no matter what)
-    r.wait = { THROWIN: 1.6, GOALKICK: 2.1, CORNER: 3.2, FREEKICK: r.shooting ? 3.4 : 2.2 }[type];
+    r.wait = { THROWIN: 1.6, GOALKICK: 2.1, CORNER: 3.2, FREEKICK: r.shooting ? 3.4 : 2.2 }[type]
+      + (team.tactics.timeWaste || 0) * 1.4; // the dark arts: slow walks to every dead ball
     // players with unreasonably long journeys keep their normal shape instead
     // of sprinting across the whole pitch for one ceremony
     if (r.spTargets){
@@ -4228,9 +4318,10 @@ class Match {
       // press allows; otherwise launch it long to the second-ball zone
       const gxO = team.ownGoalX();
       const oppNear = g.other(team).players.filter(o => Math.abs(o.pos.x - gxO) < 32).length;
+      const gkL = team.tactics.gkLong !== undefined ? team.tactics.gkLong : 0.5;
       const wantShort = r.humanChoice === 'safe' ||
-        (r.humanChoice !== 'attack' && r.shortTo && team.players.includes(r.shortTo) &&
-         team.tactics.style === 'possession' && oppNear < 4 && srand() < 0.7);
+        (r.humanChoice !== 'attack' && r.shortTo && team.players.includes(r.shortTo) && oppNear < 4 &&
+         srand() < (team.tactics.style === 'possession' ? 0.75 : 0.35) * (1.4 - gkL));
       if (wantShort && r.shortTo && team.players.includes(r.shortTo)){
         doKick(taker, g, { type:'pass', tx: r.shortTo.pos.x, ty: r.shortTo.pos.y,
           speed: groundPassSpeed(dist(r.spot, r.shortTo.pos)), vz: 0, sigma: 0.05, receiver: r.shortTo });
@@ -4918,7 +5009,7 @@ class Renderer {
     }
     this.drawWeather(game);
     this.drawHUD(game);
-    if (game.debug) this.drawDebug(game, ox, oy);
+    if (game.debug){ this.drawDebug(game, ox, oy); this.drawTacticalDebug(game); }
     this.lastAnim = game.animT;
   }
   // WeatherRenderer: varied precipitation, fog depth, storm lightning, veils
@@ -5333,6 +5424,26 @@ class Renderer {
         ['GOAL REPLAYS ' + (gr.cfg.enabled ? 'ON' : 'OFF'), { active: gr.cfg.enabled, cb: () => { gr.cfg.enabled = !gr.cfg.enabled; } }],
         ['LENGTH ' + gr.cfg.length + 's', { cb: () => { const L = [5, 6, 8, 10]; gr.cfg.length = L[(L.indexOf(gr.cfg.length) + 1) % L.length]; } }],
       ]);
+      // LLMSettings: optional AI coach — credentials stay in localStorage
+      const ls = LLMSettings.load();
+      row([
+        ['AI COACH: ' + (ls.provider || 'off').toUpperCase(), { active: LLMProvider.configured(), cb: () => {
+          const P = LLMProvider.PROVIDERS;
+          LLMSettings.save({ provider: P[(P.indexOf(ls.provider || 'off') + 1) % P.length] });
+        } }],
+        ['KEY ' + (ls.apiKey ? '•••' : '—'), { cb: () => {
+          const k = window.prompt('API key for ' + (ls.provider || 'provider') + ' (stored locally only):', '');
+          if (k !== null) LLMSettings.save({ apiKey: k.trim() });
+        } }],
+        ['MODEL ' + (ls.model ? '✓' : '—'), { cb: () => {
+          const m2 = window.prompt('Model name (blank = provider default):', ls.model || '');
+          if (m2 !== null) LLMSettings.save({ model: m2.trim() });
+        } }],
+        ['T ' + (ls.temperature !== undefined ? ls.temperature : 0.4), { cb: () => {
+          const T2 = [0, 0.2, 0.4, 0.7, 1];
+          LLMSettings.save({ temperature: T2[(T2.indexOf(ls.temperature !== undefined ? ls.temperature : 0.4) + 1) % T2.length] });
+        } }],
+      ], 20);
       ctx.font = UITheme.sans('500', 10);
       ctx.fillStyle = UITheme.faint;
       ctx.fillText('record · export as JSON · import & replay strict or adaptive', box.x + 12, y + 2);
@@ -5730,7 +5841,7 @@ class Renderer {
       y += bh + 9;
     };
     segRow('FORMATION', ['4-4-2', '4-3-3'], T.formation === '442' ? 0 : 1,
-      i => game.setFormation(team, i === 0 ? '442' : '433'));
+      i => game.setFormation(team, ['442', '433', '352'][i] || '442'));
     segRow('MENTALITY', ['DEFEND', 'BALANCED', 'ATTACK'], near(T.mentality, [0.3, 0.55, 0.8]),
       i => T.mentality = [0.3, 0.55, 0.8][i]);
     segRow('PRESSING', ['LOW', 'MID', 'HIGH'], near(T.pressing, [0.3, 0.55, 0.85]),
@@ -5760,6 +5871,37 @@ class Renderer {
     const caret = Math.floor(game.animT * 2.5) % 2 ? '_' : ' ';
     ctx.fillStyle = txt ? '#f0f0e8' : '#5a6874';
     ctx.fillText(txt ? txt + caret : 'e.g. "press high, attack the wings, play long balls"', x0 + 12, y0 + 13);
+  }
+  // TacticalDebugger: renders the inspected player's DecisionEvaluator table
+  drawTacticalDebug(game){
+    const p = game.statsFor || game.selected || game.trackPlayer();
+    if (!p || !p.lastEval || !p.team) return;
+    const ctx = this.ctx, ev = p.lastEval;
+    const x = 10, w = 240;
+    let y = this.H * 0.5 - 90;
+    glassPanel(ctx, x, y, w, 178, 10, { blur: 0 });
+    ctx.font = UITheme.sans('700', 11); ctx.fillStyle = UITheme.ink;
+    ctx.fillText('#' + p.num + ' ' + p.name + ' — decision', x + 10, y + 8);
+    ctx.font = UITheme.sans('500', 9); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('pressure ' + Math.round(ev.press * 100) + '% · fatigue ' + Math.round(ev.mods.fatigue * 100) + '%', x + 10, y + 22);
+    y += 36;
+    for (const o of ev.options.slice(0, 5)){
+      const chosen = o.k === (ev.chosen === 'shot' ? 'shoot' : ev.chosen);
+      ctx.font = UITheme.sans(chosen ? '800' : '500', 10);
+      ctx.fillStyle = chosen ? UITheme.accent : UITheme.dim;
+      ctx.fillText((chosen ? '▶ ' : '   ') + o.k, x + 10, y);
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.fillRect(x + 74, y + 2, 100, 6);
+      ctx.fillStyle = chosen ? UITheme.accent : UITheme.mid;
+      ctx.fillRect(x + 74, y + 2, clamp(o.s, 0, 1) * 100, 6);
+      ctx.font = UITheme.mono('500', 9); ctx.fillStyle = UITheme.mid;
+      ctx.fillText(o.s.toFixed(2), x + 180, y);
+      if (o.info){ ctx.fillStyle = UITheme.faint; ctx.fillText(o.info.slice(0, 14), x + 74, y + 10); }
+      y += o.info ? 22 : 15;
+    }
+    ctx.font = UITheme.sans('500', 8.5); ctx.fillStyle = UITheme.faint;
+    ctx.fillText('coach: ' + ev.mods.style + ' · side ' + ev.mods.side + ' · tempo ' + ev.mods.tempo
+      + ' · risk ' + ev.mods.risk + (ev.mods.waste > 0.4 ? ' · WASTING TIME' : ''), x + 10, y + 2);
   }
   drawDebug(game, ox, oy){
     const ctx = this.ctx, b = game.ball;
@@ -5801,6 +5943,9 @@ class Renderer {
     const lines = [
       'ball v=' + b.speed().toFixed(1) + ' z=' + b.z.toFixed(2) + ' spin=' + b.spin.toFixed(1),
       'state=' + game.match.state + ' fps=' + game.fps.toFixed(0) + ' spr=' + spriteCache.size,
+      'tactics: ' + ['tempo', 'risk', 'pressing', 'shootTendency', 'crossing', 'timeWaste', 'defAggression']
+        .map(k => k.slice(0, 5) + ' ' + (+(game.teams[0].tactics[k] ?? 0)).toFixed(1)).join(' · ')
+        + ' · side ' + (game.teams[0].tactics.attackSide || 'both'),
       'env fr=' + ENV.groundFr.toFixed(2) + ' bounce=' + ENV.bounce.toFixed(2) + ' spd=' + ENV.speedMul.toFixed(2),
       'ref: ' + game.ref.action + ' foul=' + (game.match.pendingFoul ? 'pending' : '-'),
       sel ? ('sel: #' + sel.num + ' ' + sel.name + ' (' + sel.role + ')') : 'sel: -',
@@ -5983,9 +6128,177 @@ function commentaryText(type, d){
 /* --------------------------- COACH COMMAND PARSER --------------------------- */
 // Rule-based natural-language parsing: phrases map onto the same tactics
 // fields the AI reads every think tick, so orders take effect in real time.
+/* ===================== TACTICAL INTELLIGENCE SYSTEM ======================== */
+// TacticalScript: the canonical, validated instruction language. Natural
+// language (built-in parser or an optional LLM) compiles INTO this; the
+// deterministic TacticalEngine is the only thing that applies it to play.
+const TacticalScript = {
+  RANGES: { pressing:1, defLine:1, mentality:1, risk:1, compactness:0.6, width:1,
+    tempo:1, crossing:1, shootTendency:1, overlap:1, counter:1, timeWaste:1,
+    pressAfterLoss:1, defAggression:1, gkLong:1, trap:1 },
+  ENUMS: { style:['possession','direct','counter'], scheme:['zonal','man','trap'],
+    attackSide:['left','right','both'], formation:['442','433','352'] },
+  WORDS: { low: 0.2, slow: 0.2, deep: 0.25, normal: 0.5, medium: 0.5, mid: 0.5, high: 0.85, fast: 0.85, quick: 0.85, max: 1 },
+  normalize(obj){
+    const out = {}, warnings = [];
+    if (!obj || typeof obj !== 'object') return { script: out, warnings: ['not an object'] };
+    for (const [k, v0] of Object.entries(obj)){
+      let v = v0;
+      if (k in this.RANGES){
+        if (typeof v === 'string') v = this.WORDS[v.toLowerCase()];
+        if (typeof v === 'boolean') v = v ? 0.85 : 0.2;
+        if (typeof v !== 'number' || !isFinite(v)){ warnings.push(k + ': unusable value'); continue; }
+        out[k] = clamp(v, 0, this.RANGES[k]);
+      } else if (k in this.ENUMS){
+        const val = String(v).toLowerCase();
+        if (this.ENUMS[k].includes(val)) out[k] = val;
+        else warnings.push(k + ': unknown "' + v + '"');
+      } else if (k === 'markTarget'){
+        out.markTarget = v === null ? null : String(v);
+      } else if (k === 'label' || k === 'reasoning'){ out[k] = String(v).slice(0, 220); }
+      else warnings.push('unknown field ' + k);
+    }
+    return { script: out, warnings };
+  },
+};
+// TacticalEngine: the single funnel — every tactics change (panel, console,
+// built-in parser, LLM) passes through here, is applied deterministically
+// and recorded, so strict replays reproduce coaching exactly.
+const TacticalEngine = {
+  apply(game, team, rawScript, sourceLabel){
+    const { script, warnings } = TacticalScript.normalize(rawScript);
+    const T = team.tactics;
+    for (const k of Object.keys(TacticalScript.RANGES)) if (k in script) T[k] = script[k];
+    if (script.style) T.style = script.style;
+    if (script.scheme){ T.scheme = script.scheme; if (script.scheme !== 'trap' && script.trap === undefined) T.trap = 0; }
+    if (script.attackSide) T.attackSide = script.attackSide;
+    if ('markTarget' in script){
+      let pid = script.markTarget;
+      if (pid && String(pid).endsWith('_mark_best')){
+        const opp = game.other(team);
+        const best = opp.players.filter(q => q.line === 'ATT').sort((a, b) => b.rating() - a.rating())[0];
+        pid = best ? best.pid : null;
+      }
+      const p = pid ? EventSerializer.player(game, pid) : null;
+      T.markTarget = p && p.team !== team ? p.pid : null;
+    }
+    if (script.formation && game.setFormation) game.setFormation(team, script.formation);
+    game.notifyTactic(script.label || sourceLabel || 'tactical change');
+    return { applied: script, warnings };
+  },
+};
+// LLMSettings: user-supplied credentials, stored locally, never hardcoded.
+const LLMSettings = {
+  KEY: 'fobal-llm',
+  cache: null,
+  load(){
+    if (!this.cache){
+      try { this.cache = JSON.parse(localStorage.getItem(this.KEY) || '{}'); }
+      catch (err){ this.cache = {}; }
+    }
+    return this.cache;
+  },
+  save(patch){
+    this.cache = { ...this.load(), ...patch };
+    try { localStorage.setItem(this.KEY, JSON.stringify(this.cache)); } catch (err){}
+    return this.cache;
+  },
+};
+// LLMProvider: optional natural-language coach. It ONLY produces
+// TacticalScript + reasoning text; the deterministic TacticalEngine applies
+// it exactly like any other instruction. No LLM output ever steers gameplay
+// directly, and everything works offline through the built-in parser.
+const LLMProvider = {
+  URLS: {
+    openai: 'https://api.openai.com/v1/chat/completions',
+    openrouter: 'https://openrouter.ai/api/v1/chat/completions',
+    deepseek: 'https://api.deepseek.com/chat/completions',
+    anthropic: 'https://api.anthropic.com/v1/messages',
+    gemini: '', custom: '',
+  },
+  PROVIDERS: ['off', 'openai', 'anthropic', 'gemini', 'deepseek', 'openrouter', 'custom'],
+  configured(){
+    const s = LLMSettings.load();
+    return !!(s.provider && s.provider !== 'off' && s.apiKey);
+  },
+  context(game){
+    const m = game.match, t0 = game.teams[0], t1 = game.teams[1];
+    return {
+      minute: Math.min(90, Math.floor(m.tMatch / 60) + 1),
+      score: t0.code + ' ' + m.score[0] + '-' + m.score[1] + ' ' + t1.code,
+      coaching: t0.name,
+      momentum: game.stadium ? +game.stadium.mrs.momentum.toFixed(2) : 0,
+      myTactics: Object.fromEntries(Object.entries(t0.tactics).filter(([k, v]) => typeof v !== 'object')),
+      opponent: { formation: t1.assignedFormation, style: t1.tactics.style, pressing: t1.tactics.pressing },
+    };
+  },
+  SYSTEM: 'You are a football tactics coach inside a simulation. Reply ONLY with JSON: '
+    + '{"script":{...},"reasoning":"one or two sentences"}. The script may include any of: '
+    + 'pressing, defLine, mentality, risk, compactness, width, tempo, crossing, shootTendency, overlap, '
+    + 'counter, timeWaste, pressAfterLoss, defAggression, gkLong, trap (numbers 0..1); '
+    + 'style ("possession"|"direct"|"counter"); scheme ("zonal"|"man"|"trap"); '
+    + 'attackSide ("left"|"right"|"both"); formation ("442"|"433"|"352"); label (short summary). '
+    + 'Include only the fields the instruction changes. You may also suggest substitutions or analysis in reasoning, '
+    + 'but ONLY the script fields affect play.',
+  async request(text, game){
+    const s = LLMSettings.load();
+    let url = s.endpoint || this.URLS[s.provider] || this.URLS.openai;
+    const user = 'Match state: ' + JSON.stringify(this.context(game)) + '\nCoach instruction: ' + text;
+    let init;
+    if (s.provider === 'anthropic'){
+      init = { method: 'POST', headers: {
+          'content-type': 'application/json', 'x-api-key': s.apiKey,
+          'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: s.model || 'claude-haiku-4-5-20251001',
+          max_tokens: s.maxTokens || 400, temperature: s.temperature !== undefined ? s.temperature : 0.4,
+          system: this.SYSTEM, messages: [{ role: 'user', content: user }] }) };
+    } else if (s.provider === 'gemini'){
+      url = (s.endpoint || 'https://generativelanguage.googleapis.com/v1beta/models/'
+        + (s.model || 'gemini-2.0-flash') + ':generateContent') + '?key=' + encodeURIComponent(s.apiKey);
+      init = { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: this.SYSTEM }] },
+          contents: [{ parts: [{ text: user }] }],
+          generationConfig: { temperature: s.temperature !== undefined ? s.temperature : 0.4, maxOutputTokens: s.maxTokens || 400 } }) };
+    } else {
+      init = { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + s.apiKey },
+        body: JSON.stringify({ model: s.model || (s.provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini'),
+          temperature: s.temperature !== undefined ? s.temperature : 0.4, max_tokens: s.maxTokens || 400,
+          messages: [{ role: 'system', content: this.SYSTEM }, { role: 'user', content: user }] }) };
+    }
+    const r = await fetch(url, init);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const out = s.provider === 'anthropic' ? (j.content && j.content[0] && j.content[0].text)
+      : s.provider === 'gemini' ? (j.candidates && j.candidates[0] && j.candidates[0].content.parts.map(p2 => p2.text).join(''))
+      : (j.choices && j.choices[0] && j.choices[0].message.content);
+    const m = String(out || '').match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('no JSON in reply');
+    const parsed = JSON.parse(m[0]);
+    return { script: parsed.script || parsed, reasoning: parsed.reasoning || '' };
+  },
+  async coachAsync(game, text){
+    game.announce('COACH is thinking…', 2.2);
+    try {
+      const { script, reasoning } = await this.request(text, game);
+      TacticalEngine.apply(game, game.teams[0], script, script.label || 'AI coach');
+      game.syncFormation(game.teams[0]);
+      game.announce('COACH ▸ ' + (script.label || 'tactics updated'), 3.2);
+      if (reasoning) game.commentate('raw', { text: 'COACH: ' + String(reasoning).slice(0, 180) });
+    } catch (err){
+      const { script, msgs } = parseCoach(text, game.teams[0]);
+      if (msgs.length) TacticalEngine.apply(game, game.teams[0], script, msgs.join(' · '));
+      game.announce('AI coach unavailable (' + String(err.message || err).slice(0, 34) + ') — built-in parser'
+        + (msgs.length ? ' ▸ ' + msgs.join(' · ') : ': not understood'), 3.6);
+    }
+  },
+};
+// NLInstructionParser: the deterministic offline coach — plain language in,
+// TacticalScript out. Never touches the sim directly.
 function parseCoach(text, team){
   const t = ' ' + (text || '').toLowerCase().replace(/[^a-z ]/g, ' ') + ' ';
-  const T = team.tactics;
+  const S = {}; // TacticalScript under construction
+  const cur = team.tactics;
+  const T = new Proxy(S, { get: (o, k) => (k in o ? o[k] : cur[k]), set: (o, k, v) => (o[k] = v, true) });
   const msgs = [];
   const has = (...ws) => ws.some(w => t.includes(w));
   if (has('park the bus','defend deep','shut up shop','hold the lead','protect the lead','defensive')){
@@ -6031,14 +6344,61 @@ function parseCoach(text, team){
   }
   if (has('compact','tight','stay close')){ T.compactness = 0.45; msgs.push('compact shape'); }
   if (has('stretch','spread out','make it big')){ T.compactness = 0.18; msgs.push('stretched shape'); }
-  if (has('take risks','risky','ambitious','gamble')){ T.risk = 0.8; msgs.push('risky passing'); }
+  if ((has('take risks','ambitious','gamble') || (has('risky') && !has('risky tackle', 'risky tackles'))) &&
+      !has('avoid risk','no risk')){ T.risk = 0.8; msgs.push('risky passing'); }
   if (has('play safe','careful','no risks','keep it simple','safe pass')){ T.risk = 0.28; msgs.push('safe passing'); }
   if (has('calm','settle','slow it down')){ T.risk = 0.4; T.pressing = Math.min(T.pressing, 0.55); msgs.push('calm it down'); }
+  // ---- Tactical Intelligence vocabulary ----
+  if (has('waste time','time wasting','run the clock','kill the game','take your time to restart')){
+    T.timeWaste = 0.9; T.tempo = 0.2; T.risk = Math.min(T.risk, 0.3); msgs.push('waste time');
+  }
+  if (has('stop wasting','play on','hurry')){ T.timeWaste = 0; msgs.push('no time wasting'); }
+  if (has('slow the tempo','slow tempo','lower the tempo','slow down')){ T.tempo = 0.22; msgs.push('slow tempo'); }
+  if (has('up the tempo','high tempo','faster','quick tempo','speed it up')){ T.tempo = 0.88; msgs.push('high tempo'); }
+  if (has('attack down the left','through the left','left wing','left flank','left side','down the left')){
+    T.attackSide = 'left'; msgs.push('attack the left');
+  }
+  if (has('attack down the right','through the right','right wing','right flank','right side','down the right')){
+    T.attackSide = 'right'; msgs.push('attack the right');
+  }
+  if (has('both flanks','either side','use both wings')){ T.attackSide = 'both'; msgs.push('use both flanks'); }
+  if (has('cross more','more crosses','whip it in','get crosses in')){ T.crossing = 0.9; T.width = Math.max(T.width, 0.7); msgs.push('cross more'); }
+  if (has('fewer crosses','stop crossing')){ T.crossing = 0.15; msgs.push('fewer crosses'); }
+  if (has('shoot from distance','shoot on sight','long shots','shoot more')){ T.shootTendency = 0.9; msgs.push('shoot on sight'); }
+  if (has('fewer shots','only clear chances','be patient in the box')){ T.shootTendency = 0.2; msgs.push('patient finishing'); }
+  if (has('overlap','fullbacks forward','full backs forward','push the fullbacks','wingbacks forward')){
+    T.overlap = 0.9; msgs.push('overlapping fullbacks');
+  }
+  if (has('fullbacks stay','no overlap')){ T.overlap = 0.15; msgs.push('fullbacks hold'); }
+  if (has('press after losing','press immediately after','win it back','counter press')){
+    T.pressAfterLoss = 0.95; msgs.push('counter-press');
+  }
+  if (has('aggressive tackl','tackle harder','get stuck in','more aggressive','play aggressively')){
+    T.defAggression = 0.85; msgs.push('aggressive challenges');
+  }
+  if (has('avoid risky tackle','no silly fouls','stay on your feet','careful tackl','clean tackl')){
+    T.defAggression = 0.2; msgs.push('stay on your feet');
+  }
+  if (has('back three','back 3','three at the back','switch to a back three','three centre backs','3 5 2')){
+    T.formation = '352'; msgs.push('back three (3-5-2)');
+  }
+  if (has('back four','back 4','four at the back','4 4 2')){ T.formation = '442'; msgs.push('back four (4-4-2)'); }
+  if (has('4 3 3','front three')){ T.formation = '433'; msgs.push('4-3-3'); }
+  if (has('keeper long','goal kicks long','launch it','keeper kick long')){ T.gkLong = 0.95; msgs.push('keeper goes long'); }
+  if (has('keeper short','play out from the back','build from the back','short goal kick')){
+    T.gkLong = 0.1; T.style = 'possession'; msgs.push('build from the back');
+  }
+  if (has('mark their striker','man mark the striker','mark the striker','shadow their striker','mark their best player')){
+    const opp2 = team.idx === 0 ? 'away' : 'home';
+    T.markTarget = opp2 + '_mark_best'; msgs.push('man-mark their striker');
+  }
   // reset only when nothing else matched, so "new game plan: press high" keeps the order
   if (!msgs.length && has('default','reset','back to normal','game plan')){
-    Object.assign(T, team.baseTactics); msgs.push('back to the game plan');
+    Object.assign(S, team.baseTactics); S.timeWaste = 0; S.attackSide = 'both'; S.markTarget = null;
+    msgs.push('back to the game plan');
   }
-  return msgs;
+  S.label = msgs.join(' · ');
+  return { script: S, msgs };
 }
 
 /* ------------------------------- GAME LOOP --------------------------------- */
@@ -7584,11 +7944,20 @@ class Game {
     this.input.passReleased = null; this.input.shootReleased = null; this.kickBuffer = null;
   }
   applyCoach(){
-    const msgs = parseCoach(this.coachText, this.teams[0]);
+    // an optional LLM coach interprets free text; otherwise the built-in
+    // deterministic parser does. Both produce TacticalScript — nothing else
+    // ever reaches the simulation.
+    if (LLMProvider.configured()){
+      const txt = this.coachText;
+      this.closeCoach();
+      LLMProvider.coachAsync(this, txt);
+      return;
+    }
+    const { script, msgs } = parseCoach(this.coachText, this.teams[0]);
+    if (msgs.length) TacticalEngine.apply(this, this.teams[0], script, msgs.join(' · '));
     this.syncFormation(this.teams[0]); // "reset tactics" may restore the base formation
     this.announce(msgs.length ? 'COACH ▸ ' + msgs.join(' · ')
-      : 'COACH: not understood — try "press high" or "park the bus"', 3.4);
-    if (msgs.length) this.notifyTactic(msgs.join(' · '));
+      : 'COACH: not understood — try "press high" or "waste time"', 3.4);
     this.closeCoach();
   }
   reset(seed){
@@ -8018,10 +8387,13 @@ window.__reset = seed => game.reset(seed);
 window.__stats = () => game.stats();
 // programmatic coach API: __coach("press high and attack the wings")
 window.__coach = t => {
-  const msgs = parseCoach(t, game.teams[0]);
+  const { script, msgs } = parseCoach(t, game.teams[0]);
+  if (msgs.length) TacticalEngine.apply(game, game.teams[0], script, msgs.join(' · '));
   game.announce(msgs.length ? 'COACH ▸ ' + msgs.join(' · ') : 'COACH: not understood', 3.4);
   return msgs;
 };
+window.__tactics = script => TacticalEngine.apply(game, game.teams[0], script, 'scripted tactics');
+window.__llmConfig = patch => LLMSettings.save(patch || {}); // e.g. {provider:'openai', apiKey:'sk-…', model:'gpt-4o-mini', endpoint:'', temperature:0.4, maxTokens:400}
 window.__setEnv = (grass, weather) => {
   if (grass && GRASS_TYPES[grass]) game.grassKey = grass;
   if (weather && WEATHER_TYPES[weather]) game.weatherKey = weather;
