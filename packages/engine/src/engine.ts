@@ -327,6 +327,49 @@ export class MatchEngine {
     });
   }
 
+  // ---- internal snapshot recovery (server crash-resume) -----------------
+
+  /**
+   * Complete golden-core state capture (JSON-safe). Together with the
+   * manifest and the applied-command log this allows O(1) mid-match
+   * recovery; replaying the command log from tick 0 is the always-available
+   * fallback.
+   */
+  captureInternalState(): { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number } {
+    // serialize inside the vm so every object stays same-realm
+    const state = JSON.parse(this.handle.evalIn('JSON.stringify(SnapshotManager.capture(game))'));
+    const applied = this.appliedCommands;
+    return {
+      tick: this.currentTick,
+      state,
+      appliedThroughSeq: applied.length ? applied[applied.length - 1]!.seq : -1,
+      eventSeq: this.tap.nextSeq(),
+    };
+  }
+
+  /**
+   * Restore a captured internal state onto a fresh engine built from the
+   * SAME manifest. Commands with seq <= appliedThroughSeq are recorded as
+   * applied (their effects live inside the snapshot); later ones queue.
+   */
+  restoreInternalState(
+    captured: { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number },
+    commandLog: AcceptedCommand[],
+  ): void {
+    const restoreJson = this.handle.evalIn('(json => SnapshotManager.restore(game, JSON.parse(json)))');
+    restoreJson(JSON.stringify(captured.state));
+    this.pending = [];
+    this.appliedCommands = commandLog.filter(c => c.seq <= captured.appliedThroughSeq);
+    for (const c of commandLog.filter(c => c.seq > captured.appliedThroughSeq)){
+      const outcome = this.submit(c);
+      if (!outcome.accepted) throw new Error(`restore: command seq ${c.seq} rejected: ${outcome.reason}`);
+    }
+    this.lastState = this.handle.game.match.state;
+    this.lastScore = [this.handle.game.match.score[0], this.handle.game.match.score[1]];
+    this.deltaCache.clear();
+    this.tap.seedSeq(captured.eventSeq);
+  }
+
   /** Reproduce a match from its manifest + ordered command log. */
   static replay(manifest: unknown, commands: AcceptedCommand[]): MatchEngine {
     const engine = MatchEngine.create(manifest);

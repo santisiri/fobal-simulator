@@ -1,0 +1,21 @@
+{
+  "name": "@fobal/match-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Authoritative FOBAL match server: one headless MatchEngine per match, token-authenticated WebSocket streaming of snapshots/deltas/events, sequenced commands, append-only persistence, snapshot recovery, goal replays and Ed25519-signed idempotent results.",
+  "main": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@fobal/engine": "*",
+    "@fobal/protocol": "*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
+}

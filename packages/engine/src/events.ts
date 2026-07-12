@@ -106,6 +106,12 @@ export class EventTap {
     return this.events.filter(e => e.seq >= seq);
   }
 
+  nextSeq(): number { return this.seq; }
+
+  /** Continue the sequence after a snapshot restore (events before the
+   *  restore point live in the server's append-only log, not here). */
+  seedSeq(seq: number): void { this.seq = seq; }
+
   private teamOfPlayer(externalId: string): string | undefined {
     const game = this.handle.game;
     const pid = this.ids.pid(externalId);
