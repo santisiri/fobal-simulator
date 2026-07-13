@@ -13,7 +13,7 @@ export const ClientMessage = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
     matchId: MatchId,
-    token: z.string().min(8).max(256),
+    token: z.string().min(8).max(1024),   // base64url(payload).base64url(mac); two 128-char ids fit
     resumeFromSeq: Seq.optional(),
   }),
   z.object({ type: z.literal('command'), command: Command }),
@@ -30,7 +30,7 @@ export const ServerMessage = z.discriminatedUnion('type', [
     teamId: z.string().optional(),          // set when role === 'controller'
     manifest: MatchManifest,
     snapshot: StateSnapshot,
-    eventSeq: Seq,                           // last event seq at snapshot time
+    eventSeq: z.number().int().min(-1),      // last event seq at snapshot time; -1 = none yet
   }),
   z.object({ type: z.literal('snapshot'), snapshot: StateSnapshot }),
   z.object({ type: z.literal('delta'), delta: StateDelta }),

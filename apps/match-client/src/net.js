@@ -44,6 +44,7 @@ export class MatchConnection {
     this.retries = 0;
     this.socket = null;
     this._closedByUser = false;
+    this._welcomed = false;         // true once any welcome arrived (enables resume)
   }
 
   connect(){
@@ -54,7 +55,10 @@ export class MatchConnection {
     this.socket = socket;
     socket.onopen = () => {
       const hello = { type: 'hello', matchId: this.matchId, token: this.token };
-      if (this.lastEventSeq >= 0) hello.resumeFromSeq = this.lastEventSeq + 1;
+      // Any reconnect after a first welcome must resume — even from seq 0.
+      // Gating on lastEventSeq >= 0 would silently drop every event that
+      // happened during an outage that began before the first event arrived.
+      if (this._welcomed) hello.resumeFromSeq = this.lastEventSeq + 1;
       socket.send(JSON.stringify(hello));
     };
     socket.onmessage = (ev) => this._onRaw(typeof ev === 'string' ? ev : ev.data);
@@ -82,8 +86,9 @@ export class MatchConnection {
       this.socket.send(JSON.stringify({ type: 'request_snapshot' }));
   }
 
-  /** The frame to render right now (interpolated), or null before welcome. */
-  frame(){ return this.buffer.sample(); }
+  /** The frame to render right now (interpolated), or null before welcome.
+   *  Render loops should pass Date.now() for continuous inter-frame motion. */
+  frame(nowMs){ return this.buffer.sample(nowMs); }
 
   // -- internals ----------------------------------------------------------
 
@@ -113,6 +118,7 @@ export class MatchConnection {
         const frame = frameFromSnapshot(msg.snapshot);
         this.buffer.reset(frame);          // authoritative resync point
         this.lastFrame = frame;
+        this._welcomed = true;
         this.status = 'live';
         this._emitStatus();
         break;

@@ -68,10 +68,13 @@ export class InterpolationBuffer {
     this.capacity = capacity;
     /** @type {any[]} ordered by tick asc */
     this.frames = [];
+    this.newestArrivalMs = 0;   // wall-clock arrival of the newest frame
   }
 
   /** Insert an authoritative frame (out-of-order frames are sorted in). */
   push(frame){
+    if (!this.frames.length || frame.tick >= this.newestTick())
+      this.newestArrivalMs = Date.now();
     // a frame for an earlier tick than the newest is stale unless it fills a gap
     const i = this.frames.findIndex(f => f.tick >= frame.tick);
     if (i === -1) this.frames.push(frame);
@@ -83,19 +86,30 @@ export class InterpolationBuffer {
   /** Authoritative reset (reconnect/seek): drop everything older. */
   reset(frame){
     this.frames = [frame];
+    this.newestArrivalMs = Date.now();
   }
 
   newestTick(){ return this.frames.length ? this.frames[this.frames.length - 1].tick : -1; }
 
   /**
    * The frame to draw for the current moment: interpolated between the two
-   * frames straddling (newestTick - delayTicks). Positions and the ball lerp;
-   * discrete fields (score, state, actions) snap to the earlier frame until
-   * the boundary passes.
+   * frames straddling the render tick. Positions and the ball lerp; discrete
+   * fields (score, state, actions) snap to the earlier frame until the
+   * boundary passes.
+   *
+   * Pass `nowMs` (e.g. performance.now-aligned Date.now()) from a render loop
+   * to advance time CONTINUOUSLY between network updates — without it the
+   * sample is a pure function of the buffer and only moves when frames
+   * arrive, which stutters at 60fps against a 10Hz delta stream.
    */
-  sample(){
+  sample(nowMs){
     if (!this.frames.length) return null;
-    const target = this.newestTick() - this.delayTicks;
+    let target = this.newestTick() - this.delayTicks;
+    if (nowMs !== undefined && this.newestArrivalMs){
+      const elapsedTicks = ((nowMs - this.newestArrivalMs) / 1000) * 60;
+      // advance smoothly but never past the newest authoritative frame
+      target = Math.min(this.newestTick(), target + Math.max(0, elapsedTicks));
+    }
     let a = this.frames[0], b = this.frames[0];
     for (const f of this.frames){
       if (f.tick <= target) a = f;

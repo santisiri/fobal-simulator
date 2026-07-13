@@ -81,7 +81,7 @@ export const TeamSnapshot = z.object({
   }).optional(),
   formation: Formation.optional(),
   tactics: TacticalPatch.optional(),
-  players: z.array(PlayerSnapshot).min(11).max(18),
+  players: z.array(PlayerSnapshot).min(11).max(16), // 11 starters + up to 5 bench (engine bench capacity)
 }).superRefine((team, ctx) => {
   const ids = new Set<string>();
   for (const p of team.players){
@@ -111,6 +111,9 @@ export const MatchManifest = z.object({
   createdAt: z.string().datetime(),
   rules: z.object({
     ceremonies: z.boolean().default(true),
+    // presentation hint only: clients may show cinematic goal replays; the
+    // authoritative engine NEVER runs the rollback re-simulation (official
+    // goal replays are generated server-side from the recorded command log)
     autoGoalReplays: z.boolean().default(true),
   }).default({ ceremonies: true, autoGoalReplays: true }),
   environment: z.object({

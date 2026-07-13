@@ -15,7 +15,6 @@ const TYPE_MAP: Record<string, MatchEventType> = {
   tackle: 'tackle',
   foul_committed: 'foul',
   card: 'card',
-  send_off: 'card',
   substitution: 'substitution',
   offside: 'offside',
   restart: 'restart',
@@ -34,6 +33,9 @@ const TYPE_MAP: Record<string, MatchEventType> = {
 const IGNORED = new Set([
   'crowd', 'touch', 'call_for_ball', 'state', 'reset_start', 'advantage',
   'human_move', 'human_kick', 'human_select', 'human_mode', 'take_trigger',
+  // 'send_off' always accompanies a 'card' log for the same incident —
+  // mapping both would double-count every dismissal in results
+  'send_off',
 ]);
 
 export function formatClock(tMatch: number): string {
@@ -65,8 +67,9 @@ export class EventTap {
   }
 
   private extTeam(tid: unknown): string | undefined {
-    if (tid !== 0 && tid !== 1) return undefined;
-    return this.ids.teamExternal(tid);
+    // golden recorder sites pass Team.id ('home'/'away'); some pass indices
+    const idx = tid === 0 || tid === 'home' ? 0 : tid === 1 || tid === 'away' ? 1 : null;
+    return idx === null ? undefined : this.ids.teamExternal(idx);
   }
 
   private onGoldenEvent(type: string, data: any): void {
@@ -74,7 +77,9 @@ export class EventTap {
     const game = this.handle.game;
     if (game.replayMode) return; // cinematic re-simulation must not re-emit
     const mapped = TYPE_MAP[type] ?? 'other';
-    const playerId = this.extPlayer(data.actor);
+    // substitutions carry the pair as on/off pids, not actor/target
+    const playerId = this.extPlayer(data.actor) ?? (type === 'substitution' ? this.extPlayer(data.on) : undefined);
+    const targetExtra = type === 'substitution' ? this.extPlayer(data.off) : undefined;
     const teamId = this.extTeam(data.team) ?? (playerId ? this.teamOfPlayer(playerId) : undefined);
     const event: MatchEvent = {
       seq: this.seq++,
@@ -83,7 +88,7 @@ export class EventTap {
       type: mapped,
       ...(teamId ? { teamId } : {}),
       ...(playerId ? { playerId } : {}),
-      ...(this.extPlayer(data.target) ? { targetId: this.extPlayer(data.target) } : {}),
+      ...(this.extPlayer(data.target) ?? targetExtra ? { targetId: this.extPlayer(data.target) ?? targetExtra } : {}),
       ...(data.position ? { position: { x: data.position.x, y: data.position.y } } : {}),
       data: sanitizeData(type, data),
     };
@@ -108,9 +113,13 @@ export class EventTap {
 
   nextSeq(): number { return this.seq; }
 
-  /** Continue the sequence after a snapshot restore (events before the
-   *  restore point live in the server's append-only log, not here). */
-  seedSeq(seq: number): void { this.seq = seq; }
+  /** Rebuild tap state after an internal-snapshot restore: the event history
+   *  feeds result() (cards), so it must survive recovery. */
+  restore(seq: number, events: MatchEvent[]): void {
+    this.events.length = 0;
+    this.events.push(...events);
+    this.seq = seq;
+  }
 
   private teamOfPlayer(externalId: string): string | undefined {
     const game = this.handle.game;

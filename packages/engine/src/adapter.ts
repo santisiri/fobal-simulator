@@ -81,6 +81,8 @@ function imposeTeam(handle: GoldenHandle, teamIdx: 0 | 1, spec: TeamSnapshot, id
   // The manifest defines who exists: golden-generated bench players beyond
   // the manifest bench are removed so no unofficial player can ever enter.
   const bench: any[] = team.bench ?? [];
+  if (benchSpec.length > bench.length)
+    throw new Error(`team ${spec.teamId}: manifest bench of ${benchSpec.length} exceeds the engine's ${bench.length} bench slots`);
   const keep = Math.min(bench.length, benchSpec.length);
   for (let i = 0; i < keep; i++){
     const bp = bench[i], bs = benchSpec[i]!;
@@ -102,14 +104,28 @@ export interface AdaptedMatch { ids: IdMap }
 
 export function imposeManifest(handle: GoldenHandle, manifest: MatchManifest): AdaptedMatch {
   const game = handle.game;
-  // 1. pin environment (official when supplied; otherwise seed-derived)
-  if (manifest.environment?.grass || manifest.environment?.weather)
+  // 1. pin environment (official when supplied; otherwise seed-derived).
+  // Unknown keys must fail loudly — __setEnv silently ignores them, which
+  // would make two servers disagree about what the manifest meant.
+  if (manifest.environment?.grass || manifest.environment?.weather){
+    const known = handle.evalIn('JSON.stringify({ g: Object.keys(GRASS_TYPES), w: Object.keys(WEATHER_TYPES) })');
+    const { g, w } = JSON.parse(known) as { g: string[]; w: string[] };
+    if (manifest.environment.grass && !g.includes(manifest.environment.grass))
+      throw new Error(`unknown environment.grass "${manifest.environment.grass}" (known: ${g.join(', ')})`);
+    if (manifest.environment.weather && !w.includes(manifest.environment.weather))
+      throw new Error(`unknown environment.weather "${manifest.environment.weather}" (known: ${w.join(', ')})`);
     handle.sandbox.__setEnv(manifest.environment.grass, manifest.environment.weather);
+  }
   // 2. deterministic reset from the manifest seed
   handle.reset(manifest.seed);
-  // 3. presentation rules
+  // 3. presentation rules. The cinematic goal replay is ALWAYS disabled in
+  // the authoritative engine: it rewinds simTick and re-simulates the buildup,
+  // which would corrupt command scheduling, broadcast state and recovery
+  // snapshots mid-excursion. rules.autoGoalReplays is a client-side
+  // presentation hint; official goal replays come from the recorded command
+  // log (see apps/match-server/src/replays.ts).
   handle.sandbox.__present(manifest.rules.ceremonies);
-  game.goalReplay.cfg.enabled = manifest.rules.autoGoalReplays;
+  game.goalReplay.cfg.enabled = false;
   // 4. impose squads + bind external ids
   const ids = new IdMap();
   imposeTeam(handle, 0, manifest.teams[0], ids);

@@ -13,7 +13,9 @@ export const PROTOCOL_VERSION = '1.0.0';
 // safe in URLs, logs and filenames.
 // ---------------------------------------------------------------------------
 export const ExternalId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_:.-]+$/,
-  'ids must be URL/log-safe: alphanumerics, _ : . -');
+  'ids must be URL/log-safe: alphanumerics, _ : . -')
+  .refine(id => id !== '.' && id !== '..' && !id.startsWith('.'),
+    'ids must not be path-special ("." / "..") or start with a dot');
 export type ExternalId = z.infer<typeof ExternalId>;
 
 export const MatchId = ExternalId;

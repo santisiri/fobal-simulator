@@ -75,7 +75,7 @@ describe('engine determinism', () => {
     expect(replayResult.goals).toEqual(liveResult.goals);
   }, 120_000);
 
-  test('a full official match reaches FULLTIME at 90:00', () => {
+  test('a full official match reaches FULLTIME at 90:00 with a consistent result', () => {
     const engine = MatchEngine.create(sampleManifest());
     engine.runToFullTime();
     expect(engine.matchState).toBe('FULLTIME');
@@ -83,5 +83,16 @@ describe('engine determinism', () => {
     const result = engine.result();
     expect(result.stats[0].passAtt).toBeGreaterThan(20);
     expect(result.stats[1].passAtt).toBeGreaterThan(20);
+    // result invariants: exactly one goal record per scored goal, no
+    // duplicates (the cinematic-replay rollback must never double-count),
+    // ticks strictly increasing
+    expect(result.goals.length).toBe(result.finalScore[0] + result.finalScore[1]);
+    const goalKeys = result.goals.map(g => `${g.tick}:${g.playerId}`);
+    expect(new Set(goalKeys).size).toBe(goalKeys.length);
+    for (let i = 1; i < result.goals.length; i++)
+      expect(result.goals[i]!.tick).toBeGreaterThan(result.goals[i - 1]!.tick);
+    // one card record per booking incident (send_off must not double-count)
+    const cardKeys = result.cards.map(c => `${c.tick}:${c.playerId}`);
+    expect(new Set(cardKeys).size).toBe(cardKeys.length);
   }, 120_000);
 });

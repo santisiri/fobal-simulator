@@ -41,9 +41,11 @@ describe('internal snapshot recovery', () => {
     expect(resumed.finalStateHash()).toBe(live.finalStateHash());
     expect(resumed.snapshot().teams[1].subsUsed).toBe(1);
 
-    // event sequence continues without collisions after the restore point
+    // result bookkeeping survives recovery: the resumed engine carries the
+    // FULL event history (pre-capture events restored, post-capture events
+    // re-emitted identically) with a collision-free sequence
     const seqs = resumed.events().map(e => e.seq);
     expect(new Set(seqs).size).toBe(seqs.length);
-    expect(Math.min(...seqs)).toBeGreaterThanOrEqual(captured.eventSeq);
+    expect(JSON.parse(JSON.stringify(resumed.events()))).toEqual(JSON.parse(JSON.stringify(live.events())));
   });
 });

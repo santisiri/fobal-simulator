@@ -48,6 +48,18 @@ const goldens = { sourceHash: sourceHash() };
   goldens.passShoot = { seed: 5, ticks: 3600, home: t(0), away: t(1) };
 }
 
+// --- shooting-bearing window (seed 10 contains a goal by ~tick 5502, so the
+// window is guaranteed to exercise shots and on-target accounting) ---
+{
+  const h = bootGolden({ seed: 10 });
+  h.step(6000);
+  const t = i => {
+    const team = h.game.teams[i];
+    return { passAtt: team.passAtt, passCmp: team.passCmp, shots: team.shots, onTarget: team.onTarget };
+  };
+  goldens.passShoot10 = { seed: 10, ticks: 6000, home: t(0), away: t(1) };
+}
+
 // --- first natural goal (seed 10) ---
 {
   const h = bootGolden({ seed: 10 });

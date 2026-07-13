@@ -18,6 +18,22 @@ test('pass and shot statistics are pinned for seed 5 over 3600 ticks', () => {
   assert.ok(h.game.teams[0].passAtt + h.game.teams[1].passAtt > 10, 'a real match has passes');
 });
 
+test('shot accounting is genuinely exercised (seed 10 window with a goal)', () => {
+  const h = bootGolden({ seed: G.passShoot10.seed });
+  h.step(G.passShoot10.ticks);
+  const totals = { shots: 0, onTarget: 0 };
+  for (const [i, key] of [[0, 'home'], [1, 'away']]){
+    const t = h.game.teams[i];
+    assert.deepEqual(
+      { passAtt: t.passAtt, passCmp: t.passCmp, shots: t.shots, onTarget: t.onTarget },
+      G.passShoot10[key], key);
+    totals.shots += t.shots; totals.onTarget += t.onTarget;
+  }
+  // floors, not just pins: the window contains a goal, so both counters are live
+  assert.ok(totals.shots > 0, 'shots were taken');
+  assert.ok(totals.onTarget > 0, 'at least the goal was on target');
+});
+
 test('team.passCmp === Σ player passCmp (single-credit invariant)', () => {
   const h = bootGolden({ seed: G.passShoot.seed });
   h.step(G.passShoot.ticks);

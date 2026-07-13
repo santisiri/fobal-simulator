@@ -6,11 +6,18 @@
 //   <root>/<matchId>/snapshots/<tick>.json  protocol StateSnapshots
 //   <root>/<matchId>/internal-latest.json   golden-core state for fast recovery
 //   <root>/<matchId>/result.json            signed final result (written once)
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AcceptedCommand, MatchEvent, MatchManifest, MatchResult, StateSnapshot } from '@fobal/protocol';
 
-const SAFE_ID = /^[A-Za-z0-9_:.-]+$/;
+const SAFE_ID = /^(?!\.)[A-Za-z0-9_:.-]+$/;   // no leading dot: '.'/'..' can never traverse
+
+/** Crash-safe whole-file write: temp file + atomic rename. */
+function writeAtomic(file: string, data: string): void {
+  const tmp = `${file}.tmp-${process.pid}`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, file);
+}
 
 export class MatchStore {
   constructor(private root: string){ mkdirSync(root, { recursive: true }); }
@@ -28,7 +35,7 @@ export class MatchStore {
 
   saveManifest(manifest: MatchManifest): void {
     this.ensure(manifest.matchId);
-    writeFileSync(join(this.dir(manifest.matchId), 'manifest.json'), JSON.stringify(manifest, null, 2));
+    writeAtomic(join(this.dir(manifest.matchId), 'manifest.json'), JSON.stringify(manifest, null, 2));
   }
 
   loadManifest(matchId: string): MatchManifest {
@@ -52,7 +59,7 @@ export class MatchStore {
   }
 
   saveSnapshot(matchId: string, snapshot: StateSnapshot): void {
-    writeFileSync(join(this.dir(matchId), 'snapshots', `${String(snapshot.tick).padStart(8, '0')}.json`),
+    writeAtomic(join(this.dir(matchId), 'snapshots', `${String(snapshot.tick).padStart(8, '0')}.json`),
       JSON.stringify(snapshot));
   }
 
@@ -63,7 +70,7 @@ export class MatchStore {
   }
 
   saveInternal(matchId: string, captured: unknown): void {
-    writeFileSync(join(this.dir(matchId), 'internal-latest.json'), JSON.stringify(captured));
+    writeAtomic(join(this.dir(matchId), 'internal-latest.json'), JSON.stringify(captured));
   }
 
   loadInternal(matchId: string): { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number } | null {
@@ -79,7 +86,7 @@ export class MatchStore {
   saveResultOnce(matchId: string, result: MatchResult): MatchResult {
     const file = join(this.dir(matchId), 'result.json');
     if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8'));
-    writeFileSync(file, JSON.stringify(result, null, 2));
+    writeAtomic(file, JSON.stringify(result, null, 2));
     return result;
   }
 
@@ -92,8 +99,28 @@ export class MatchStore {
     return readdirSync(this.root).filter(d => this.exists(d));
   }
 
+  saveClips(matchId: string, clips: unknown): void {
+    writeAtomic(join(this.dir(matchId), 'clips.json'), JSON.stringify(clips));
+  }
+
+  loadClips(matchId: string): unknown | null {
+    const file = join(this.dir(matchId), 'clips.json');
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+  }
+
   private readJsonl<T>(file: string): T[] {
     if (!existsSync(file)) return [];
-    return readFileSync(file, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
+    const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);
+    const out: T[] = [];
+    for (let i = 0; i < lines.length; i++){
+      try { out.push(JSON.parse(lines[i]!)); }
+      catch (err){
+        // a torn FINAL line means the process died mid-append: drop it (its
+        // command/event was never acked). Corruption anywhere else is fatal.
+        if (i === lines.length - 1) break;
+        throw err;
+      }
+    }
+    return out;
   }
 }

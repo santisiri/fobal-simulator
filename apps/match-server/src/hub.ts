@@ -28,6 +28,11 @@ export interface MatchServerOptions {
   storeRoot: string;
   keys?: SigningKeys;
   roomDefaults?: { deltaEvery?: number; snapshotEvery?: number; internalEvery?: number; commandDelay?: number; tacticalPerMinute?: number };
+  /** drive matches in real time automatically (created + resumed on boot);
+   *  tests leave this off and pace rooms explicitly */
+  autoDrive?: boolean;
+  /** ms an unauthenticated socket may live before being terminated */
+  helloTimeoutMs?: number;
 }
 
 export interface MatchServer {
@@ -64,9 +69,15 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   const keys = options.keys ?? generateSigningKeys();
   const store = new MatchStore(options.storeRoot);
   const rooms = new Map<string, MatchRoom>();
+  const clipsCache = new Map<string, unknown>();
   let nextClientId = 1;
 
-  const roomOptions = { store, keys, ...(options.roomDefaults ?? {}) };
+  const roomOptions = {
+    store, keys, ...(options.roomDefaults ?? {}),
+    // finished matches are served from the store; keeping the room (a whole
+    // vm sandbox + event history) alive would leak per match
+    onFinalized: (room: MatchRoom) => { room.stop(); rooms.delete(room.matchId); },
+  };
 
   function createMatch(rawManifest: unknown){
     const manifest = MatchManifest.parse(rawManifest);
@@ -74,11 +85,30 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       throw new Error(`match ${manifest.matchId} already exists`);
     const room = MatchRoom.create(manifest, roomOptions);
     rooms.set(manifest.matchId, room);
+    if (options.autoDrive) room.startRealtime();
     const tokens: Record<string, string> = {};
     for (const team of manifest.teams)
       tokens[team.teamId] = signToken({ matchId: manifest.matchId, role: 'controller', teamId: team.teamId }, secret);
     const spectatorToken = signToken({ matchId: manifest.matchId, role: 'spectator' }, secret);
     return { matchId: manifest.matchId, tokens, spectatorToken };
+  }
+
+  // crash recovery on boot: resume every unfinished persisted match
+  if (options.autoDrive){
+    for (const matchId of store.listMatches()){
+      if (store.loadResult(matchId) || rooms.has(matchId)) continue;
+      const room = MatchRoom.resume(matchId, roomOptions);
+      rooms.set(matchId, room);
+      room.startRealtime();
+    }
+  }
+
+  /** GETs are gated by any valid token for the match (spectator suffices). */
+  function authorizedFor(req: IncomingMessage, matchId: string): boolean {
+    const auth = req.headers.authorization ?? '';
+    if (!auth.startsWith('Bearer ')) return false;
+    const payload = verifyToken(auth.slice(7), secret);
+    return payload !== null && payload.matchId === matchId;
   }
 
   const httpServer = createServer(async (req, res) => {
@@ -103,6 +133,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       if (req.method === 'GET' && parts[0] === 'matches' && parts.length === 3){
         const matchId = parts[1]!;
         if (!store.exists(matchId) && !rooms.has(matchId)) return json(res, 404, { error: 'unknown match' });
+        if (!authorizedFor(req, matchId)) return json(res, 401, { error: 'match token required' });
         if (parts[2] === 'result'){
           const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
           return result ? json(res, 200, result) : json(res, 404, { error: 'match not finished' });
@@ -125,10 +156,19 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
 
       if (req.method === 'GET' && parts[0] === 'matches' && parts[2] === 'replays' && parts[3] === 'goals'){
         const matchId = parts[1]!;
+        if (!store.exists(matchId) && !rooms.has(matchId)) return json(res, 404, { error: 'unknown match' });
+        if (!authorizedFor(req, matchId)) return json(res, 401, { error: 'match token required' });
         const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
         if (!result) return json(res, 404, { error: 'match not finished' });
-        const clips = extractGoalClips(
-          store.loadManifest(matchId), store.loadCommands(matchId), result.goals, store.loadEvents(matchId));
+        // clip extraction re-simulates the match — compute once, then serve
+        // from cache/disk (an unbounded per-request re-sim is a DoS surface)
+        let clips = clipsCache.get(matchId) ?? store.loadClips(matchId);
+        if (!clips){
+          clips = extractGoalClips(
+            store.loadManifest(matchId), store.loadCommands(matchId), result.goals, store.loadEvents(matchId));
+          store.saveClips(matchId, clips);
+        }
+        clipsCache.set(matchId, clips);
         return json(res, 200, { matchId, clips });
       }
 
@@ -138,11 +178,17 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
     }
   });
 
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({ server: httpServer, maxPayload: 256 * 1024 });
   wss.on('connection', (socket: WebSocket) => {
     const clientId = nextClientId++;
     let room: MatchRoom | null = null;
     let client: RoomClient | null = null;
+
+    // an unauthenticated socket may not squat: hello or be terminated
+    const helloTimer = setTimeout(() => {
+      if (!client) socket.terminate();
+    }, options.helloTimeoutMs ?? 10_000);
+    helloTimer.unref?.();
 
     const send = (message: ServerMessage): void => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
@@ -157,6 +203,10 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         }
         const msg = parsed.value;
         if (msg.type === 'hello'){
+          if (room){
+            send({ type: 'error', code: 'already_joined', message: 'this connection already joined a match' });
+            return;
+          }
           const payload = verifyToken(msg.token, secret);
           if (!payload || payload.matchId !== msg.matchId){
             send({ type: 'error', code: 'unauthorized', message: 'invalid token for this match' });
@@ -171,6 +221,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           }
           room = target;
           client = { id: clientId, role: payload.role, teamId: payload.teamId ?? null, send };
+          clearTimeout(helloTimer);
           room.attach(client, msg.resumeFromSeq);
           return;
         }
@@ -187,7 +238,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       }
     });
 
-    socket.on('close', () => { if (room) room.detach(clientId); });
+    socket.on('close', () => { clearTimeout(helloTimer); if (room) room.detach(clientId); });
     socket.on('error', () => { /* close follows */ });
   });
 

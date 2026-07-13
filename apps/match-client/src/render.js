@@ -30,17 +30,18 @@ export class SpectatorRenderer {
 
   draw(){
     const { ctx, canvas } = this;
-    const frame = this.conn.frame();
+    const frame = this.conn.frame(Date.now());
     const W = canvas.width = canvas.clientWidth;
     const H = canvas.height = canvas.clientHeight;
     ctx.fillStyle = '#0a1410';
     ctx.fillRect(0, 0, W, H);
     if (!frame){ this.drawStatus(W, H); return; }
+    if (W <= 80 || H <= 100){ this.drawStatus(W, H); return; } // degenerate canvas
 
     // pitch mapping with margins
     const pad = 30;
     const sx = (W - pad * 2) / PITCH_L, sy = (H - pad * 2 - 40) / PITCH_W;
-    const s = Math.min(sx, sy);
+    const s = Math.max(0.01, Math.min(sx, sy)); // never a negative arc radius
     const ox = (W - PITCH_L * s) / 2, oy = 40 + (H - 40 - PITCH_W * s) / 2;
     const X = x => ox + x * s, Y = y => oy + y * s;
 
@@ -118,7 +119,11 @@ export class SpectatorRenderer {
   }
 
   start(){
-    const loop = () => { this.draw(); this._raf = requestAnimationFrame(loop); };
+    const loop = () => {
+      // a bad frame must never kill the rAF chain
+      try { this.draw(); } catch (err){ console.error('spectator draw failed', err); }
+      this._raf = requestAnimationFrame(loop);
+    };
     loop();
   }
 

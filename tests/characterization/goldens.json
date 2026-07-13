@@ -68,6 +68,22 @@
       "onTarget": 0
     }
   },
+  "passShoot10": {
+    "seed": 10,
+    "ticks": 6000,
+    "home": {
+      "passAtt": 10,
+      "passCmp": 6,
+      "shots": 1,
+      "onTarget": 1
+    },
+    "away": {
+      "passAtt": 18,
+      "passCmp": 10,
+      "shots": 0,
+      "onTarget": 0
+    }
+  },
   "goal": {
     "seed": 10,
     "firstGoalTick": 5502,

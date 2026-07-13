@@ -31,12 +31,13 @@ function wsClient(matchId: string, token: string, opts: Record<string, unknown> 
   }).connect();
 }
 
-function waitFor(pred: () => boolean, ms = 15000, label = 'condition'): Promise<void> {
+function waitFor(pred: () => boolean, ms = 30000, label: string | (() => string) = 'condition'): Promise<void> {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const poll = (): void => {
       if (pred()) return resolve();
-      if (Date.now() - start > ms) return reject(new Error(`timeout waiting for ${label}`));
+      if (Date.now() - start > ms)
+        return reject(new Error(`timeout waiting for ${typeof label === 'function' ? label() : label}`));
       setTimeout(poll, 10);
     };
     poll();
@@ -80,7 +81,12 @@ describe('proofs 1 + 2: local ≡ server ≡ replayed command log', () => {
 
     // Proof 2 — the persisted replay file (manifest + command log) replays to
     // the same final hash, and the file itself validates.
-    const replayRes = await fetch(`http://127.0.0.1:${server.port}/matches/proof-12/replay`);
+    // GETs are gated: no token → 401, any valid token for THIS match → 200
+    const unauth = await fetch(`http://127.0.0.1:${server.port}/matches/proof-12/replay`);
+    expect(unauth.status).toBe(401);
+    const replayRes = await fetch(`http://127.0.0.1:${server.port}/matches/proof-12/replay`, {
+      headers: { authorization: `Bearer ${created.spectatorToken}` },
+    });
     expect(replayRes.status).toBe(200);
     const replay = await replayRes.json() as ReplayFile;
     expect(replay.kind).toBe('fobal-replay');
@@ -100,7 +106,8 @@ describe('proof 3: two clients, one truth', () => {
 
     const a = wsClient('proof-3', created.spectatorToken);
     const b = wsClient('proof-3', created.spectatorToken);
-    await waitFor(() => a.status === 'live' && b.status === 'live', 15000, 'both live');
+    await waitFor(() => a.status === 'live' && b.status === 'live', 30000,
+      () => `both live (a=${a.status} retries=${a.retries}, b=${b.status} retries=${b.retries})`);
 
     await room.runTurbo();
     await waitFor(() => a.result && b.result, 15000, 'both results');

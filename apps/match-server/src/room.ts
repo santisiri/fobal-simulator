@@ -27,8 +27,10 @@ export interface RoomOptions {
   internalEvery?: number;
   /** scheduling delay added to accepted commands */
   commandDelay?: number;
-  /** tactical commands allowed per rolling minute per connection */
+  /** commands allowed per rolling minute per TEAM (all kinds) */
   tacticalPerMinute?: number;
+  /** invoked once when the final result is persisted (room eviction hook) */
+  onFinalized?: (room: MatchRoom) => void;
 }
 
 interface Bucket { tokens: number; lastRefill: number }
@@ -40,7 +42,11 @@ export class MatchRoom {
   private store: MatchStore;
   private keys: SigningKeys;
   private clients = new Map<number, RoomClient>();
-  private buckets = new Map<number, Bucket>();
+  // rate-limit buckets are keyed by the identity the limit protects (teamId),
+  // NOT the connection — reconnecting or opening parallel sockets with the
+  // same token must not mint fresh budget
+  private buckets = new Map<string, Bucket>();
+  private onFinalized: ((room: MatchRoom) => void) | null = null;
   private nextSeq = 0;
   private flushedEventSeq = -1;       // last event seq persisted+broadcast
   private lastDeltaTick = -1;
@@ -63,7 +69,9 @@ export class MatchRoom {
       internalEvery: options.internalEvery ?? 1800,
       commandDelay: options.commandDelay ?? 30,
       tacticalPerMinute: options.tacticalPerMinute ?? 6,
+      onFinalized: options.onFinalized ?? (() => {}),
     };
+    this.onFinalized = options.onFinalized ?? null;
   }
 
   /** Fresh match from a validated manifest. */
@@ -128,7 +136,7 @@ export class MatchRoom {
 
   detach(clientId: number): void {
     this.clients.delete(clientId);
-    this.buckets.delete(clientId);
+    // buckets survive detach on purpose: reconnecting must not reset budgets
   }
 
   sendSnapshotTo(clientId: number): void {
@@ -152,8 +160,10 @@ export class MatchRoom {
       client.send({ type: 'command_rejected', commandId: command.commandId, code: 'match_over', message: 'the match has finished' });
       return;
     }
-    if (command.kind === 'tactical' && !this.takeToken(client.id)){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'rate_limited', message: `max ${this.opts.tacticalPerMinute} tactical commands per minute` });
+    // every command kind is rate-limited: substitutions flooding the log/queue
+    // is exactly as harmful as tactical spam
+    if (!this.takeToken(command.teamId)){
+      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'rate_limited', message: `max ${this.opts.tacticalPerMinute} commands per minute per team` });
       return;
     }
     const accepted: AcceptedCommand = {
@@ -162,25 +172,30 @@ export class MatchRoom {
       receivedAtTick: this.engine.currentTick,
       command,
     };
-    const outcome = this.engine.submit(accepted);
-    if (!outcome.accepted){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'out_of_range', message: outcome.reason ?? 'rejected' });
+    // validate → persist → apply: a command must never shape the live match
+    // without being in the recovery log
+    const check = this.engine.validate(accepted);
+    if (!check.accepted){
+      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'out_of_range', message: check.reason ?? 'rejected' });
       return;
     }
-    this.nextSeq++;
     this.store.appendCommand(this.matchId, accepted);
+    const outcome = this.engine.submit(accepted);
+    if (!outcome.accepted)
+      throw new Error(`validated command ${accepted.seq} rejected on submit: ${outcome.reason}`);
+    this.nextSeq++;
     client.send({ type: 'command_ack', commandId: command.commandId, seq: accepted.seq, effectiveTick: accepted.effectiveTick });
   }
 
-  private takeToken(clientId: number): boolean {
+  private takeToken(teamId: string): boolean {
     const now = Date.now();
-    const bucket = this.buckets.get(clientId) ?? { tokens: this.opts.tacticalPerMinute, lastRefill: now };
+    const bucket = this.buckets.get(teamId) ?? { tokens: this.opts.tacticalPerMinute, lastRefill: now };
     const refill = ((now - bucket.lastRefill) / 60_000) * this.opts.tacticalPerMinute;
     bucket.tokens = Math.min(this.opts.tacticalPerMinute, bucket.tokens + refill);
     bucket.lastRefill = now;
-    if (bucket.tokens < 1){ this.buckets.set(clientId, bucket); return false; }
+    if (bucket.tokens < 1){ this.buckets.set(teamId, bucket); return false; }
     bucket.tokens -= 1;
-    this.buckets.set(clientId, bucket);
+    this.buckets.set(teamId, bucket);
     return true;
   }
 
@@ -264,6 +279,7 @@ export class MatchRoom {
     const persisted = this.store.saveResultOnce(this.matchId, signed);
     this.finalized = persisted;
     this.broadcast({ type: 'result', result: persisted });
+    if (this.onFinalized) this.onFinalized(this);
     return persisted;
   }
 

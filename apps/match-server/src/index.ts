@@ -19,6 +19,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     secret: process.env.FOBAL_SECRET,
     createKey: process.env.FOBAL_CREATE_KEY,
     storeRoot: process.env.FOBAL_STORE ?? 'var/matches',
+    autoDrive: true,   // drive created matches in real time; resume unfinished ones on boot
   });
   console.log(`fobal match server listening on :${server.port}`);
   console.log(`match creation key: ${server.createKey}`);

@@ -25,30 +25,31 @@ const PATCH: Command = {
 };
 
 describe('server crash recovery', () => {
-  test('resume-from-snapshot continues bit-identically to a room that never crashed', () => {
+  test('resume-from-snapshot continues bit-identically — full RESULT, not just hash', async () => {
     const { store, room } = roomPair('rec-1');
     const sink: unknown[] = [];
     const client = fakeClient(sink);
     room.attach(client);
     room.submitCommand(client, PATCH);
     room.advance(1500);                        // internal snapshots at 600-tick cadence
-    const parallelHash = (() => {              // uninterrupted twin for comparison
-      const twinStore = new MatchStore(mkdtempSync(join(tmpdir(), 'fobal-rec-twin-')));
-      const twin = MatchRoom.create(sampleManifest({ matchId: 'rec-1' }), { store: twinStore, keys });
-      const twinSink: unknown[] = [];
-      const twinClient = fakeClient(twinSink);
-      twin.attach(twinClient);
-      twin.submitCommand(twinClient, PATCH);
-      twin.advance(1500 + 900);
-      return twin.stateHash();
-    })();
+
+    const twinStore = new MatchStore(mkdtempSync(join(tmpdir(), 'fobal-rec-twin-')));
+    const twin = MatchRoom.create(sampleManifest({ matchId: 'rec-1' }), { store: twinStore, keys });
+    const twinClient = fakeClient();
+    twin.attach(twinClient);
+    twin.submitCommand(twinClient, PATCH);
+    const twinResult = await twin.runTurbo();
 
     room.stop();                               // "crash"
     const resumed = MatchRoom.resume('rec-1', { store, keys });
     expect(resumed.currentTick).toBeGreaterThan(0);
-    resumed.advance(1500 + 900 - resumed.currentTick);
-    expect(resumed.stateHash()).toBe(parallelHash);
-  }, 120_000);
+    const resumedResult = await resumed.runTurbo();
+
+    // the SIGNED result must be byte-identical: a hash-only comparison would
+    // hide missing pre-crash goals/cards (result bookkeeping is host-side)
+    expect(JSON.stringify(resumedResult)).toBe(JSON.stringify(twinResult));
+    expect(resumedResult.goals.length).toBe(resumedResult.finalScore[0] + resumedResult.finalScore[1]);
+  }, 240_000);
 
   test('with no internal snapshot, recovery replays the command log deterministically', () => {
     const { store, room } = roomPair('rec-2');
@@ -93,7 +94,7 @@ describe('goal replays from recorded data', () => {
         expect(frame.ball.x).toBeLessThanOrEqual(110);
       }
       // the goal event itself is inside the clip's event window
-      expect(clip.events.some(e => e.type === 'goal' && e.tick === clip.goalTick - (clip.goalTick - e.tick))).toBe(true);
+      expect(clip.events.some(e => e.type === 'goal' && Math.abs(e.tick - clip.goalTick) <= 3)).toBe(true);
     }
   }, 240_000);
 

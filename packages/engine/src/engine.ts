@@ -21,6 +21,15 @@ import { EventTap, formatClock } from './events.js';
 
 export interface SubmitOutcome { accepted: boolean; reason?: string }
 
+export interface CapturedState {
+  tick: number;
+  state: unknown;
+  appliedThroughSeq: number;
+  eventSeq: number;
+  goals?: unknown[];
+  events?: unknown[];
+}
+
 interface GoalRecord { tick: number; clock: string; teamIdx: 0 | 1; playerId: string | null }
 
 const MAX_MATCH_TICKS = 60 * 60 * 8; // hard cap: no golden match approaches this
@@ -96,6 +105,16 @@ export class MatchEngine {
     return { accepted: true };
   }
 
+  /** Validation without queueing — lets callers persist-before-apply. */
+  validate(cmd: AcceptedCommand): SubmitOutcome {
+    const parsed = AcceptedCommand.safeParse(cmd);
+    if (!parsed.success) return { accepted: false, reason: 'malformed command' };
+    if (this.isOver()) return { accepted: false, reason: 'match is over' };
+    if (parsed.data.effectiveTick < this.currentTick)
+      return { accepted: false, reason: `effectiveTick ${parsed.data.effectiveTick} is in the past (now ${this.currentTick})` };
+    return this.validateCommand(parsed.data.command);
+  }
+
   private validateCommand(command: Command): SubmitOutcome {
     let teamIdx: 0 | 1;
     try { teamIdx = this.ids.teamIndex(command.teamId); }
@@ -165,6 +184,9 @@ export class MatchEngine {
 
   private observeTransitions(): void {
     const game = this.handle.game;
+    // never observe inside a replay excursion: the cinematic rollback (only
+    // reachable in seed/parity mode) rewinds and re-plays the score
+    if (game.replayMode) return;
     const state = game.match.state;
     if (state !== this.lastState){
       if (state === 'HALFTIME') this.tap.emitSynthetic('halftime');
@@ -335,7 +357,11 @@ export class MatchEngine {
    * recovery; replaying the command log from tick 0 is the always-available
    * fallback.
    */
-  captureInternalState(): { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number } {
+  captureInternalState(): CapturedState {
+    // a capture taken mid-excursion would persist the rolled-back timeline
+    // as authoritative (unreachable in official mode — defense in depth)
+    if (this.handle.game.replayMode)
+      throw new Error('cannot capture internal state during a replay excursion');
     // serialize inside the vm so every object stays same-realm
     const state = JSON.parse(this.handle.evalIn('JSON.stringify(SnapshotManager.capture(game))'));
     const applied = this.appliedCommands;
@@ -344,6 +370,10 @@ export class MatchEngine {
       state,
       appliedThroughSeq: applied.length ? applied[applied.length - 1]!.seq : -1,
       eventSeq: this.tap.nextSeq(),
+      // result bookkeeping lives host-side and must survive recovery, or a
+      // resumed match signs a result missing pre-crash goals and cards
+      goals: JSON.parse(JSON.stringify(this.goals)),
+      events: JSON.parse(JSON.stringify(this.tap.events)),
     };
   }
 
@@ -352,10 +382,7 @@ export class MatchEngine {
    * SAME manifest. Commands with seq <= appliedThroughSeq are recorded as
    * applied (their effects live inside the snapshot); later ones queue.
    */
-  restoreInternalState(
-    captured: { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number },
-    commandLog: AcceptedCommand[],
-  ): void {
+  restoreInternalState(captured: CapturedState, commandLog: AcceptedCommand[]): void {
     const restoreJson = this.handle.evalIn('(json => SnapshotManager.restore(game, JSON.parse(json)))');
     restoreJson(JSON.stringify(captured.state));
     this.pending = [];
@@ -367,7 +394,8 @@ export class MatchEngine {
     this.lastState = this.handle.game.match.state;
     this.lastScore = [this.handle.game.match.score[0], this.handle.game.match.score[1]];
     this.deltaCache.clear();
-    this.tap.seedSeq(captured.eventSeq);
+    this.goals = (captured.goals ?? []) as GoalRecord[];
+    this.tap.restore(captured.eventSeq, (captured.events ?? []) as MatchEvent[]);
   }
 
   /** Reproduce a match from its manifest + ordered command log. */
