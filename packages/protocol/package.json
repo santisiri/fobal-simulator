@@ -1,0 +1,19 @@
+{
+  "name": "@fobal/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned wire/persistence protocol for the FOBAL platform: manifests, commands, events, snapshots, deltas, results, replay files — all with Zod runtime validation.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./samples": "./src/samples.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.0"
+  }
+}

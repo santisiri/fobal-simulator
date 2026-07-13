@@ -2,6 +2,8 @@
 
 A complete retro-isometric football simulation in **one self-contained HTML file** — no libraries, no assets, no server. Inspired by the camera and pacing of early-90s classics (FIFA International Soccer, Sensible Soccer) with modern physics and AI underneath.
 
+The repo is also a **simulation platform** built around that file as its golden reference: a headless authoritative engine, a versioned protocol, an online match server and a network client — see [Platform](#platform-monorepo) below. The demo itself stays exactly as it always was.
+
 ## Run it
 
 Open `index.html` in any browser. That's it. (Or serve the folder: `python3 -m http.server 8471`.)
@@ -62,3 +64,27 @@ game                   // everything lives here
 Invariant worth keeping: `team.passCmp === Σ player passCmp` — stat attribution is single-credit by design.
 
 `archive/retro-soccer-v1.html` is the original first version, kept for history.
+
+## Platform (monorepo)
+
+`index.html` is the **golden reference** for a full platform stack (npm
+workspaces, TypeScript, zero changes to the demo itself):
+
+| Where | What |
+|---|---|
+| `tests/characterization/` | 29 dependency-free tests pinning golden behavior (`npm run test:characterization`) |
+| `packages/protocol` | `@fobal/protocol` — Zod-validated manifests, commands, events, snapshots, deltas, signed results, replay files, WS messages |
+| `packages/engine` | `@fobal/engine` — headless authoritative `MatchEngine`: hermetic wrap of the golden core, external ids, 0–100 rating adapter, commands at effective ticks, deterministic hashes, replay-from-log, snapshot recovery. Proven bit-identical to the demo |
+| `apps/match-server` | authoritative Node service: token auth, sequenced + rate-limited commands, append-only persistence, crash recovery, goal replays from recorded data, Ed25519-signed idempotent results |
+| `apps/match-client` | Local Mode (the golden demo, embedded) + Online Mode (interpolated authoritative spectator client with reconnection recovery) |
+
+```sh
+npm install
+npm test          # characterization suite + all package/app tests (63 tests)
+npm run demo      # serve the golden demo on :8471
+npm start -w @fobal/match-server   # run the authoritative server
+```
+
+Docs: [docs/architecture-current.md](docs/architecture-current.md) (how the
+golden engine works), [docs/refactor-plan.md](docs/refactor-plan.md) (platform
+state and roadmap).

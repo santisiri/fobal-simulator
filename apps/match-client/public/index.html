@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOBAL Match Client</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #070b12; color: #e8eef5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+    border-bottom: 1px solid rgba(70,200,150,0.25); }
+  header h1 { font-size: 14px; margin: 0; letter-spacing: 2px; }
+  header h1 span { color: #2be08f; }
+  button, input { background: #0c1320; color: #e8eef5; border: 1px solid rgba(70,200,150,0.4);
+    border-radius: 6px; padding: 6px 12px; font: inherit; }
+  button { cursor: pointer; }
+  button.active { background: #123726; border-color: #2be08f; }
+  main { position: absolute; inset: 49px 0 0 0; }
+  #local, #online { position: absolute; inset: 0; display: none; }
+  #local.show, #online.show { display: block; }
+  #local iframe { width: 100%; height: 100%; border: 0; }
+  #online canvas { width: 100%; height: 100%; display: block; }
+  #onlineForm { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; background: rgba(8,13,22,0.92); padding: 10px;
+    border: 1px solid rgba(70,200,150,0.3); border-radius: 8px; z-index: 2; }
+  #onlineForm.hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FOBAL<span>.ai</span> MATCH CLIENT</h1>
+  <button id="modeLocal" class="active">LOCAL MODE</button>
+  <button id="modeOnline">ONLINE MODE</button>
+</header>
+<main>
+  <!-- Local Mode: the golden single-file engine, unmodified, in-browser.
+       Feature parity is by construction — it IS the reference demo. -->
+  <section id="local" class="show">
+    <iframe src="/index.html" title="FOBAL local match (golden engine)"></iframe>
+  </section>
+
+  <!-- Online Mode: authoritative spectator/controller client. Official state
+       comes exclusively from the server. -->
+  <section id="online">
+    <form id="onlineForm">
+      <input id="wsUrl" placeholder="ws://localhost:8473" value="ws://localhost:8473" size="22">
+      <input id="matchId" placeholder="matchId" size="18">
+      <input id="token" placeholder="token" size="24">
+      <button type="submit">CONNECT</button>
+    </form>
+    <canvas id="spectator"></canvas>
+  </section>
+</main>
+<script type="module">
+  import { MatchConnection } from '../src/net.js';
+  import { SpectatorRenderer } from '../src/render.js';
+
+  const localBtn = document.getElementById('modeLocal');
+  const onlineBtn = document.getElementById('modeOnline');
+  const sections = { local: document.getElementById('local'), online: document.getElementById('online') };
+  function mode(which){
+    sections.local.classList.toggle('show', which === 'local');
+    sections.online.classList.toggle('show', which === 'online');
+    localBtn.classList.toggle('active', which === 'local');
+    onlineBtn.classList.toggle('active', which === 'online');
+  }
+  localBtn.onclick = () => mode('local');
+  onlineBtn.onclick = () => mode('online');
+
+  let renderer = null;
+  document.getElementById('onlineForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (renderer) renderer.stop();
+    const conn = new MatchConnection({
+      url: document.getElementById('wsUrl').value,
+      matchId: document.getElementById('matchId').value,
+      token: document.getElementById('token').value,
+      socketFactory: url => new WebSocket(url),
+      hooks: {
+        onStatus: s => { document.title = `FOBAL · ${s}`; },
+        onResult: r => console.log('FINAL RESULT', r),
+      },
+    }).connect();
+    renderer = new SpectatorRenderer(document.getElementById('spectator'), conn);
+    renderer.start();
+    document.getElementById('onlineForm').classList.add('hidden');
+  });
+</script>
+</body>
+</html>

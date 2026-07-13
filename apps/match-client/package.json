@@ -1,0 +1,14 @@
+{
+  "name": "@fobal/match-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser client for FOBAL matches. Local Mode runs the golden engine in-browser (full demo experience); Online Mode renders authoritative server state over WebSockets — it never computes official goals, fouls, statistics, possession or results.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "serve": "cd ../.. && python3 -m http.server 8471"
+  },
+  "dependencies": {
+    "@fobal/protocol": "*"
+  }
+}

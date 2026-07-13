@@ -1,0 +1,25 @@
+{
+  "name": "fobal-platform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "FOBAL football simulation platform — monorepo. index.html at the root is the golden-reference single-file demo.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "test": "npm run test:characterization && vitest run",
+    "test:characterization": "node --test 'tests/characterization/*.test.mjs'",
+    "test:unit": "vitest run",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "goldens": "node tools/update-goldens.mjs",
+    "demo": "python3 -m http.server 8471"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
