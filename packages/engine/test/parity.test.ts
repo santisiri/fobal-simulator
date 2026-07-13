@@ -36,4 +36,19 @@ describe('golden parity (seed mode)', () => {
     expect(goals[0]!.playerId).toBe(goldens.goal.scorer); // seed-mode ids ARE the pids
     expect(engine.score).toEqual(goldens.goal.score);
   });
+
+  test('result() records each goal exactly once despite the cinematic replay rollback', () => {
+    // seed mode is the only mode that runs the automatic goal replay: the
+    // rollback rewinds match.score, and un-guarded score bookkeeping would
+    // record every goal twice — the duplicate with playerId null, since
+    // EventTap suppresses recorder events while game.replayMode is set
+    const engine = MatchEngine.createFromSeed(10);
+    engine.runToFullTime();
+    const result = engine.result();
+    expect(result.goals.length).toBe(result.finalScore[0] + result.finalScore[1]);
+    for (let i = 1; i < result.goals.length; i++)
+      expect(result.goals[i]!.tick).toBeGreaterThan(result.goals[i - 1]!.tick);
+    expect(result.goals[0]!.tick).toBe(goldens.goal.firstGoalTick);
+    expect(result.goals[0]!.playerId).toBe(goldens.goal.scorer);
+  }, 120_000);
 });
