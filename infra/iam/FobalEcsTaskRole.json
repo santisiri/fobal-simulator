@@ -1,0 +1,40 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReplaySnapshotStorage",
+      "Effect": "Allow",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-replays-368426158592",
+        "arn:aws:s3:::fobal-staging-replays-368426158592/*"
+      ]
+    },
+    {
+      "Sid": "ReadRuntimeSecretsIfApplicationLoadsThem",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/match-server/*"
+    },
+    {
+      "Sid": "PutFobalCustomMetrics",
+      "Effect": "Allow",
+      "Action": "cloudwatch:PutMetricData",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "cloudwatch:namespace": "/fobal/staging/match-server"
+        }
+      }
+    }
+  ]
+}
