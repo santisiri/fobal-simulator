@@ -101,7 +101,7 @@ Secrets Manager:
 
 S3:
 
-- `s3:CreateBucket`, `PutBucketTagging`, `PutBucketVersioning`, `PutBucketEncryption`, `PutBucketPublicAccessBlock`, `PutLifecycleConfiguration`, `GetBucket*`, `ListBucket`, `PutObject`, `GetObject`, `DeleteObject`, `AbortMultipartUpload`, `ListMultipartUploadParts`
+- `s3:CreateBucket`, `PutBucketTagging`, `PutBucketVersioning`, `PutEncryptionConfiguration`, `PutBucketPublicAccessBlock`, `PutLifecycleConfiguration`, `GetBucket*`, `ListBucket`, `PutObject`, `GetObject`, `DeleteObject`, `AbortMultipartUpload`, `ListMultipartUploadParts`
 - Resources: `arn:aws:s3:::fobal-staging-*` and `arn:aws:s3:::fobal-staging-*/*`
 - Why: replay and snapshot storage plus CDK bootstrap assets.
 - Boundary denies deleting buckets.
