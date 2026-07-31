@@ -11,19 +11,11 @@
       "Sid": "DenyIamUsersAndPermanentAccessKeys",
       "Effect": "Deny",
       "Action": [
-        "iam:CreateUser",
-        "iam:DeleteUser",
-        "iam:UpdateUser",
-        "iam:CreateLoginProfile",
-        "iam:UpdateLoginProfile",
-        "iam:DeleteLoginProfile",
-        "iam:CreateAccessKey",
-        "iam:UpdateAccessKey",
-        "iam:DeleteAccessKey",
-        "iam:UploadSSHPublicKey",
-        "iam:DeleteSSHPublicKey",
-        "iam:UploadSigningCertificate",
-        "iam:DeleteSigningCertificate"
+        "iam:*AccessKey",
+        "iam:*LoginProfile",
+        "iam:*SSHPublicKey",
+        "iam:*SigningCertificate",
+        "iam:*User"
       ],
       "Resource": "*"
     },
@@ -33,17 +25,13 @@
       "Action": [
         "iam:AttachRolePolicy",
         "iam:CreateRole",
-        "iam:DeleteRole",
-        "iam:DeleteRolePermissionsBoundary",
-        "iam:DeleteRolePolicy",
+        "iam:DeleteRole*",
         "iam:DetachRolePolicy",
-        "iam:PutRolePermissionsBoundary",
-        "iam:PutRolePolicy",
+        "iam:PutRole*",
         "iam:TagRole",
         "iam:UntagRole",
         "iam:UpdateAssumeRolePolicy",
-        "iam:UpdateRole",
-        "iam:UpdateRoleDescription"
+        "iam:UpdateRole*"
       ],
       "NotResource": [
         "arn:aws:iam::368426158592:role/Fobal-*",
@@ -77,10 +65,8 @@
       "Sid": "DenyPrivilegeEscalationPolicyAdministration",
       "Effect": "Deny",
       "Action": [
-        "iam:CreatePolicy",
-        "iam:CreatePolicyVersion",
-        "iam:DeletePolicy",
-        "iam:DeletePolicyVersion",
+        "iam:CreatePolicy*",
+        "iam:DeletePolicy*",
         "iam:SetDefaultPolicyVersion"
       ],
       "NotResource": [
@@ -114,12 +100,8 @@
       "Sid": "DenyCloudFormationOutsideFobalStagingStacks",
       "Effect": "Deny",
       "Action": [
-        "cloudformation:CancelUpdateStack",
-        "cloudformation:ContinueUpdateRollback",
-        "cloudformation:CreateChangeSet",
-        "cloudformation:CreateStack",
-        "cloudformation:DeleteChangeSet",
-        "cloudformation:DeleteStack",
+        "cloudformation:C*",
+        "cloudformation:Delete*",
         "cloudformation:ExecuteChangeSet",
         "cloudformation:UpdateStack"
       ],
@@ -132,17 +114,16 @@
       "Sid": "DenyEcrMutationsOutsideFobalRepositories",
       "Effect": "Deny",
       "Action": [
-        "ecr:BatchDeleteImage",
-        "ecr:CompleteLayerUpload",
-        "ecr:CreateRepository",
-        "ecr:DeleteRepository",
-        "ecr:InitiateLayerUpload",
-        "ecr:PutImage",
-        "ecr:PutLifecyclePolicy",
-        "ecr:SetRepositoryPolicy",
-        "ecr:TagResource",
-        "ecr:UntagResource",
-        "ecr:UploadLayerPart"
+        "ecr:BatchDelete*",
+        "ecr:Complete*",
+        "ecr:Create*",
+        "ecr:Delete*",
+        "ecr:Initiate*",
+        "ecr:Put*",
+        "ecr:Set*",
+        "ecr:Tag*",
+        "ecr:Untag*",
+        "ecr:Upload*"
       ],
       "NotResource": [
         "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*",
@@ -153,13 +134,13 @@
       "Sid": "DenySecretsMutationsOutsideFobalNamespace",
       "Effect": "Deny",
       "Action": [
-        "secretsmanager:CreateSecret",
-        "secretsmanager:DeleteSecret",
-        "secretsmanager:PutSecretValue",
-        "secretsmanager:RestoreSecret",
-        "secretsmanager:TagResource",
-        "secretsmanager:UntagResource",
-        "secretsmanager:UpdateSecret"
+        "secretsmanager:Create*",
+        "secretsmanager:Delete*",
+        "secretsmanager:Put*",
+        "secretsmanager:Restore*",
+        "secretsmanager:Tag*",
+        "secretsmanager:Untag*",
+        "secretsmanager:Update*"
       ],
       "NotResource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*"
     },
@@ -167,15 +148,11 @@
       "Sid": "DenyLogsMutationsOutsideFobalNamespace",
       "Effect": "Deny",
       "Action": [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:DeleteLogGroup",
-        "logs:DeleteLogStream",
-        "logs:DeleteRetentionPolicy",
-        "logs:PutLogEvents",
-        "logs:PutRetentionPolicy",
-        "logs:TagResource",
-        "logs:UntagResource"
+        "logs:Create*",
+        "logs:Delete*",
+        "logs:Put*",
+        "logs:Tag*",
+        "logs:Untag*"
       ],
       "NotResource": [
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
@@ -188,16 +165,8 @@
       "Action": [
         "s3:AbortMultipartUpload",
         "s3:CreateBucket",
-        "s3:DeleteObject",
-        "s3:PutBucketEncryption",
-        "s3:PutBucketPolicy",
-        "s3:PutBucketPublicAccessBlock",
-        "s3:PutBucketTagging",
-        "s3:PutBucketVersioning",
-        "s3:PutLifecycleConfiguration",
-        "s3:PutObject",
-        "s3:PutObjectAcl",
-        "s3:PutObjectTagging"
+        "s3:DeleteObject*",
+        "s3:Put*"
       ],
       "NotResource": [
         "arn:aws:s3:::fobal-staging-*",
@@ -229,21 +198,14 @@
       "Sid": "DenyNonFobalTaggedResourceMutation",
       "Effect": "Deny",
       "Action": [
-        "ec2:AuthorizeSecurityGroupEgress",
-        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroup*",
         "ec2:DeleteSecurityGroup",
-        "ec2:RevokeSecurityGroupEgress",
-        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroup*",
         "ecs:DeleteCluster",
         "ecs:DeleteService",
         "ecs:UpdateService",
-        "elasticloadbalancing:DeleteListener",
-        "elasticloadbalancing:DeleteLoadBalancer",
-        "elasticloadbalancing:DeleteTargetGroup",
-        "elasticloadbalancing:ModifyListener",
-        "elasticloadbalancing:ModifyLoadBalancerAttributes",
-        "elasticloadbalancing:ModifyTargetGroup",
-        "elasticloadbalancing:ModifyTargetGroupAttributes"
+        "elasticloadbalancing:Delete*",
+        "elasticloadbalancing:Modify*"
       ],
       "Resource": "*",
       "Condition": {
@@ -258,11 +220,10 @@
       "Sid": "DenyCloudTrailDisableOrDelete",
       "Effect": "Deny",
       "Action": [
-        "cloudtrail:DeleteTrail",
-        "cloudtrail:StopLogging",
-        "cloudtrail:UpdateTrail",
-        "cloudtrail:PutEventSelectors",
-        "cloudtrail:PutInsightSelectors"
+        "cloudtrail:Delete*",
+        "cloudtrail:Put*",
+        "cloudtrail:Stop*",
+        "cloudtrail:Update*"
       ],
       "Resource": "*"
     },
