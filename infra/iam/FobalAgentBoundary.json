@@ -1,0 +1,337 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowAllExceptExplicitDeny",
+      "Effect": "Allow",
+      "Action": "*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyIamUsersAndPermanentAccessKeys",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:UpdateUser",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "iam:DeleteLoginProfile",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:UploadSSHPublicKey",
+        "iam:DeleteSSHPublicKey",
+        "iam:UploadSigningCertificate",
+        "iam:DeleteSigningCertificate"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyUnrelatedIamRoleMutation",
+      "Effect": "Deny",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePermissionsBoundary",
+        "iam:PutRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription"
+      ],
+      "NotResource": [
+        "arn:aws:iam::368426158592:role/Fobal-*",
+        "arn:aws:iam::368426158592:role/cdk-fobalstag-*"
+      ]
+    },
+    {
+      "Sid": "DenyCreatingRolesWithoutBoundary",
+      "Effect": "Deny",
+      "Action": "iam:CreateRole",
+      "Resource": [
+        "arn:aws:iam::368426158592:role/Fobal-*",
+        "arn:aws:iam::368426158592:role/cdk-fobalstag-*"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::368426158592:policy/FobalAgentBoundary"
+        }
+      }
+    },
+    {
+      "Sid": "DenyPassRoleOutsideFobal",
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
+      "NotResource": [
+        "arn:aws:iam::368426158592:role/Fobal-*",
+        "arn:aws:iam::368426158592:role/cdk-fobalstag-cfn-exec-role-368426158592-sa-east-1"
+      ]
+    },
+    {
+      "Sid": "DenyPrivilegeEscalationPolicyAdministration",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicy",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion"
+      ],
+      "NotResource": [
+        "arn:aws:iam::368426158592:policy/Fobal*",
+        "arn:aws:iam::368426158592:policy/cdk-fobalstag-*"
+      ]
+    },
+    {
+      "Sid": "DenyAccountOrganizationAndBillingAdministration",
+      "Effect": "Deny",
+      "Action": [
+        "account:*",
+        "aws-portal:*",
+        "billing:*",
+        "budgets:*",
+        "ce:Create*",
+        "ce:Delete*",
+        "ce:Update*",
+        "consolidatedbilling:*",
+        "cur:*",
+        "freetier:*",
+        "invoicing:*",
+        "organizations:*",
+        "payments:*",
+        "purchase-orders:*",
+        "tax:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyCloudFormationOutsideFobalStagingStacks",
+      "Effect": "Deny",
+      "Action": [
+        "cloudformation:CancelUpdateStack",
+        "cloudformation:ContinueUpdateRollback",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:CreateStack",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:UpdateStack"
+      ],
+      "NotResource": [
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-staging-*/*",
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*"
+      ]
+    },
+    {
+      "Sid": "DenyEcrMutationsOutsideFobalRepositories",
+      "Effect": "Deny",
+      "Action": [
+        "ecr:BatchDeleteImage",
+        "ecr:CompleteLayerUpload",
+        "ecr:CreateRepository",
+        "ecr:DeleteRepository",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:PutLifecyclePolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:TagResource",
+        "ecr:UntagResource",
+        "ecr:UploadLayerPart"
+      ],
+      "NotResource": [
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*",
+        "arn:aws:ecr:sa-east-1:368426158592:repository/cdk-fobalstag-*"
+      ]
+    },
+    {
+      "Sid": "DenySecretsMutationsOutsideFobalNamespace",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:RestoreSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:UntagResource",
+        "secretsmanager:UpdateSecret"
+      ],
+      "NotResource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*"
+    },
+    {
+      "Sid": "DenyLogsMutationsOutsideFobalNamespace",
+      "Effect": "Deny",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:DeleteLogGroup",
+        "logs:DeleteLogStream",
+        "logs:DeleteRetentionPolicy",
+        "logs:PutLogEvents",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "NotResource": [
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
+      ]
+    },
+    {
+      "Sid": "DenyS3MutationsOutsideFobalAndBootstrapBuckets",
+      "Effect": "Deny",
+      "Action": [
+        "s3:AbortMultipartUpload",
+        "s3:CreateBucket",
+        "s3:DeleteObject",
+        "s3:PutBucketEncryption",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutObject",
+        "s3:PutObjectAcl",
+        "s3:PutObjectTagging"
+      ],
+      "NotResource": [
+        "arn:aws:s3:::fobal-staging-*",
+        "arn:aws:s3:::fobal-staging-*/*",
+        "arn:aws:s3:::cdk-fobalstag-*",
+        "arn:aws:s3:::cdk-fobalstag-*/*"
+      ]
+    },
+    {
+      "Sid": "DenyUntaggedOrNonFobalResourceCreation",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ecs:CreateCluster",
+        "ecs:CreateService",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateTargetGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:RequestTag/Project": "Fobal",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/Scope": "fobal-staging"
+        }
+      }
+    },
+    {
+      "Sid": "DenyNonFobalTaggedResourceMutation",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DeleteSecurityGroup",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ecs:DeleteCluster",
+        "ecs:DeleteService",
+        "ecs:UpdateService",
+        "elasticloadbalancing:DeleteListener",
+        "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteTargetGroup",
+        "elasticloadbalancing:ModifyListener",
+        "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyTargetGroup",
+        "elasticloadbalancing:ModifyTargetGroupAttributes"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:ResourceTag/Project": "Fobal",
+          "aws:ResourceTag/Environment": "staging",
+          "aws:ResourceTag/Scope": "fobal-staging"
+        }
+      }
+    },
+    {
+      "Sid": "DenyCloudTrailDisableOrDelete",
+      "Effect": "Deny",
+      "Action": [
+        "cloudtrail:DeleteTrail",
+        "cloudtrail:StopLogging",
+        "cloudtrail:UpdateTrail",
+        "cloudtrail:PutEventSelectors",
+        "cloudtrail:PutInsightSelectors"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyPersistentBucketDeletion",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:PutBucketPublicAccessBlock"
+      ],
+      "Resource": [
+        "arn:aws:s3:::democracy.earth",
+        "arn:aws:s3:::democracyearth",
+        "arn:aws:s3:::earth-app",
+        "arn:aws:s3:::vote-democracy-earth"
+      ]
+    },
+    {
+      "Sid": "DenyFobalBucketDeletion",
+      "Effect": "Deny",
+      "Action": "s3:DeleteBucket",
+      "Resource": "arn:aws:s3:::fobal-staging-*"
+    },
+    {
+      "Sid": "DenyImmediateSecretDeletion",
+      "Effect": "Deny",
+      "Action": "secretsmanager:DeleteSecret",
+      "Resource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*",
+      "Condition": {
+        "Bool": {
+          "secretsmanager:ForceDeleteWithoutRecovery": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyProductionAndMainnetNamedResources",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": "*",
+      "Condition": {
+        "ForAnyValue:StringLike": {
+          "aws:TagKeys": [
+            "production",
+            "prod",
+            "mainnet"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyRegionalDeploymentOutsideSaEastOne",
+      "Effect": "Deny",
+      "NotAction": [
+        "acm:ListCertificates",
+        "cloudfront:*",
+        "ecr:GetAuthorizationToken",
+        "iam:*",
+        "route53:*",
+        "s3:*",
+        "sts:*",
+        "support:*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": "sa-east-1"
+        }
+      }
+    }
+  ]
+}
