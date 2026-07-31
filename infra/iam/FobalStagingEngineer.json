@@ -225,7 +225,7 @@
       "Action": [
         "s3:AbortMultipartUpload",
         "s3:CreateBucket",
-        "s3:GetBucketEncryption",
+        "s3:GetEncryptionConfiguration",
         "s3:GetBucketLocation",
         "s3:GetBucketPublicAccessBlock",
         "s3:GetBucketTagging",
@@ -233,7 +233,7 @@
         "s3:ListBucket",
         "s3:ListBucketMultipartUploads",
         "s3:ListMultipartUploadParts",
-        "s3:PutBucketEncryption",
+        "s3:PutEncryptionConfiguration",
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketTagging",
         "s3:PutBucketVersioning",
