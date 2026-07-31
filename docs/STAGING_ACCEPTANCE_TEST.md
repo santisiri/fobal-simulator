@@ -4,6 +4,23 @@ Staging is operational only after all checks below pass against `https://matches
 
 Do not run this checklist against production or mainnet resources.
 
+## Automated runner
+
+The server-facing sections below (runtime health, match API, determinism and
+replay) are scripted in `tools/staging-acceptance.mjs`:
+
+```sh
+FOBAL_CREATE_KEY=... npx tsx tools/staging-acceptance.mjs --server https://matches-staging.fobal.ai
+```
+
+`--fast` skips the full-time wait (a full run takes ~5 minutes because the
+acceptance match plays out in real time). The script exits non-zero on any
+failure and includes the strongest determinism check: it re-executes the
+staging replay locally and compares `finalStateHash`. AWS-side sections
+(build gate, storage, observability, security, cost) remain operator checks.
+`tools/create-match.mjs` creates ad-hoc matches for manual testing with the
+browser client.
+
 ## Preflight
 
 - AWS account is `368426158592`.
