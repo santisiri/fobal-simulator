@@ -1,0 +1,13 @@
+# keep the build context small — the Dockerfile copies explicit paths anyway
+node_modules
+**/node_modules
+.git
+.claude
+archive
+assets
+docs
+infra
+tests
+tools
+var
+**/*.tsbuildinfo

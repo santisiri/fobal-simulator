@@ -1,5 +1,6 @@
 // HTTP + WebSocket front door.
 //
+//   GET  /health                   unauthenticated liveness (ALB/ECS checks)
 //   POST /matches                  (Bearer createKey) manifest → tokens
 //   GET  /matches/:id/result       signed final result
 //   GET  /matches/:id/replay       ReplayFile (manifest + command log + events)
@@ -25,7 +26,10 @@ export interface MatchServerOptions {
   port?: number;                 // 0 → ephemeral
   secret?: string;               // token HMAC secret
   createKey?: string;            // bearer key for match creation
-  storeRoot: string;
+  /** root directory for the default file-backed store */
+  storeRoot?: string;
+  /** pre-built store (e.g. MirroredMatchStore) — overrides storeRoot */
+  store?: MatchStore;
   keys?: SigningKeys;
   roomDefaults?: { deltaEvery?: number; snapshotEvery?: number; internalEvery?: number; commandDelay?: number; tacticalPerMinute?: number };
   /** drive matches in real time automatically (created + resumed on boot);
@@ -67,7 +71,9 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   const secret = options.secret ?? randomBytes(24).toString('base64url');
   const createKey = options.createKey ?? randomBytes(24).toString('base64url');
   const keys = options.keys ?? generateSigningKeys();
-  const store = new MatchStore(options.storeRoot);
+  if (!options.store && options.storeRoot === undefined)
+    throw new Error('startMatchServer requires either store or storeRoot');
+  const store = options.store ?? new MatchStore(options.storeRoot!);
   const rooms = new Map<string, MatchRoom>();
   const clipsCache = new Map<string, unknown>();
   let nextClientId = 1;
@@ -115,6 +121,17 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
+
+      // unauthenticated on purpose: the ALB/ECS health checks carry no token,
+      // and nothing here leaks match data
+      if (req.method === 'GET' && url.pathname === '/health'){
+        return json(res, 200, {
+          ok: true,
+          protocolVersion: PROTOCOL_VERSION,
+          activeRooms: rooms.size,
+          uptimeSeconds: Math.round(process.uptime()),
+        });
+      }
 
       if (req.method === 'POST' && url.pathname === '/matches'){
         const auth = req.headers.authorization ?? '';

@@ -10,22 +10,27 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { join } from 'node:path';
 import type { AcceptedCommand, MatchEvent, MatchManifest, MatchResult, StateSnapshot } from '@fobal/protocol';
 
-const SAFE_ID = /^(?!\.)[A-Za-z0-9_:.-]+$/;   // no leading dot: '.'/'..' can never traverse
+export const SAFE_ID = /^(?!\.)[A-Za-z0-9_:.-]+$/;   // no leading dot: '.'/'..' can never traverse
 
 /** Crash-safe whole-file write: temp file + atomic rename. */
-function writeAtomic(file: string, data: string): void {
+export function writeAtomic(file: string, data: string): void {
   const tmp = `${file}.tmp-${process.pid}`;
   writeFileSync(tmp, data);
   renameSync(tmp, file);
 }
 
 export class MatchStore {
-  constructor(private root: string){ mkdirSync(root, { recursive: true }); }
+  constructor(protected root: string){ mkdirSync(root, { recursive: true }); }
 
-  private dir(matchId: string): string {
+  protected dir(matchId: string): string {
     if (!SAFE_ID.test(matchId)) throw new Error(`unsafe matchId ${matchId}`);
     return join(this.root, matchId);
   }
+
+  /** Called after every durable mutation with the match-relative path just
+   *  written. The base store persists to local disk only; mirroring backends
+   *  (S3) override this to schedule replication. */
+  protected touched(_matchId: string, _relPath: string): void {}
 
   ensure(matchId: string): void {
     mkdirSync(join(this.dir(matchId), 'snapshots'), { recursive: true });
@@ -36,6 +41,7 @@ export class MatchStore {
   saveManifest(manifest: MatchManifest): void {
     this.ensure(manifest.matchId);
     writeAtomic(join(this.dir(manifest.matchId), 'manifest.json'), JSON.stringify(manifest, null, 2));
+    this.touched(manifest.matchId, 'manifest.json');
   }
 
   loadManifest(matchId: string): MatchManifest {
@@ -44,6 +50,7 @@ export class MatchStore {
 
   appendCommand(matchId: string, command: AcceptedCommand): void {
     appendFileSync(join(this.dir(matchId), 'commands.jsonl'), JSON.stringify(command) + '\n');
+    this.touched(matchId, 'commands.jsonl');
   }
 
   loadCommands(matchId: string): AcceptedCommand[] {
@@ -52,6 +59,7 @@ export class MatchStore {
 
   appendEvent(matchId: string, event: MatchEvent): void {
     appendFileSync(join(this.dir(matchId), 'events.jsonl'), JSON.stringify(event) + '\n');
+    this.touched(matchId, 'events.jsonl');
   }
 
   loadEvents(matchId: string): MatchEvent[] {
@@ -59,8 +67,9 @@ export class MatchStore {
   }
 
   saveSnapshot(matchId: string, snapshot: StateSnapshot): void {
-    writeAtomic(join(this.dir(matchId), 'snapshots', `${String(snapshot.tick).padStart(8, '0')}.json`),
-      JSON.stringify(snapshot));
+    const name = `${String(snapshot.tick).padStart(8, '0')}.json`;
+    writeAtomic(join(this.dir(matchId), 'snapshots', name), JSON.stringify(snapshot));
+    this.touched(matchId, `snapshots/${name}`);
   }
 
   loadSnapshots(matchId: string): StateSnapshot[] {
@@ -71,6 +80,7 @@ export class MatchStore {
 
   saveInternal(matchId: string, captured: unknown): void {
     writeAtomic(join(this.dir(matchId), 'internal-latest.json'), JSON.stringify(captured));
+    this.touched(matchId, 'internal-latest.json');
   }
 
   loadInternal(matchId: string): { tick: number; state: unknown; appliedThroughSeq: number; eventSeq: number } | null {
@@ -87,6 +97,7 @@ export class MatchStore {
     const file = join(this.dir(matchId), 'result.json');
     if (existsSync(file)) return JSON.parse(readFileSync(file, 'utf8'));
     writeAtomic(file, JSON.stringify(result, null, 2));
+    this.touched(matchId, 'result.json');
     return result;
   }
 
@@ -101,6 +112,7 @@ export class MatchStore {
 
   saveClips(matchId: string, clips: unknown): void {
     writeAtomic(join(this.dir(matchId), 'clips.json'), JSON.stringify(clips));
+    this.touched(matchId, 'clips.json');
   }
 
   loadClips(matchId: string): unknown | null {
