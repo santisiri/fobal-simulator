@@ -215,6 +215,23 @@
       "Resource": "*"
     },
     {
+      "Sid": "ServiceLinkedRolesForFirstEcsClusterAndAlb",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": [
+        "arn:aws:iam::368426158592:role/aws-service-role/ecs.amazonaws.com/*",
+        "arn:aws:iam::368426158592:role/aws-service-role/elasticloadbalancing.amazonaws.com/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:AWSServiceName": [
+            "ecs.amazonaws.com",
+            "elasticloadbalancing.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
       "Sid": "Route53OptionalRecordManagement",
       "Effect": "Allow",
       "Action": [

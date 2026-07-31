@@ -25,7 +25,16 @@
         "cloudformation:UpdateStack",
         "cloudformation:ValidateTemplate"
       ],
-      "Resource": "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-staging-*/*"
+      "Resource": [
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-staging-*/*",
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*"
+      ]
+    },
+    {
+      "Sid": "CdkBootstrapRoleAssumption",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::368426158592:role/cdk-fobalstag-*"
     },
     {
       "Sid": "CloudFormationDiscovery",
@@ -312,11 +321,15 @@
       ]
     },
     {
-      "Sid": "AcmCertificateRead",
+      "Sid": "AcmCertificateManagement",
       "Effect": "Allow",
       "Action": [
+        "acm:AddTagsToCertificate",
         "acm:DescribeCertificate",
-        "acm:ListCertificates"
+        "acm:GetCertificate",
+        "acm:ListCertificates",
+        "acm:ListTagsForCertificate",
+        "acm:RequestCertificate"
       ],
       "Resource": "*"
     },

@@ -19,6 +19,37 @@ This request is for staging access only. It does not request AdministratorAccess
 - `infra/iam/FobalEcsTaskRole.json`: runtime permissions for the match server application.
 - `infra/iam/FobalEcsExecutionRole.json`: ECS agent permissions needed to pull images, read secrets, and write logs.
 
+## Admin provisioning steps
+
+IAM managed policies are capped at 6,144 non-whitespace characters.
+`FobalAgentBoundary` and `FobalCloudFormationExecution` fit and MUST be
+customer-managed policies (the CDK bootstrap references both by name).
+`FobalStagingEngineer` does not fit; it is provisioned as the permission
+set's INLINE policy (Identity Center inline limit: 10,240 characters).
+
+1. Create the two managed policies (admin credentials, any region):
+
+```sh
+aws iam create-policy --policy-name FobalAgentBoundary \
+  --policy-document file://infra/iam/FobalAgentBoundary.json
+aws iam create-policy --policy-name FobalCloudFormationExecution \
+  --policy-document file://infra/iam/FobalCloudFormationExecution.json
+```
+
+2. In IAM Identity Center, create a NEW permission set `FobalStaging`
+   (keep `FobalDiscovery` read-only as-is):
+   - Inline policy: the contents of `infra/iam/FobalStagingEngineer.json`.
+   - Permissions boundary: customer-managed policy `FobalAgentBoundary`
+     (this makes the boundary bind the agent itself, not just the roles it
+     creates).
+   - Session duration: 4 hours or more (CDK deploys plus the acceptance run
+     exceed the 1 hour default).
+3. Assign the `sairi-fobal` user to account `368426158592` with the
+   `FobalStaging` permission set and provision it.
+4. The operator refreshes SSO (`aws sso login --profile fobal-staging`) and
+   verifies with `aws sts get-caller-identity` that the role is
+   `AWSReservedSSO_FobalStaging_*`.
+
 ## Interactive staging development
 
 Needed by `sairi-fobal` while developing and inspecting staging.
@@ -89,6 +120,18 @@ SSM:
 - Resources: CDK bootstrap parameters under `/cdk-bootstrap/fobalstag/*`
 - Why: CDK bootstrap version tracking.
 
+ACM:
+
+- `acm:RequestCertificate`, `acm:AddTagsToCertificate`, `acm:DescribeCertificate`, `acm:GetCertificate`, `acm:ListCertificates`, `acm:ListTagsForCertificate`
+- Resources: `*` (ACM does not support resource scoping at request time; the boundary pins mutations to `sa-east-1`)
+- Why: request and monitor the DNS-validated certificate for `matches-staging.fobal.ai`.
+
+STS:
+
+- `sts:AssumeRole`
+- Resources: `arn:aws:iam::368426158592:role/cdk-fobalstag-*`
+- Why: CDK deploys assume the bootstrap deploy/publishing/lookup roles.
+
 ## CDK deployment
 
 CDK deployment requires the staging engineer policy plus the bootstrap roles created by:
@@ -96,12 +139,20 @@ CDK deployment requires the staging engineer policy plus the bootstrap roles cre
 ```sh
 npx cdk bootstrap aws://368426158592/sa-east-1 \
   --qualifier fobalstag \
+  --toolkit-stack-name CDKToolkit-fobalstag \
+  --no-bootstrap-customer-key \
   --cloudformation-execution-policies arn:aws:iam::368426158592:policy/FobalCloudFormationExecution \
   --custom-permissions-boundary FobalAgentBoundary \
   --tags Project=Fobal \
   --tags Environment=staging \
   --tags Scope=fobal-staging
 ```
+
+`--toolkit-stack-name CDKToolkit-fobalstag` is mandatory: the default
+`CDKToolkit` stack name is outside the scope both the boundary and the
+engineer policy allow. `--no-bootstrap-customer-key` keeps the asset bucket
+on S3-managed encryption — the engineer policy deliberately grants no KMS
+administration.
 
 The deployer should assume or use the CDK bootstrap deploy role and CloudFormation should use the execution role with `FobalCloudFormationExecution`.
 
