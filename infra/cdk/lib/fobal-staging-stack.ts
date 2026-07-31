@@ -63,15 +63,17 @@ export class FobalStagingStack extends Stack {
       }),
     ];
 
-    const repository = new ecr.Repository(this, 'MatchServerRepository', {
-      repositoryName: `${PREFIX}-match-server`,
-      imageScanOnPush: true,
-      encryption: ecr.RepositoryEncryption.AES_256,
-      lifecycleRules: [
-        { description: 'Keep the most recent 20 staging images', maxImageCount: 20 },
-      ],
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
+    // The repository is created imperatively BEFORE the first deploy and
+    // imported here: the Fargate service cannot stabilize without an image,
+    // so the image must be pushable before this stack ever runs. Create it
+    // once (scan-on-push + keep-last-20 lifecycle applied via CLI):
+    //   aws ecr create-repository --repository-name fobal-staging-match-server \
+    //     --image-scanning-configuration scanOnPush=true --region sa-east-1
+    const repository = ecr.Repository.fromRepositoryName(
+      this,
+      'MatchServerRepository',
+      `${PREFIX}-match-server`,
+    );
 
     const replayBucket = new s3.Bucket(this, 'ReplayBucket', {
       bucketName: `${PREFIX}-replays-${ACCOUNT}`,
