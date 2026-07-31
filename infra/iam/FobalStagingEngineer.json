@@ -49,10 +49,21 @@
       "Sid": "CdkBootstrapParameterAccess",
       "Effect": "Allow",
       "Action": [
+        "ssm:AddTagsToResource",
+        "ssm:DeleteParameter",
         "ssm:GetParameter",
-        "ssm:PutParameter"
+        "ssm:GetParameters",
+        "ssm:ListTagsForResource",
+        "ssm:PutParameter",
+        "ssm:RemoveTagsFromResource"
       ],
       "Resource": "arn:aws:ssm:sa-east-1:368426158592:parameter/cdk-bootstrap/fobalstag/*"
+    },
+    {
+      "Sid": "CdkBootstrapBucketCleanup",
+      "Effect": "Allow",
+      "Action": "s3:DeleteBucket",
+      "Resource": "arn:aws:s3:::cdk-fobalstag-*"
     },
     {
       "Sid": "EcrAuthorization",
@@ -225,12 +236,15 @@
       "Action": [
         "s3:AbortMultipartUpload",
         "s3:CreateBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketPolicy",
         "s3:GetEncryptionConfiguration",
         "s3:GetBucketLocation",
         "s3:GetBucketPublicAccessBlock",
         "s3:GetBucketTagging",
         "s3:GetBucketVersioning",
         "s3:ListBucket",
+        "s3:PutBucketPolicy",
         "s3:ListBucketMultipartUploads",
         "s3:ListMultipartUploadParts",
         "s3:PutEncryptionConfiguration",

@@ -111,7 +111,10 @@
       "Action": [
         "cloudwatch:DeleteAlarms",
         "cloudwatch:DescribeAlarms",
-        "cloudwatch:PutMetricAlarm"
+        "cloudwatch:ListTagsForResource",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
       ],
       "Resource": "*"
     },
@@ -135,12 +138,15 @@
       "Effect": "Allow",
       "Action": [
         "s3:CreateBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketPolicy",
         "s3:GetEncryptionConfiguration",
         "s3:GetBucketLocation",
         "s3:GetBucketPublicAccessBlock",
         "s3:GetBucketTagging",
         "s3:GetBucketVersioning",
         "s3:ListBucket",
+        "s3:PutBucketPolicy",
         "s3:PutEncryptionConfiguration",
         "s3:PutBucketPublicAccessBlock",
         "s3:PutBucketTagging",
