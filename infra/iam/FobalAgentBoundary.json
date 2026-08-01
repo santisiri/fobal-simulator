@@ -179,13 +179,25 @@
       "Sid": "DenyUntaggedOrNonFobalResourceCreation",
       "Effect": "Deny",
       "Action": [
-        "ec2:CreateSecurityGroup",
         "ecs:CreateCluster",
         "ecs:CreateService",
         "elasticloadbalancing:CreateLoadBalancer",
         "elasticloadbalancing:CreateTargetGroup"
       ],
       "Resource": "*",
+      "Condition": {
+        "StringNotEqualsIfExists": {
+          "aws:RequestTag/Project": "Fobal",
+          "aws:RequestTag/Environment": "staging",
+          "aws:RequestTag/Scope": "fobal-staging"
+        }
+      }
+    },
+    {
+      "Sid": "DenyUntaggedSecurityGroupCreation",
+      "Effect": "Deny",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:sa-east-1:368426158592:security-group/*",
       "Condition": {
         "StringNotEqualsIfExists": {
           "aws:RequestTag/Project": "Fobal",
@@ -247,17 +259,6 @@
       "Effect": "Deny",
       "Action": "s3:DeleteBucket",
       "Resource": "arn:aws:s3:::fobal-staging-*"
-    },
-    {
-      "Sid": "DenyImmediateSecretDeletion",
-      "Effect": "Deny",
-      "Action": "secretsmanager:DeleteSecret",
-      "Resource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*",
-      "Condition": {
-        "Bool": {
-          "secretsmanager:ForceDeleteWithoutRecovery": "true"
-        }
-      }
     },
     {
       "Sid": "DenyProductionAndMainnetNamedResources",

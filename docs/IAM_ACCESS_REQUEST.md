@@ -97,7 +97,10 @@ Secrets Manager:
 - `secretsmanager:CreateSecret`, `UpdateSecret`, `PutSecretValue`, `DescribeSecret`, `GetSecretValue`, `TagResource`, `UntagResource`, `DeleteSecret`, `RestoreSecret`
 - Resources: `arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*`
 - Why: token HMAC secret, match creation key, future result signing key.
-- Boundary denies immediate force-delete.
+- Force-delete is deliberately NOT denied: CloudFormation deletes secrets
+  with `ForceDeleteWithoutRecovery=true`, so denying it wedges every stack
+  rollback in `ROLLBACK_FAILED`. Staging secrets are generated values with
+  nothing durable to protect.
 
 S3:
 
