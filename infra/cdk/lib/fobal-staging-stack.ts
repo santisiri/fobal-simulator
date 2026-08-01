@@ -75,19 +75,40 @@ export class FobalStagingStack extends Stack {
       `${PREFIX}-match-server`,
     );
 
-    const replayBucket = new s3.Bucket(this, 'ReplayBucket', {
-      bucketName: `${PREFIX}-replays-${ACCOUNT}`,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      enforceSSL: true,
-      versioned: true,
-      lifecycleRules: [
-        {
-          id: 'expire-old-noncurrent-versions',
-          noncurrentVersionExpiration: Duration.days(30),
-        },
-      ],
-      removalPolicy: RemovalPolicy.RETAIN,
+    // Like the ECR repository, the replay bucket is created imperatively and
+    // IMPORTED: a RETAIN-policy bucket with a fixed name orphans itself on
+    // every failed stack create (rollback skips it, the next create
+    // collides), and the boundary deliberately forbids the agent from
+    // deleting fobal-staging-* buckets. Create once per environment:
+    //   aws s3api create-bucket --bucket fobal-staging-replays-368426158592 \
+    //     --region sa-east-1 --create-bucket-configuration LocationConstraint=sa-east-1
+    //   aws s3api put-bucket-versioning --bucket ... --versioning-configuration Status=Enabled
+    //   aws s3api put-public-access-block --bucket ... --public-access-block-configuration \
+    //     BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+    //   aws s3api put-bucket-lifecycle-configuration --bucket ... (30d noncurrent expiry)
+    // (SSE-S3 encryption is the S3 default.) The SSL-only bucket policy stays
+    // stack-managed below so redeploys always restore it.
+    const replayBucket = s3.Bucket.fromBucketName(
+      this,
+      'ReplayBucket',
+      `${PREFIX}-replays-${ACCOUNT}`,
+    );
+
+    new s3.CfnBucketPolicy(this, 'ReplayBucketPolicy', {
+      bucket: replayBucket.bucketName,
+      policyDocument: {
+        Version: '2012-10-17',
+        Statement: [
+          {
+            Sid: 'DenyInsecureTransport',
+            Effect: 'Deny',
+            Principal: '*',
+            Action: 's3:*',
+            Resource: [replayBucket.bucketArn, replayBucket.arnForObjects('*')],
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } },
+          },
+        ],
+      },
     });
 
     const tokenSecret = new secretsmanager.Secret(this, 'TokenSecret', {
