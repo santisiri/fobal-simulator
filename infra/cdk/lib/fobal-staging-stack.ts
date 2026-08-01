@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { Duration, RemovalPolicy, Stack, StackProps, Tags } from 'aws-cdk-lib';
+import { Duration, Stack, StackProps, Tags } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
@@ -127,11 +127,17 @@ export class FobalStagingStack extends Stack {
       },
     });
 
-    const logGroup = new logs.LogGroup(this, 'MatchServerLogGroup', {
-      logGroupName: '/fobal/staging/match-server',
-      retention: logs.RetentionDays.ONE_MONTH,
-      removalPolicy: RemovalPolicy.RETAIN,
-    });
+    // Imported, like the ECR repo and replay bucket: the stack owns only
+    // disposable compute/networking; every long-lived fixed-name resource is
+    // created imperatively once and imported (RETAIN + fixed name orphans
+    // itself on failed creates and collides on the retry). Fresh environments:
+    //   aws logs create-log-group --log-group-name /fobal/staging/match-server --region sa-east-1
+    //   aws logs put-retention-policy --log-group-name /fobal/staging/match-server --retention-in-days 30
+    const logGroup = logs.LogGroup.fromLogGroupName(
+      this,
+      'MatchServerLogGroup',
+      '/fobal/staging/match-server',
+    );
 
     const taskRole = new iam.Role(this, 'TaskRole', {
       roleName: 'Fobal-staging-match-server-task-role',
