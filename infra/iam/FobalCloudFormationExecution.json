@@ -119,6 +119,21 @@
       "Resource": "*"
     },
     {
+      "Sid": "CdkBootstrapVersionCheck",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:sa-east-1:368426158592:parameter/cdk-bootstrap/fobalstag/*"
+    },
+    {
+      "Sid": "SecretsGenerateRandomPassword",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetRandomPassword",
+      "Resource": "*"
+    },
+    {
       "Sid": "SecretsFobalStagingManagement",
       "Effect": "Allow",
       "Action": [
