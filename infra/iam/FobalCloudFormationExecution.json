@@ -95,7 +95,6 @@
       "Action": [
         "logs:CreateLogGroup",
         "logs:DeleteLogGroup",
-        "logs:DescribeLogGroups",
         "logs:PutRetentionPolicy",
         "logs:TagResource",
         "logs:UntagResource"
@@ -104,6 +103,12 @@
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
       ]
+    },
+    {
+      "Sid": "LogsDescribeAllGroups",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "arn:aws:logs:sa-east-1:368426158592:log-group:*"
     },
     {
       "Sid": "CloudWatchFobalAlarms",

@@ -183,7 +183,6 @@
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:DeleteLogGroup",
-        "logs:DescribeLogGroups",
         "logs:DescribeLogStreams",
         "logs:FilterLogEvents",
         "logs:PutLogEvents",
@@ -195,6 +194,12 @@
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
       ]
+    },
+    {
+      "Sid": "LogsDescribeAllGroups",
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "arn:aws:logs:sa-east-1:368426158592:log-group:*"
     },
     {
       "Sid": "CloudWatchMetricsAndAlarms",
