@@ -97,14 +97,16 @@ const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
 /** fetch with retries: the server's state is what's under test, not the
  *  runner's network — a transient DNS/connection failure during a long run
- *  must not fail a check. */
-async function fetchRetry(url, init = {}, attempts = 4){
+ *  must not fail a check. Each attempt is individually bounded, and the
+ *  final error carries the underlying cause so a flake diagnoses itself. */
+async function fetchRetry(url, init = {}, attempts = 6){
   let lastErr;
   for (let i = 1; i <= attempts; i++){
-    try { return await fetch(url, init); }
-    catch (err){ lastErr = err; if (i < attempts) await sleep(750 * i); }
+    try { return await fetch(url, { ...init, signal: AbortSignal.timeout(15_000) }); }
+    catch (err){ lastErr = err; if (i < attempts) await sleep(Math.min(1000 * i, 5000)); }
   }
-  throw lastErr;
+  const cause = lastErr?.cause?.code ?? lastErr?.cause?.message;
+  throw new Error(`${lastErr?.message ?? 'fetch failed'}${cause ? ` (${cause})` : ''} after ${attempts} attempts`);
 }
 
 const matchId = `acc-${Date.now()}`;
@@ -236,19 +238,31 @@ controller.close();
 // ---- full time, result, replay, determinism --------------------------------
 if (!args.fast){
   section('full time (the match plays out in real time; ~4 minutes)');
+  // the room broadcasts the result over WS at finalization, and an
+  // ESTABLISHED socket keeps working through runner-side DNS/connect trouble
+  // that breaks fresh HTTP connections — so watch both channels. Holding the
+  // socket open also exercises long-lived WSS through the ALB for a full
+  // match. (attach() re-sends the result, so connecting late is safe too.)
+  const resultWatch = await Sock.open();
+  resultWatch.send({ type: 'hello', matchId, token: tokens.spectatorToken });
+  await sock_next_welcome(resultWatch);
   let result = null;
   await check('match reaches full time and serves a result', async () => {
     const deadline = Date.now() + 480_000;
+    let via = 'http';
     for (;;){
+      const wsResult = resultWatch.messages.find(m => m.type === 'result');
+      if (wsResult){ result = wsResult.result; via = 'ws'; break; }
       let res = null;
-      try { res = await fetchRetry(`${server}/matches/${matchId}/result`, { headers: auth(tokens.spectatorToken) }); }
+      try { res = await fetchRetry(`${server}/matches/${matchId}/result`, { headers: auth(tokens.spectatorToken) }, 2); }
       catch { /* transient network failure — keep polling until the deadline */ }
       if (res?.status === 200){ result = await res.json(); break; }
       assert(Date.now() < deadline, 'no result within 8 minutes');
       await sleep(10_000);
     }
-    return `finalScore ${result.finalScore.join('-')} at tick ${result.finalTick}`;
+    return `finalScore ${result.finalScore.join('-')} at tick ${result.finalTick} (via ${via})`;
   });
+  resultWatch.close();
   await check('result signature verifies (Ed25519)', async () => {
     assert(result, 'skipped: no result (previous check failed)');
     assert(result.signature?.algorithm === 'Ed25519', 'missing signature');
