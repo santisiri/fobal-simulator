@@ -123,7 +123,10 @@
     {
       "Sid": "Ec2DescribeForVpcLookup",
       "Effect": "Allow",
-      "Action": "ec2:Describe*",
+      "Action": [
+        "ec2:Describe*",
+        "ec2:GetSecurityGroupsForVpc"
+      ],
       "Resource": "*"
     },
     {
