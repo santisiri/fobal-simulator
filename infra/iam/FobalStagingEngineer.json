@@ -163,13 +163,6 @@
         "elasticloadbalancing:DeleteLoadBalancer",
         "elasticloadbalancing:DeleteTargetGroup",
         "elasticloadbalancing:DeregisterTargets",
-        "elasticloadbalancing:DescribeListeners",
-        "elasticloadbalancing:DescribeLoadBalancerAttributes",
-        "elasticloadbalancing:DescribeLoadBalancers",
-        "elasticloadbalancing:DescribeRules",
-        "elasticloadbalancing:DescribeTags",
-        "elasticloadbalancing:DescribeTargetGroups",
-        "elasticloadbalancing:DescribeTargetHealth",
         "elasticloadbalancing:ModifyListener",
         "elasticloadbalancing:ModifyLoadBalancerAttributes",
         "elasticloadbalancing:ModifyTargetGroup",
@@ -177,6 +170,12 @@
         "elasticloadbalancing:RegisterTargets",
         "elasticloadbalancing:RemoveTags"
       ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ElbReadAll",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:Describe*",
       "Resource": "*"
     },
     {
