@@ -79,6 +79,10 @@ export class GoldenPuppet {
     this.lastT = 0;
     this.bannerTimer = 0;
     this.performSubDirect = null;  // unwrapped golden performSub (event path)
+    this.tape = [];                // rolling recording of applied frames (~14s)
+    this.clip = null;              // active instant-replay playback
+    this.lastGoalClip = null;      // most recent clip, replayable on demand
+    this.clipTimer = 0;
   }
 
   /** Load the golden page and wait for its game to boot. */
@@ -149,6 +153,11 @@ export class GoldenPuppet {
     // the event path must call the REAL performSub even after enableCoaching
     // wraps the public one into a command composer
     this.performSubDirect = game.performSub.bind(game);
+    // the golden replay manager's SIM-REWIND must never run (hard rule), but
+    // its presentation organs — BroadcastReplayOverlay, ReplayCameraController
+    // — are driven by the ClipPlayer below. tick() runs on the render clock
+    // and would fight for simRate/end conditions: neutered for good.
+    game.goalReplay.tick = () => {};
     // hazard guards for networked viewing: the golden pause overlay and the
     // full game reset must be unreachable (reset would orphan every id
     // binding; note configure's own __reset already ran above)
@@ -180,6 +189,9 @@ export class GoldenPuppet {
         if (live){
           game.announce('GOAL!', 3);
           if (game.stadium) game.stadium.react('goal', team);
+          // broadcast truck: let the celebration breathe, then roll the tape
+          const goalTick = e.tick, scorerId = e.playerId;
+          this.clipTimer = setTimeout(() => this.playGoalClip(goalTick, scorerId), 1600);
         }
         return;
       case 'card': {
@@ -306,7 +318,12 @@ export class GoldenPuppet {
     const openPanelDirect = game.openPanel.bind(game);
     const closePanelDirect = game.closePanel.bind(game);
     game.openPanel = (type, extra) => {
-      if (type === 'replay'){ game.announce('GOAL REPLAYS arrive online with A4', 2.2); return; }
+      if (type === 'replay'){
+        if (this.clip) return;
+        if (this.lastGoalClip) this.playClip(this.lastGoalClip);
+        else game.announce('NO GOALS TO REPLAY YET', 2.2);
+        return;
+      }
       if (game.panel?.type === 'tactics') flushTactics();      // switching away
       if (type === 'tactics') baseline = snapshotTactics();
       openPanelDirect(type, extra);
@@ -315,6 +332,87 @@ export class GoldenPuppet {
       if (game.panel?.type === 'tactics') flushTactics();
       closePanelDirect();
     };
+  }
+
+  /**
+   * Instant replay (A4): play the client's own recording of the stream back
+   * through the golden broadcast machinery — letterbox + REPLAY badge
+   * (BroadcastReplayOverlay engages on gr.playing), cinematic camera cuts
+   * (ReplayCameraController driven per frame), golden pacing (quick buildup,
+   * slow-motion finish) — as PURE PLAYBACK. The authoritative sim never
+   * rewinds; live frames keep buffering and the view snaps back to now with
+   * the golden fade when the clip ends. Server-side re-simulated clips
+   * (post-fulltime, /replays/goals) will feed this same player in A4b.
+   */
+  playGoalClip(goalTick, scorerExtId){
+    if (this.clip) return;
+    const from = goalTick - 8 * 60, to = goalTick + 72;
+    const frames = this.tape.filter(f => f.tick >= from && f.tick <= to);
+    if (frames.length < 6 || frames[frames.length - 1].tick - frames[0].tick < 120) return;
+    const scorerPid = scorerExtId ? this.byExternal.get(scorerExtId)?.pid ?? null : null;
+    this.lastGoalClip = { frames, goalTick, scorerPid };
+    this.playClip(this.lastGoalClip);
+  }
+
+  playClip({ frames, goalTick, scorerPid }){
+    const game = this.win.game, gr = game.goalReplay;
+    this.clip = { frames, goalTick, t: frames[0].tick, endTick: frames[frames.length - 1].tick };
+    // the golden overlay reads playing.goalTick/endTick + game.simTick
+    gr.playing = { goalTick, endTick: this.clip.endTick };
+    gr.t0 = game.animT;
+    gr.skip = () => this.endClip();   // Space/Escape/click routes here
+    gr.cams.start(scorerPid, goalTick / 60, this.clip.endTick / 60);
+  }
+
+  pumpClip(dt){
+    const game = this.win.game, gr = game.goalReplay, clip = this.clip;
+    // golden broadcast pacing: buildup slightly quick, the finish in slow-mo
+    const toGoal = (clip.goalTick - clip.t) / 60;
+    const rate = toGoal < 2.4 ? gr.cfg.slowmo : gr.cfg.buildupRate;
+    clip.t += dt * 60 * rate;
+    if (clip.t >= clip.endTick){ this.endClip(); return; }
+    let a = clip.frames[0], b = clip.frames[clip.frames.length - 1];
+    for (const f of clip.frames){
+      if (f.tick <= clip.t) a = f;
+      else { b = f; break; }
+    }
+    const span = Math.max(1, b.tick - a.tick);
+    const k = Math.min(1, Math.max(0, (clip.t - a.tick) / span));
+    const lerp = (x, y) => x + (y - x) * k;
+    for (const [extId, pa] of a.players){
+      const gp = this.byExternal.get(extId);
+      if (!gp || pa.onPitch === false) continue;
+      const pb = b.players.get(extId) ?? pa;
+      const x = lerp(pa.position.x, pb.position.x), y = lerp(pa.position.y, pb.position.y);
+      const prev = this.lastPos.get(extId);
+      if (prev){
+        const dist = Math.hypot(x - prev.x, y - prev.y);
+        if (dist < 5) gp.runPhase += dist;
+      }
+      this.lastPos.set(extId, { x, y });
+      gp.pos.x = x; gp.pos.y = y;
+      gp.facing = pb.facing ?? gp.facing;
+      if (pa.action) gp.action = pa.action;
+    }
+    game.ball.x = lerp(a.ball.position.x, b.ball.position.x);
+    game.ball.y = lerp(a.ball.position.y, b.ball.position.y);
+    game.ball.z = lerp(a.ball.position.z, b.ball.position.z);
+    game.match.score[0] = a.score[0]; game.match.score[1] = a.score[1];
+    game.match.state = a.matchState;
+    game.match.tMatch = parseClock(a.clock);
+    game.simTick = Math.round(clip.t);   // overlay progress + camera cut plan
+    gr.cams.update();
+  }
+
+  endClip(){
+    const game = this.win.game, gr = game.goalReplay;
+    if (!this.clip) return;
+    this.clip = null;
+    gr.playing = null;
+    delete gr.skip;                   // prototype skip no-ops on playing=null
+    gr.cams.stop();
+    game.replayFadeT = game.animT;    // golden fade back to live
+    this.lastPos.clear();             // live positions jump; no sprint spikes
   }
 
   showBanner(text, live, seconds){
@@ -350,6 +448,17 @@ export class GoldenPuppet {
       this.lastT = t;
       this.win.game.animT += dt;     // sim is frozen; the animation clock is ours to advance
       const frame = conn.frame(Date.now());
+      if (frame){
+        // rolling broadcast tape — recorded even while a replay plays, so
+        // back-to-back goals still have footage
+        const newest = this.tape[this.tape.length - 1];
+        if (!newest || frame.tick > newest.tick){
+          this.tape.push(frame);
+          const horizon = frame.tick - 14 * 60;
+          while (this.tape.length && this.tape[0].tick < horizon) this.tape.shift();
+        }
+      }
+      if (this.clip){ this.pumpClip(dt); return; }
       if (frame) this.apply(frame, dt);
     };
     const loop = (t) => {
@@ -372,6 +481,9 @@ export class GoldenPuppet {
     this.fallback = 0;
     if (this.bannerTimer) clearTimeout(this.bannerTimer);
     this.bannerTimer = 0;
+    if (this.clipTimer) clearTimeout(this.clipTimer);
+    this.clipTimer = 0;
+    if (this.clip) this.endClip();
   }
 
   apply(frame, dt){
@@ -402,5 +514,6 @@ export class GoldenPuppet {
     game.match.score[1] = frame.score[1];
     game.match.state = frame.matchState;
     game.match.tMatch = parseClock(frame.clock);
+    game.simTick = frame.tick;   // keeps golden reads coherent after replays
   }
 }
