@@ -21,6 +21,7 @@
   #local.show, #online.show { display: block; }
   #local iframe { width: 100%; height: 100%; border: 0; }
   #online canvas { width: 100%; height: 100%; display: block; }
+  #goldenHost { position: absolute; inset: 0; }
   #onlineForm { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
     display: flex; gap: 8px; background: rgba(8,13,22,0.92); padding: 10px;
     border: 1px solid rgba(70,200,150,0.3); border-radius: 8px; z-index: 2; }
@@ -49,12 +50,16 @@
       <input id="token" placeholder="token" size="24">
       <button type="submit">CONNECT</button>
     </form>
+    <!-- golden presentation (default); the minimal canvas renderer stays
+         available at ?simple as a debugging fallback -->
+    <div id="goldenHost"></div>
     <canvas id="spectator"></canvas>
   </section>
 </main>
 <script type="module">
   import { MatchConnection } from '../src/net.js';
   import { SpectatorRenderer } from '../src/render.js';
+  import { GoldenPuppet } from '../src/puppet.js';
 
   const localBtn = document.getElementById('modeLocal');
   const onlineBtn = document.getElementById('modeOnline');
@@ -68,10 +73,16 @@
   localBtn.onclick = () => mode('local');
   onlineBtn.onclick = () => mode('online');
 
+  // golden presentation by default; ?simple keeps the minimal canvas renderer
+  const useSimple = new URLSearchParams(location.search).has('simple');
+  document.getElementById('spectator').style.display = useSimple ? 'block' : 'none';
+
   let renderer = null;
-  document.getElementById('onlineForm').addEventListener('submit', (e) => {
+  let puppet = null;
+  document.getElementById('onlineForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (renderer) renderer.stop();
+    if (puppet) puppet.stop();
     const conn = new MatchConnection({
       url: document.getElementById('wsUrl').value,
       matchId: document.getElementById('matchId').value,
@@ -82,9 +93,29 @@
         onResult: r => console.log('FINAL RESULT', r),
       },
     }).connect();
-    renderer = new SpectatorRenderer(document.getElementById('spectator'), conn);
-    renderer.start();
     document.getElementById('onlineForm').classList.add('hidden');
+    if (useSimple){
+      renderer = new SpectatorRenderer(document.getElementById('spectator'), conn);
+      renderer.start();
+      return;
+    }
+    puppet = new GoldenPuppet(document.getElementById('goldenHost'));
+    await puppet.mount();
+    // the manifest arrives with the welcome; wait for it before imposing
+    await new Promise((resolve, reject) => {
+      const deadline = Date.now() + 15_000;
+      const poll = () => {
+        if (conn.manifest) resolve();
+        else if (Date.now() > deadline) reject(new Error('no welcome from server'));
+        else setTimeout(poll, 100);
+      };
+      poll();
+    });
+    puppet.configure(conn.manifest);
+    puppet.start(conn);
+    // debug handles (harmless in production, invaluable in a console)
+    window.__conn = conn;
+    window.__puppet = puppet;
   });
 </script>
 </body>
