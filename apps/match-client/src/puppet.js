@@ -91,7 +91,9 @@ export class GoldenPuppet {
     iframe.src = '/index.html';
     iframe.title = 'FOBAL online match (golden presentation)';
     iframe.style.cssText = 'width:100%;height:100%;border:0;pointer-events:none;';
-    this.container.appendChild(iframe);
+    // replace, never append: a reconnect through the form mounts a fresh
+    // puppet, and the previous stage must not linger underneath
+    this.container.replaceChildren(iframe);
     this.iframe = iframe;
     return new Promise((resolve, reject) => {
       const deadline = Date.now() + 15_000;
@@ -320,7 +322,11 @@ export class GoldenPuppet {
     game.openPanel = (type, extra) => {
       if (type === 'replay'){
         if (this.clip) return;
-        if (this.lastGoalClip) this.playClip(this.lastGoalClip);
+        if (this.serverClips?.length){
+          // post-fulltime: cycle the authoritative goals
+          this.serverClipIdx = ((this.serverClipIdx ?? -1) + 1) % this.serverClips.length;
+          this.playClip(this.serverClips[this.serverClipIdx]);
+        } else if (this.lastGoalClip) this.playClip(this.lastGoalClip);
         else game.announce('NO GOALS TO REPLAY YET', 2.2);
         return;
       }
@@ -386,20 +392,28 @@ export class GoldenPuppet {
       const x = lerp(pa.position.x, pb.position.x), y = lerp(pa.position.y, pb.position.y);
       const prev = this.lastPos.get(extId);
       if (prev){
-        const dist = Math.hypot(x - prev.x, y - prev.y);
-        if (dist < 5) gp.runPhase += dist;
+        const dx = x - prev.x, dy = y - prev.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 5){
+          gp.runPhase += dist;
+          // server clips carry positions only — derive facing from motion
+          // (the golden convention is atan2(dy, dx) radians)
+          if (pb.facing === undefined && dist > 0.03) gp.facing = Math.atan2(dy, dx);
+        }
       }
       this.lastPos.set(extId, { x, y });
       gp.pos.x = x; gp.pos.y = y;
-      gp.facing = pb.facing ?? gp.facing;
+      if (pb.facing !== undefined) gp.facing = pb.facing;
       if (pa.action) gp.action = pa.action;
     }
     game.ball.x = lerp(a.ball.position.x, b.ball.position.x);
     game.ball.y = lerp(a.ball.position.y, b.ball.position.y);
     game.ball.z = lerp(a.ball.position.z, b.ball.position.z);
-    game.match.score[0] = a.score[0]; game.match.score[1] = a.score[1];
-    game.match.state = a.matchState;
-    game.match.tMatch = parseClock(a.clock);
+    // tape frames carry the full HUD state; sparse server clips leave the
+    // (final) score and clock standing — exactly how TV plays highlights
+    if (a.score){ game.match.score[0] = a.score[0]; game.match.score[1] = a.score[1]; }
+    if (a.matchState) game.match.state = a.matchState;
+    if (a.clock) game.match.tMatch = parseClock(a.clock);
     game.simTick = Math.round(clip.t);   // overlay progress + camera cut plan
     gr.cams.update();
   }
@@ -413,6 +427,44 @@ export class GoldenPuppet {
     gr.cams.stop();
     game.replayFadeT = game.animT;    // golden fade back to live
     this.lastPos.clear();             // live positions jump; no sprint spikes
+    const next = this.clipQueue?.shift();
+    if (next) this.clipTimer = setTimeout(() => this.playClip(next), 900);
+  }
+
+  /**
+   * A4b — the authoritative highlight reel. After full time the server can
+   * re-simulate every goal window from the recorded match (/replays/goals);
+   * those dense per-tick frames feed the exact same ClipPlayer. Fetched over
+   * HTTP with the match token (the hub speaks CORS for this) and auto-played
+   * once after the FULL TIME banner has had its moment.
+   */
+  async loadServerClips(conn){
+    try {
+      const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
+      const res = await fetch(`${base}/matches/${conn.matchId}/replays/goals`, {
+        headers: { authorization: `Bearer ${conn.token}` },
+      });
+      if (!res.ok) return [];
+      const { clips } = await res.json();
+      this.serverClips = (clips ?? []).map(c => ({
+        goalTick: c.goalTick,
+        scorerPid: c.playerId ? this.byExternal.get(c.playerId)?.pid ?? null : null,
+        frames: c.frames.map(f => ({
+          tick: f.tick,
+          ball: { position: { x: f.ball.x, y: f.ball.y, z: f.ball.z } },
+          players: new Map(f.players.map(p => [p.playerId, { position: { x: p.x, y: p.y } }])),
+        })),
+      })).filter(c => c.frames.length > 5);
+      return this.serverClips;
+    } catch { return []; }   // replays are a luxury; never break the client
+  }
+
+  async playHighlightReel(conn){
+    const clips = await this.loadServerClips(conn);
+    if (!clips.length) return;
+    this.win.game.announce(`GOAL REPLAYS — ${clips.length} goal${clips.length > 1 ? 's' : ''}`, 2.5);
+    this.clipQueue = clips.slice(1).map(c => ({ frames: c.frames, goalTick: c.goalTick, scorerPid: c.scorerPid }));
+    this.playClip(clips[0]);
   }
 
   showBanner(text, live, seconds){
@@ -441,6 +493,13 @@ export class GoldenPuppet {
     conn.hooks.onEvent = (e) => {
       if (prevOnEvent) prevOnEvent(e);
       this.handleEvent(e, true);
+    };
+    // full time: give the banner its moment, then run the authoritative
+    // highlight reel from the server's re-simulated goal windows
+    const prevOnResult = conn.hooks.onResult;
+    conn.hooks.onResult = (r) => {
+      if (prevOnResult) prevOnResult(r);
+      this.clipTimer = setTimeout(() => { void this.playHighlightReel(conn); }, 4500);
     };
     this.lastT = performance.now();
     const pump = (t) => {

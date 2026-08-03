@@ -62,6 +62,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     createKey: process.env.FOBAL_CREATE_KEY,
     store,
     keys: process.env.FOBAL_SIGNING_KEY ? keysFromPem(process.env.FOBAL_SIGNING_KEY) : undefined,
+    corsOrigin: process.env.FOBAL_CORS_ORIGIN,
     autoDrive: true,   // drive created matches in real time; resume unfinished ones on boot
   });
   console.log(JSON.stringify({ msg: 'listening', port: server.port, backend, activeRooms: server.rooms.size }));
