@@ -54,11 +54,14 @@ export class MatchConnection {
     const socket = this.socketFactory(this.url);
     this.socket = socket;
     socket.onopen = () => {
-      const hello = { type: 'hello', matchId: this.matchId, token: this.token };
-      // Any reconnect after a first welcome must resume — even from seq 0.
-      // Gating on lastEventSeq >= 0 would silently drop every event that
-      // happened during an outage that began before the first event arrived.
-      if (this._welcomed) hello.resumeFromSeq = this.lastEventSeq + 1;
+      // Always request the event stream from the last seen seq — 0 on the
+      // very first join. The golden puppet reconstructs match state (feed,
+      // substitutions, dismissals) from the event history, so a late joiner
+      // without it would render the wrong XI. Reconnects resume for free.
+      const hello = {
+        type: 'hello', matchId: this.matchId, token: this.token,
+        resumeFromSeq: this.lastEventSeq + 1,
+      };
       socket.send(JSON.stringify(hello));
     };
     socket.onmessage = (ev) => this._onRaw(typeof ev === 'string' ? ev : ev.data);
