@@ -72,9 +72,11 @@ export class GoldenPuppet {
     this.iframe = null;
     this.win = null;
     this.byExternal = new Map();   // external playerId → golden player object
+    this.teamIdxByExternal = new Map();  // external teamId → 0 | 1
     this.lastPos = new Map();      // external playerId → {x, y} for vel/runPhase
     this.raf = 0;
     this.lastT = 0;
+    this.bannerTimer = 0;
   }
 
   /** Load the golden page and wait for its game to boot. */
@@ -127,17 +129,97 @@ export class GoldenPuppet {
       const bench = team.bench ?? [];
       const keep = Math.min(bench.length, benchSpec.length);
       for (let i = 0; i < keep; i++){
-        imposePlayer(bench[i], benchSpec[i]);
-        this.byExternal.set(benchSpec[i].playerId, bench[i]);
+        const bp = bench[i], bs = benchSpec[i];
+        imposePlayer(bp, bs);
+        // mirror the adapter: the bench slot role gates like-for-like GK
+        // substitutions inside the golden performSub
+        if (bp.slot) bp.slot.role = bs.role;
+        bp.role = bs.role;
+        bp.line = LINE_OF_ROLE[bs.role] ?? bp.line;
+        bp.isGK = bs.role === 'GK';
+        this.byExternal.set(bs.playerId, bp);
       }
       if (bench.length > benchSpec.length) bench.length = benchSpec.length;
+      this.teamIdxByExternal.set(spec.teamId, idx);
     }
+  }
+
+  /**
+   * Route a protocol MatchEvent into the golden presentation. `live` is
+   * false during the join catch-up: the feed and the pitch/bench arrays are
+   * reconstructed (substitutions MUST replay or a late joiner renders the
+   * wrong XI), but banners/announcements for long-past moments stay quiet.
+   */
+  handleEvent(e, live){
+    const game = this.win.game, match = game.match;
+    const p = e.playerId ? this.byExternal.get(e.playerId) : null;
+    const teamIdx = e.teamId !== undefined ? this.teamIdxByExternal.get(e.teamId) : undefined;
+    const team = teamIdx !== undefined ? game.teams[teamIdx] : (p ? p.team : undefined);
+    switch (e.type){
+      case 'substitution': {
+        // golden performSub does the arrays, choreography, feed line and sub
+        // board; its own guards make replayed duplicates a graceful no-op
+        const on = p, off = e.targetId ? this.byExternal.get(e.targetId) : null;
+        if (team && on && off) game.performSub(team, off, on);
+        return;
+      }
+      case 'goal':
+        game.commentate('goal', { p, team, og: e.data?.og });
+        if (live){
+          game.announce('GOAL!', 3);
+          if (game.stadium) game.stadium.react('goal', team);
+        }
+        return;
+      case 'card': {
+        const kind = e.data?.card === 'yellow' ? 'yellow' : 'red';
+        game.commentate(kind, { p, team });
+        return;
+      }
+      case 'shot': game.commentate('shot', { p, team }); return;
+      case 'gk_catch':
+      case 'gk_parry':
+        game.commentate('save', { p, team });
+        if (live) game.announce('SAVE!', 2);
+        return;
+      case 'foul': game.commentate('foul', { p, v: null, team }); return;
+      case 'offside': game.commentate('offside', { p, team }); return;
+      case 'kickoff': game.commentate('kickoff', { half: match.half }); return;
+      case 'tactic_change':
+        if (e.data?.label) game.commentate('tactic', { team, what: e.data.label });
+        return;
+      case 'restart':
+        // commentaryText knows throwin/corner/goalkick/freekick; unknown
+        // kinds return no text and commentate skips them
+        if (e.data?.kind) game.commentate(String(e.data.kind).toLowerCase(), { team });
+        return;
+      case 'halftime': this.showBanner('HALF TIME', live, 6); return;
+      case 'fulltime': this.showBanner('FULL TIME', live, 0); return;
+      default: return;
+    }
+  }
+
+  showBanner(text, live, seconds){
+    if (!live && seconds !== 0) return;    // stale HT banners stay quiet on join
+    const match = this.win.game.match;
+    match.banner = text;
+    match.bannerSub = match.scoreLine ? match.scoreLine() : '';
+    if (this.bannerTimer) clearTimeout(this.bannerTimer);
+    if (seconds > 0)
+      this.bannerTimer = setTimeout(() => { match.banner = ''; match.bannerSub = ''; }, seconds * 1000);
   }
 
   /** Drive the golden presentation from the connection's interpolated frames. */
   start(conn){
     this.stop();
     this.conn = conn;
+    // join catch-up: rebuild the feed and re-apply substitutions from the
+    // full event history (server replays it on hello), quietly
+    for (const e of conn.events) this.handleEvent(e, false);
+    const prevOnEvent = conn.hooks.onEvent;
+    conn.hooks.onEvent = (e) => {
+      if (prevOnEvent) prevOnEvent(e);
+      this.handleEvent(e, true);
+    };
     this.lastT = performance.now();
     const pump = (t) => {
       const dt = Math.min(0.1, (t - this.lastT) / 1000);
@@ -164,6 +246,8 @@ export class GoldenPuppet {
     this.raf = 0;
     if (this.fallback) clearInterval(this.fallback);
     this.fallback = 0;
+    if (this.bannerTimer) clearTimeout(this.bannerTimer);
+    this.bannerTimer = 0;
   }
 
   apply(frame, dt){
