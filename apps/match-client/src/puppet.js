@@ -72,11 +72,13 @@ export class GoldenPuppet {
     this.iframe = null;
     this.win = null;
     this.byExternal = new Map();   // external playerId → golden player object
+    this.externalOf = new Map();   // golden player object → external playerId
     this.teamIdxByExternal = new Map();  // external teamId → 0 | 1
     this.lastPos = new Map();      // external playerId → {x, y} for vel/runPhase
     this.raf = 0;
     this.lastT = 0;
     this.bannerTimer = 0;
+    this.performSubDirect = null;  // unwrapped golden performSub (event path)
   }
 
   /** Load the golden page and wait for its game to boot. */
@@ -125,6 +127,7 @@ export class GoldenPuppet {
         const s = starters[assignment[i]];
         imposePlayer(gp, s);
         this.byExternal.set(s.playerId, gp);
+        this.externalOf.set(gp, s.playerId);
       });
       const bench = team.bench ?? [];
       const keep = Math.min(bench.length, benchSpec.length);
@@ -138,10 +141,19 @@ export class GoldenPuppet {
         bp.line = LINE_OF_ROLE[bs.role] ?? bp.line;
         bp.isGK = bs.role === 'GK';
         this.byExternal.set(bs.playerId, bp);
+        this.externalOf.set(bp, bs.playerId);
       }
       if (bench.length > benchSpec.length) bench.length = benchSpec.length;
       this.teamIdxByExternal.set(spec.teamId, idx);
     }
+    // the event path must call the REAL performSub even after enableCoaching
+    // wraps the public one into a command composer
+    this.performSubDirect = game.performSub.bind(game);
+    // hazard guards for networked viewing: the golden pause overlay and the
+    // full game reset must be unreachable (reset would orphan every id
+    // binding; note configure's own __reset already ran above)
+    Object.defineProperty(game, 'paused', { get: () => false, set: () => {}, configurable: true });
+    game.reset = () => {};
   }
 
   /**
@@ -160,7 +172,7 @@ export class GoldenPuppet {
         // golden performSub does the arrays, choreography, feed line and sub
         // board; its own guards make replayed duplicates a graceful no-op
         const on = p, off = e.targetId ? this.byExternal.get(e.targetId) : null;
-        if (team && on && off) game.performSub(team, off, on);
+        if (team && on && off) this.performSubDirect(team, off, on);
         return;
       }
       case 'goal':
@@ -172,7 +184,16 @@ export class GoldenPuppet {
         return;
       case 'card': {
         const kind = e.data?.card === 'yellow' ? 'yellow' : 'red';
-        game.commentate(kind, { p, team });
+        if (kind === 'red' && p && team){
+          // the server removed him from the XI; mirror it or he statues on
+          // the pitch (positions stop streaming for off-pitch players).
+          // idempotent: replayed events find him already gone.
+          const i = team.players.indexOf(p);
+          if (i >= 0){ team.players.splice(i, 1); (team.offList ??= []).push(p); }
+          game.commentate('red', { p, team, left: team.players.length });
+          return;
+        }
+        game.commentate(kind, { p, team, desc: e.data?.kind ?? 'challenge' });
         return;
       }
       case 'shot': game.commentate('shot', { p, team }); return;
@@ -181,7 +202,7 @@ export class GoldenPuppet {
         game.commentate('save', { p, team });
         if (live) game.announce('SAVE!', 2);
         return;
-      case 'foul': game.commentate('foul', { p, v: null, team }); return;
+      case 'foul': game.commentate('foul', { p, v: null, team, desc: e.data?.kind ?? 'foul' }); return;
       case 'offside': game.commentate('offside', { p, team }); return;
       case 'kickoff': game.commentate('kickoff', { half: match.half }); return;
       case 'tactic_change':
@@ -198,6 +219,104 @@ export class GoldenPuppet {
     }
   }
 
+  /**
+   * Controller mode (A5): the golden panels become COMMAND COMPOSERS. Local
+   * sim mutation is meaningless (the sim is frozen) — instead every golden
+   * apply-funnel emits the protocol command and the server's authoritative
+   * echo (events, snapshots) closes the loop:
+   *  - bench CONFIRM → substitution command (the echoed event shows the
+   *    golden sub board via handleEvent)
+   *  - coach console Enter → coach_text command (the golden applyCoach seam —
+   *    the same one Phase C's voice input will feed)
+   *  - tactics panel → diffed on close into a tactical patch command
+   * Known limit, tracked in ROADMAP A3: the golden panels hardcode the HOME
+   * team's roster/values for display. Commands always target the
+   * controller's own team; bench subs are blocked for away controllers
+   * until the mirrored-perspective view lands.
+   */
+  enableCoaching(conn){
+    const game = this.win.game;
+    const myTeamIdx = this.teamIdxByExternal.get(conn.teamId);
+    this.iframe.style.pointerEvents = 'auto';
+    const commandId = (tag) => `ui-${tag}-${Date.now()}`;
+
+    // ack/reject feedback through the golden announcer
+    const prevAck = conn.hooks.onAck, prevRej = conn.hooks.onRejected;
+    conn.hooks.onAck = (m) => { if (prevAck) prevAck(m); game.announce('✓ ORDER RECEIVED', 1.6); };
+    conn.hooks.onRejected = (m) => {
+      if (prevRej) prevRej(m);
+      game.announce('✗ ' + (m.message || m.code || 'rejected').toUpperCase().slice(0, 60), 3);
+    };
+
+    // bench panel CONFIRM funnel
+    game.performSub = (team, out, sub) => {
+      if (myTeamIdx !== 0){ game.announce('BENCH: away-side panel not wired yet', 2.5); return false; }
+      const playerOut = this.externalOf.get(out), playerIn = this.externalOf.get(sub);
+      if (!playerOut || !playerIn) return false;
+      conn.sendCommand({ kind: 'substitution', commandId: commandId('sub'),
+        teamId: conn.teamId, playerOut, playerIn });
+      game.announce('SUB REQUESTED — awaiting the fourth official', 2.2);
+      return true;   // closes the golden confirm sheet
+    };
+
+    // coach console funnel — free text goes to the server's parseCoach
+    game.applyCoach = () => {
+      const text = String(game.coachText || '').trim().slice(0, 280);
+      game.closeCoach();
+      if (!text) return;
+      conn.sendCommand({ kind: 'tactical', commandId: commandId('coach'),
+        teamId: conn.teamId, payload: { type: 'coach_text', text } });
+      game.announce('COACH ▸ sent to the bench', 1.8);
+    };
+
+    // tactics panel: golden sliders mutate locally for instant feel; the
+    // NET change is flushed as one protocol patch when the panel closes or
+    // switches away
+    const TACTIC_NUM = ['width', 'trap', 'tempo', 'crossing', 'shootTendency', 'overlap',
+      'counter', 'timeWaste', 'pressAfterLoss', 'defAggression', 'gkLong',
+      'mentality', 'defLine', 'pressing', 'risk', 'compactness'];
+    const TACTIC_STR = ['scheme', 'attackSide', 'style'];
+    const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
+    const snapshotTactics = () => {
+      const team = game.teams[0], T = team.tactics, out = {};
+      for (const k of TACTIC_NUM) out[k] = +clamp01(T[k]).toFixed(3);
+      for (const k of TACTIC_STR) if (T[k] !== undefined) out[k] = T[k];
+      out.formation = team.assignedFormation ?? T.formation;
+      out.markTarget = T.markTarget ?? null;
+      return out;
+    };
+    let baseline = null;
+    const flushTactics = () => {
+      if (!baseline) return;
+      const before = baseline, after = snapshotTactics();
+      baseline = null;
+      const patch = {};
+      for (const k of TACTIC_NUM) if (Math.abs(after[k] - before[k]) > 0.001) patch[k] = after[k];
+      for (const k of [...TACTIC_STR, 'formation']) if (after[k] !== before[k] && after[k] !== undefined) patch[k] = after[k];
+      if (after.markTarget !== before.markTarget){
+        // golden stores a pid; the wire wants the external id
+        const body = [...this.byExternal.values()].find(p => p.pid === after.markTarget);
+        patch.markTarget = body ? this.externalOf.get(body) ?? null : null;
+      }
+      if (!Object.keys(patch).length) return;
+      conn.sendCommand({ kind: 'tactical', commandId: commandId('tac'),
+        teamId: conn.teamId, payload: { type: 'patch', patch } });
+      game.announce('TACTICS ▸ sent to the bench', 1.8);
+    };
+    const openPanelDirect = game.openPanel.bind(game);
+    const closePanelDirect = game.closePanel.bind(game);
+    game.openPanel = (type, extra) => {
+      if (type === 'replay'){ game.announce('GOAL REPLAYS arrive online with A4', 2.2); return; }
+      if (game.panel?.type === 'tactics') flushTactics();      // switching away
+      if (type === 'tactics') baseline = snapshotTactics();
+      openPanelDirect(type, extra);
+    };
+    game.closePanel = () => {
+      if (game.panel?.type === 'tactics') flushTactics();
+      closePanelDirect();
+    };
+  }
+
   showBanner(text, live, seconds){
     if (!live && seconds !== 0) return;    // stale HT banners stay quiet on join
     const match = this.win.game.match;
@@ -212,9 +331,14 @@ export class GoldenPuppet {
   start(conn){
     this.stop();
     this.conn = conn;
-    // join catch-up: rebuild the feed and re-apply substitutions from the
-    // full event history (server replays it on hello), quietly
-    for (const e of conn.events) this.handleEvent(e, false);
+    // join catch-up: rebuild the feed and re-apply substitutions/dismissals
+    // from the full event history (net.js always hellos with resumeFromSeq,
+    // so the server replays it), quietly. Each event's own clock stamps the
+    // feed minute — the first frame overwrites tMatch right after.
+    for (const e of conn.events){
+      if (e.clock) this.win.game.match.tMatch = parseClock(e.clock);
+      this.handleEvent(e, false);
+    }
     const prevOnEvent = conn.hooks.onEvent;
     conn.hooks.onEvent = (e) => {
       if (prevOnEvent) prevOnEvent(e);

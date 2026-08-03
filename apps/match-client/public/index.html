@@ -113,6 +113,8 @@
     });
     puppet.configure(conn.manifest);
     puppet.start(conn);
+    // controllers coach through the golden panels themselves
+    if (conn.role === 'controller') puppet.enableCoaching(conn);
     // debug handles (harmless in production, invaluable in a console)
     window.__conn = conn;
     window.__puppet = puppet;
