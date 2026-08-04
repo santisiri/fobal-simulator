@@ -238,6 +238,12 @@ export class FobalStagingStack extends Stack {
         FOBAL_STORE_BACKEND: 's3',
         FOBAL_REPLAY_BUCKET: replayBucket.bucketName,
         FOBAL_CLOUDWATCH_NAMESPACE: '/fobal/staging/match-server',
+        // per-IP caps must see the CLIENT ip, not the ALB's — the server
+        // only honors x-forwarded-for when this is set
+        FOBAL_TRUST_PROXY: '1',
+        // FOBAL_WS_ORIGINS stays unset until the client is hosted (B3):
+        // localhost dev pages still connect to staging today, and tools
+        // (no Origin header) always pass regardless
       },
       secrets: {
         FOBAL_SECRET: ecs.Secret.fromSecretsManager(tokenSecret),

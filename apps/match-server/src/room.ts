@@ -8,6 +8,7 @@ import {
 } from '@fobal/protocol';
 import { MatchStore } from './store.js';
 import { signResult, SigningKeys } from './signing.js';
+import { noopTelemetry, Telemetry } from './telemetry.js';
 
 export interface RoomClient {
   id: number;
@@ -31,6 +32,8 @@ export interface RoomOptions {
   tacticalPerMinute?: number;
   /** invoked once when the final result is persisted (room eviction hook) */
   onFinalized?: (room: MatchRoom) => void;
+  /** structured logs + metrics (default silent) */
+  telemetry?: Telemetry;
 }
 
 interface Bucket { tokens: number; lastRefill: number }
@@ -52,7 +55,8 @@ export class MatchRoom {
   private lastDeltaTick = -1;
   private lastSnapshotTick = -1;
   private lastInternalTick = -1;
-  private opts: Required<Omit<RoomOptions, 'store' | 'keys'>>;
+  private opts: Required<Omit<RoomOptions, 'store' | 'keys' | 'telemetry'>>;
+  private telemetry: Telemetry;
   private finalized: MatchResult | null = null;
   private driver: NodeJS.Timeout | null = null;
   private turboRunning = false;
@@ -71,6 +75,7 @@ export class MatchRoom {
       tacticalPerMinute: options.tacticalPerMinute ?? 6,
       onFinalized: options.onFinalized ?? (() => {}),
     };
+    this.telemetry = options.telemetry ?? noopTelemetry;
     this.onFinalized = options.onFinalized ?? null;
   }
 
@@ -147,25 +152,35 @@ export class MatchRoom {
 
   // ---- commands ----------------------------------------------------------
 
+  private rejectCommand(
+    client: RoomClient, commandId: string | undefined,
+    code: 'unauthorized' | 'invalid' | 'rate_limited' | 'out_of_range' | 'match_over' | 'malformed',
+    message: string,
+  ): void {
+    this.telemetry.warn('command_rejected', { matchId: this.matchId, code, teamId: client.teamId });
+    this.telemetry.metric('CommandRejected', 1);
+    client.send({ type: 'command_rejected', ...(commandId ? { commandId } : {}), code, message });
+  }
+
   submitCommand(client: RoomClient, rawCommand: unknown): void {
     const parsed = Command.safeParse(rawCommand);
     if (!parsed.success){
-      client.send({ type: 'command_rejected', code: 'malformed', message: parsed.error.issues.map(i => i.message).join('; ') });
+      this.rejectCommand(client, undefined, 'malformed', parsed.error.issues.map(i => i.message).join('; '));
       return;
     }
     const command = parsed.data;
     if (client.role !== 'controller' || client.teamId !== command.teamId){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'unauthorized', message: 'token does not control this team' });
+      this.rejectCommand(client, command.commandId, 'unauthorized', 'token does not control this team');
       return;
     }
     if (this.isOver()){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'match_over', message: 'the match has finished' });
+      this.rejectCommand(client, command.commandId, 'match_over', 'the match has finished');
       return;
     }
     // every command kind is rate-limited: substitutions flooding the log/queue
     // is exactly as harmful as tactical spam
     if (!this.takeToken(command.teamId)){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'rate_limited', message: `max ${this.opts.tacticalPerMinute} commands per minute per team` });
+      this.rejectCommand(client, command.commandId, 'rate_limited', `max ${this.opts.tacticalPerMinute} commands per minute per team`);
       return;
     }
     const accepted: AcceptedCommand = {
@@ -178,7 +193,7 @@ export class MatchRoom {
     // without being in the recovery log
     const check = this.engine.validate(accepted);
     if (!check.accepted){
-      client.send({ type: 'command_rejected', commandId: command.commandId, code: 'out_of_range', message: check.reason ?? 'rejected' });
+      this.rejectCommand(client, command.commandId, 'out_of_range', check.reason ?? 'rejected');
       return;
     }
     this.store.appendCommand(this.matchId, accepted);
@@ -186,6 +201,8 @@ export class MatchRoom {
     if (!outcome.accepted)
       throw new Error(`validated command ${accepted.seq} rejected on submit: ${outcome.reason}`);
     this.nextSeq++;
+    this.telemetry.log('command_accepted', { matchId: this.matchId, kind: command.kind, teamId: command.teamId, seq: accepted.seq });
+    this.telemetry.metric('CommandAccepted', 1);
     client.send({ type: 'command_ack', commandId: command.commandId, seq: accepted.seq, effectiveTick: accepted.effectiveTick });
   }
 
@@ -262,11 +279,13 @@ export class MatchRoom {
     if (tick - this.lastSnapshotTick >= this.opts.snapshotEvery){
       const snapshot: StateSnapshot = this.engine.snapshot();
       this.store.saveSnapshot(this.matchId, snapshot);
+      this.telemetry.metric('SnapshotPersisted', 1);
       this.broadcast({ type: 'snapshot', snapshot });
       this.lastSnapshotTick = tick;
     }
     if (tick - this.lastInternalTick >= this.opts.internalEvery){
       this.store.saveInternal(this.matchId, this.engine.captureInternalState());
+      this.telemetry.metric('InternalStatePersisted', 1);
       this.lastInternalTick = tick;
     }
     if (this.isOver()) this.finalize();
@@ -279,6 +298,11 @@ export class MatchRoom {
     const unsigned = this.engine.result();
     const signed = signResult(unsigned, this.keys);
     const persisted = this.store.saveResultOnce(this.matchId, signed);
+    this.telemetry.log('result_written', {
+      matchId: this.matchId, finalScore: persisted.finalScore,
+      finalTick: persisted.finalTick, finalStateHash: persisted.finalStateHash,
+    });
+    this.telemetry.metric('ResultWritten', 1);
     this.finalized = persisted;
     this.broadcast({ type: 'result', result: persisted });
     if (this.onFinalized) this.onFinalized(this);
