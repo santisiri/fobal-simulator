@@ -26,6 +26,12 @@
     display: flex; gap: 8px; background: rgba(8,13,22,0.92); padding: 10px;
     border: 1px solid rgba(70,200,150,0.3); border-radius: 8px; z-index: 2; }
   #onlineForm.hidden { display: none; }
+  #micBtn { position: absolute; bottom: 14px; right: 14px; z-index: 3;
+    display: none; padding: 10px 16px; border-radius: 20px; font-weight: 700;
+    background: rgba(8,13,22,0.92); border: 1px solid rgba(70,200,150,0.5);
+    user-select: none; -webkit-user-select: none; touch-action: none; }
+  #micBtn.on { display: block; }
+  #micBtn.listening { background: #3a1420; border-color: #e25948; color: #ffb0a8; }
 </style>
 </head>
 <body>
@@ -54,6 +60,7 @@
          available at ?simple as a debugging fallback -->
     <div id="goldenHost"></div>
     <canvas id="spectator"></canvas>
+    <button id="micBtn" title="or hold X">🎙 HOLD TO COACH</button>
   </section>
 </main>
 <script type="module">
@@ -114,7 +121,19 @@
     puppet.configure(conn.manifest);
     puppet.start(conn);
     // controllers coach through the golden panels themselves
-    if (conn.role === 'controller') puppet.enableCoaching(conn);
+    if (conn.role === 'controller'){
+      puppet.enableCoaching(conn);
+      // C1: voice — hold the button (or X) to speak to the golden console
+      if (puppet.enableVoice()){
+        const mic = document.getElementById('micBtn');
+        mic.classList.add('on');
+        const down = (e) => { e.preventDefault(); mic.classList.add('listening'); puppet.voiceStart(); };
+        const up = () => { mic.classList.remove('listening'); puppet.voiceStop(); };
+        mic.addEventListener('pointerdown', down);
+        mic.addEventListener('pointerup', up);
+        mic.addEventListener('pointerleave', up);
+      }
+    }
     // debug handles (harmless in production, invaluable in a console)
     window.__conn = conn;
     window.__puppet = puppet;
