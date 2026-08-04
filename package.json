@@ -15,6 +15,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "goldens": "node tools/update-goldens.mjs",
     "create-match": "tsx tools/create-match.mjs",
+    "lobby": "tsx apps/lobby-server/src/index.ts",
     "acceptance": "tsx tools/staging-acceptance.mjs",
     "demo": "python3 -m http.server 8471"
   },

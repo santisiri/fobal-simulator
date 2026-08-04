@@ -39,6 +39,8 @@
   <h1>FOBAL<span>.ai</span> MATCH CLIENT</h1>
   <button id="modeLocal" class="active">LOCAL MODE</button>
   <button id="modeOnline">ONLINE MODE</button>
+  <a href="lobby.html" style="margin-left:auto; color:#2be08f; font-size:12px;
+     letter-spacing:1px; text-decoration:none;">LOBBY ↗</a>
 </header>
 <main>
   <!-- Local Mode: the golden single-file engine, unmodified, in-browser.
@@ -138,6 +140,17 @@
     window.__conn = conn;
     window.__puppet = puppet;
   });
+
+  // lobby handoff: lobby.html (B1) redirects here with ?ws=…&match=…&token=…
+  // so both players and spectators drop straight into the golden client
+  const boot = new URLSearchParams(location.search);
+  if (boot.get('ws') && boot.get('match') && boot.get('token')){
+    document.getElementById('wsUrl').value = boot.get('ws');
+    document.getElementById('matchId').value = boot.get('match');
+    document.getElementById('token').value = boot.get('token');
+    mode('online');
+    document.getElementById('onlineForm').requestSubmit();
+  }
 </script>
 </body>
 </html>

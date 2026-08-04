@@ -1,0 +1,22 @@
+{
+  "name": "@fobal/lobby-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FOBAL matchmaking lobby (B1): accounts with magic-code login, presence, challenge → accept flow. Holds the match-server create key server-side, builds the manifest from both players' teams and hands each player a controller token. Never authors match state or results.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@fobal/protocol": "*",
+    "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "@fobal/match-server": "*"
+  }
+}
