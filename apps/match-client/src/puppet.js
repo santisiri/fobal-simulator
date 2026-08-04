@@ -228,7 +228,13 @@ export class GoldenPuppet {
         if (e.data?.kind) game.commentate(String(e.data.kind).toLowerCase(), { team });
         return;
       case 'halftime': this.showBanner('HALF TIME', live, 6); return;
-      case 'fulltime': this.showBanner('FULL TIME', live, 0); return;
+      case 'fulltime':
+        // the room is evicted at FT before any FULLTIME-state delta can
+        // arrive — the synthetic event IS the authority, and the golden
+        // full-time stat line only draws in this state
+        match.state = 'FULLTIME';
+        this.showBanner('FULL TIME', live, 0);
+        return;
       default: return;
     }
   }
@@ -574,5 +580,44 @@ export class GoldenPuppet {
     game.match.state = frame.matchState;
     game.match.tMatch = parseClock(frame.clock);
     game.simTick = frame.tick;   // keeps golden reads coherent after replays
+    if (this.conn && this.conn.lastSnapshotTick !== this.syncedSnapshotTick)
+      this.syncScoreboardState(this.conn);
+  }
+
+  /**
+   * A3 cosmetic audit: the golden stats surfaces (stats panel, full-time
+   * stat line, player sheets, bench) read team/player fields the sim would
+   * normally accrue — frozen online. Full snapshots stream them all
+   * (teams[].stats, teams[].tactics, per-player cards), so reconcile on
+   * every fresh snapshot (~5s cadence). Not streamed and left at zero:
+   * per-player touches/distance/chances (nothing authoritative to show).
+   */
+  syncScoreboardState(conn){
+    const game = this.win.game;
+    this.syncedSnapshotTick = conn.lastSnapshotTick;
+    conn.lastTeams?.forEach((ts, idx) => {
+      const team = game.teams[idx];
+      const s = ts.stats;
+      team.shots = s.shots; team.onTarget = s.onTarget;
+      team.passAtt = s.passAtt; team.passCmp = s.passCmp;
+      team.possT = s.possessionSeconds; team.fouls = s.fouls;
+      team.subsUsed = ts.subsUsed;
+      // tactics truth for the panels — but never underneath an open tactics
+      // panel, where the controller's local slider edits are the truth until
+      // the close-flush sends them
+      if (!(game.panel?.type === 'tactics')){
+        const { markTarget, formation, ...rest } = ts.tactics;
+        Object.assign(team.tactics, rest);
+        team.tactics.formation = formation;
+        team.assignedFormation = formation;
+        team.tactics.markTarget = markTarget ? this.byExternal.get(markTarget)?.pid ?? null : null;
+      }
+    });
+    for (const ps of conn.lastSnapshotPlayers ?? []){
+      const gp = this.byExternal.get(ps.playerId);
+      if (!gp) continue;
+      gp.stats.yellow = ps.yellow ?? gp.stats.yellow;
+      gp.stats.red = ps.red ? 1 : gp.stats.red;
+      }
   }
 }

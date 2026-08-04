@@ -34,6 +34,9 @@ export class MatchConnection {
 
     this.buffer = new InterpolationBuffer();
     this.lastFrame = null;          // newest authoritative frame (pre-interpolation)
+    this.lastTeams = null;          // teams block of the newest full snapshot
+    this.lastSnapshotPlayers = null;  // players block (cards, onPitch) of same
+    this.lastSnapshotTick = -1;
     this.lastEventSeq = -1;
     this.events = [];               // verbatim server events
     this.manifest = null;
@@ -121,6 +124,7 @@ export class MatchConnection {
         const frame = frameFromSnapshot(msg.snapshot);
         this.buffer.reset(frame);          // authoritative resync point
         this.lastFrame = frame;
+        this._noteSnapshot(msg.snapshot);
         this._welcomed = true;
         this.status = 'live';
         this._emitStatus();
@@ -131,6 +135,7 @@ export class MatchConnection {
         // periodic snapshots correct drift without wiping the lerp window
         this.buffer.push(frame);
         this.lastFrame = frame;
+        this._noteSnapshot(msg.snapshot);
         break;
       }
       case 'delta': {
@@ -168,6 +173,16 @@ export class MatchConnection {
       }
       default: break;
     }
+  }
+
+  /** Full snapshots carry team stats/tactics and per-player card state that
+   *  the interpolation frames deliberately drop — keep the newest for
+   *  renderers that want scoreboard-grade data (the golden stats panels). */
+  _noteSnapshot(snapshot){
+    if (snapshot.tick < this.lastSnapshotTick) return;
+    this.lastTeams = snapshot.teams;
+    this.lastSnapshotPlayers = snapshot.players;
+    this.lastSnapshotTick = snapshot.tick;
   }
 
   _emitStatus(){ if (this.hooks.onStatus) this.hooks.onStatus(this.status); }
