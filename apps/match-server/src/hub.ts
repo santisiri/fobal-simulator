@@ -21,6 +21,7 @@ import { MatchStore } from './store.js';
 import { generateSigningKeys, SigningKeys } from './signing.js';
 import { signToken, verifyToken } from './tokens.js';
 import { extractGoalClips } from './replays.js';
+import { CoachInterpreterOptions, createCoachInterpreter } from './coach.js';
 
 export interface MatchServerOptions {
   port?: number;                 // 0 → ephemeral
@@ -39,6 +40,9 @@ export interface MatchServerOptions {
   helloTimeoutMs?: number;
   /** Access-Control-Allow-Origin for the HTTP endpoints (default '*') */
   corsOrigin?: string;
+  /** LLM tactical interpreter (C2); absent → the endpoint answers 501 and
+   *  clients fall back to the golden parseCoach path */
+  coach?: CoachInterpreterOptions;
 }
 
 export interface MatchServer {
@@ -67,6 +71,11 @@ function jsonWithCors(corsOrigin: string) {
   };
 }
 
+function parseClockMinutes(clock: string): number {
+  const m = /^(\d+):/.exec(clock);
+  return m ? Number(m[1]) : 0;
+}
+
 async function readBody(req: IncomingMessage, limit = 1024 * 1024): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -87,6 +96,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   const store = options.store ?? new MatchStore(options.storeRoot!);
   const corsOrigin = options.corsOrigin ?? '*';
   const json = jsonWithCors(corsOrigin);
+  const interpretCoach = createCoachInterpreter(options.coach ?? {});
   const rooms = new Map<string, MatchRoom>();
   const clipsCache = new Map<string, unknown>();
   let nextClientId = 1;
@@ -192,6 +202,38 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           });
           return json(res, 200, replay);
         }
+      }
+
+      // C2 — POST /matches/:id/coach/interpret (controller token required).
+      // Returns {patch?, coachText?, say} — the CLIENT sends the resulting
+      // command over its own authorized WebSocket; this endpoint never
+      // touches the match.
+      if (req.method === 'POST' && parts[0] === 'matches' && parts[2] === 'coach' && parts[3] === 'interpret'){
+        const matchId = parts[1]!;
+        if (!interpretCoach) return json(res, 501, { error: 'coach interpreter not configured' });
+        const auth = req.headers.authorization ?? '';
+        const payload = auth.startsWith('Bearer ') ? verifyToken(auth.slice(7), secret) : null;
+        if (!payload || payload.matchId !== matchId) return json(res, 401, { error: 'match token required' });
+        if (payload.role !== 'controller' || !payload.teamId)
+          return json(res, 403, { error: 'controller token required' });
+        const room = rooms.get(matchId);
+        if (!room) return json(res, 404, { error: 'no active match with that id' });
+        let text: unknown;
+        try { text = (JSON.parse(await readBody(req, 16 * 1024)) as { text?: unknown }).text; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof text !== 'string' || !text.trim() || text.length > 500)
+          return json(res, 400, { error: 'text must be a non-empty string of at most 500 chars' });
+        const snap = room.snapshot();
+        const mine = snap.teams.findIndex(t => t.teamId === payload.teamId);
+        const opp = snap.teams[1 - mine];
+        const result = await interpretCoach(text.trim(), {
+          teamName: room.manifest.teams[mine]?.name ?? payload.teamId,
+          scoreLine: `${snap.score[0]}-${snap.score[1]}`,
+          minute: Math.min(90, Math.floor(parseClockMinutes(snap.clock)) + 1),
+          currentTactics: (snap.teams[mine]?.tactics ?? {}) as Record<string, unknown>,
+          opponent: { formation: opp?.tactics.formation, style: opp?.tactics.style, pressing: opp?.tactics.pressing },
+        });
+        return json(res, 200, result);
       }
 
       if (req.method === 'GET' && parts[0] === 'matches' && parts[2] === 'replays' && parts[3] === 'goals'){
