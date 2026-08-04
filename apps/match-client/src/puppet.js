@@ -297,14 +297,18 @@ export class GoldenPuppet {
       return true;   // closes the golden confirm sheet
     };
 
-    // coach console funnel — free text goes to the server's parseCoach
+    // coach console funnel. C2: free text (typed OR spoken, any language)
+    // goes first to the server's LLM tactical interpreter, which returns a
+    // schema-constrained patch plus a natural-language confirmation; on any
+    // failure — no key configured (501), timeout, refusal — the exact v0
+    // path runs instead: the raw text as coach_text into golden parseCoach.
+    // Either way the model never touches the match: the command sent HERE,
+    // over this authorized connection, is all that enters the log.
     game.applyCoach = () => {
       const text = String(game.coachText || '').trim().slice(0, 280);
       game.closeCoach();
       if (!text) return;
-      conn.sendCommand({ kind: 'tactical', commandId: commandId('coach'),
-        teamId: conn.teamId, payload: { type: 'coach_text', text } });
-      game.announce('COACH ▸ sent to the bench', 1.8);
+      void this.interpretAndSend(conn, text, commandId);
     };
 
     // tactics panel: golden sliders mutate locally for instant feel; the
@@ -489,6 +493,39 @@ export class GoldenPuppet {
     this.win.game.announce(`GOAL REPLAYS — ${clips.length} goal${clips.length > 1 ? 's' : ''}`, 2.5);
     this.clipQueue = clips.slice(1).map(c => ({ frames: c.frames, goalTick: c.goalTick, scorerPid: c.scorerPid }));
     this.playClip(clips[0]);
+  }
+
+  /** C2 — route coach text through the server's LLM interpreter, falling
+   *  back to the plain coach_text command (golden parseCoach) on any miss. */
+  async interpretAndSend(conn, text, commandId){
+    const game = this.win.game;
+    let payload = { type: 'coach_text', text };
+    try {
+      const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
+      const res = await fetch(`${base}/matches/${conn.matchId}/coach/interpret`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${conn.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: AbortSignal.timeout(11_000),
+      });
+      if (res.ok){
+        const out = await res.json();
+        if (out.patch && Object.keys(out.patch).length) payload = { type: 'patch', patch: out.patch };
+        else if (out.coachText) payload = { type: 'coach_text', text: out.coachText };
+        else payload = null;   // non-tactical speech — acknowledged, no command
+        if (out.say){
+          // the assistant coach answers in the speaker's language — golden
+          // announcer + the same feed line the golden LLM coach writes
+          game.announce('COACH ▸ ' + out.say.slice(0, 90), 3.5);
+          game.commentate('raw', { text: 'COACH: ' + out.say.slice(0, 180) });
+        }
+      }
+    } catch { /* interpreter unreachable — v0 path below */ }
+    if (payload){
+      conn.sendCommand({ kind: 'tactical', commandId: commandId('coach'),
+        teamId: conn.teamId, payload });
+      if (payload.type === 'coach_text') game.announce('COACH ▸ sent to the bench', 1.8);
+    }
   }
 
   /**

@@ -13,6 +13,8 @@ export { MirroredMatchStore } from './mirroredStore.js';
 export type { MirroredStoreOptions } from './mirroredStore.js';
 export { MemoryObjectStore, S3ObjectStore } from './objectStore.js';
 export type { ObjectStore } from './objectStore.js';
+export { createCoachInterpreter } from './coach.js';
+export type { CoachContext, CoachInterpretation, CoachInterpreter, CoachInterpreterOptions } from './coach.js';
 
 // CLI entry — configuration is environment-only (ECS injects the secrets
 // from Secrets Manager; see infra/cdk/lib/fobal-staging-stack.ts):
@@ -63,6 +65,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     store,
     keys: process.env.FOBAL_SIGNING_KEY ? keysFromPem(process.env.FOBAL_SIGNING_KEY) : undefined,
     corsOrigin: process.env.FOBAL_CORS_ORIGIN,
+    // C2: the LLM coach interpreter activates when a key is present
+    // (staging: Secrets Manager → env); FOBAL_AI_MODEL overrides the model
+    coach: { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.FOBAL_AI_MODEL },
     autoDrive: true,   // drive created matches in real time; resume unfinished ones on boot
   });
   console.log(JSON.stringify({ msg: 'listening', port: server.port, backend, activeRooms: server.rooms.size }));

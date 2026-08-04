@@ -110,6 +110,8 @@ export class MatchRoom {
   get currentTick(): number { return this.engine.currentTick; }
   isOver(): boolean { return this.engine.isOver(); }
   result(): MatchResult | null { return this.finalized ?? this.store.loadResult(this.matchId); }
+  /** Read-only protocol snapshot (HTTP surfaces, e.g. the coach interpreter's context). */
+  snapshot(): StateSnapshot { return this.engine.snapshot(); }
 
   // ---- clients -----------------------------------------------------------
 
