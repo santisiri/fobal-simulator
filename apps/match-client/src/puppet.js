@@ -126,6 +126,10 @@ export class GoldenPuppet {
       const spec = manifest.teams[idx];
       const team = game.teams[idx];
       team.name = spec.name.toUpperCase();
+      // the golden scoreboard reads team.code (a static 3-letter tag baked
+      // into the built-in team defs) — derive it from the manifest name or
+      // every lobby match shows RED/SKY on the HUD
+      team.code = (spec.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'T' + (idx + 1)).padEnd(3, 'X');
       const starters = spec.players.slice(0, 11);
       const benchSpec = spec.players.slice(11);
       const assignment = assignSlots(team.players.map(p => p.role), starters);

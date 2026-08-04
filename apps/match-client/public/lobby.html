@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FOBAL Lobby</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; min-height: 100%; background: #070b12; color: #e8eef5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+    border-bottom: 1px solid rgba(70,200,150,0.25); }
+  header h1 { font-size: 14px; margin: 0; letter-spacing: 2px; }
+  header h1 span { color: #2be08f; }
+  header .who { margin-left: auto; font-size: 12px; opacity: 0.8; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
+  .card { background: rgba(12,19,32,0.9); border: 1px solid rgba(70,200,150,0.3);
+    border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 12px; font-size: 12px; letter-spacing: 2px; color: #2be08f; }
+  button, input { background: #0c1320; color: #e8eef5; border: 1px solid rgba(70,200,150,0.4);
+    border-radius: 6px; padding: 8px 12px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { border-color: #2be08f; }
+  button.danger { border-color: rgba(226,89,72,0.5); }
+  button.primary { background: #123726; border-color: #2be08f; font-weight: 700; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .player { display: flex; gap: 10px; align-items: center; padding: 8px 4px;
+    border-bottom: 1px solid rgba(70,200,150,0.12); }
+  .player:last-child { border-bottom: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5568; flex: none; }
+  .dot.on { background: #2be08f; box-shadow: 0 0 6px #2be08f; }
+  .player .name { flex: 1; }
+  .player .team { opacity: 0.65; font-size: 12px; }
+  .tag { font-size: 10px; letter-spacing: 1px; padding: 2px 6px; border-radius: 4px;
+    border: 1px solid rgba(232,238,245,0.3); opacity: 0.8; }
+  .muted { opacity: 0.6; font-size: 12px; }
+  .err { color: #ffb0a8; font-size: 12px; min-height: 16px; }
+  #matchCard { border-color: #2be08f; box-shadow: 0 0 24px rgba(43,224,143,0.15); }
+  #matchCard .big { font-size: 18px; font-weight: 700; letter-spacing: 1px; margin: 4px 0 12px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>FOBAL<span>.ai</span> LOBBY</h1>
+  <span class="who" id="who"></span>
+  <button id="logoutBtn" class="hidden">LOG OUT</button>
+</header>
+<main>
+  <!-- login -->
+  <section id="loginView" class="hidden">
+    <div class="card">
+      <h2>SIGN IN</h2>
+      <div class="row">
+        <input id="lobbyUrl" size="28" placeholder="lobby url" value="http://localhost:8475">
+      </div>
+      <div class="row">
+        <input id="email" type="email" size="28" placeholder="you@example.com" autocomplete="email">
+        <button id="requestBtn" class="primary">SEND CODE</button>
+      </div>
+      <div class="row hidden" id="codeRow">
+        <input id="code" size="12" placeholder="login code" autocomplete="one-time-code">
+        <button id="verifyBtn" class="primary">ENTER LOBBY</button>
+      </div>
+      <div class="err" id="loginErr"></div>
+      <div class="muted" id="loginNote"></div>
+    </div>
+  </section>
+
+  <!-- lobby -->
+  <section id="lobbyView" class="hidden">
+    <div class="card hidden" id="matchCard">
+      <h2>MATCH READY</h2>
+      <div class="big" id="matchLine"></div>
+      <div class="row">
+        <button id="enterBtn" class="primary">ENTER MATCH</button>
+        <button id="specBtn">COPY SPECTATOR LINK</button>
+        <button id="leaveBtn" class="danger">LEAVE</button>
+      </div>
+      <div class="muted" id="enterNote"></div>
+    </div>
+
+    <div class="card">
+      <h2>MY TEAM</h2>
+      <div class="row">
+        <span id="teamName" style="font-weight:700; letter-spacing:1px;"></span>
+        <button id="renameBtn" title="rename">✎</button>
+      </div>
+    </div>
+
+    <div class="card" id="challengesCard">
+      <h2>CHALLENGES</h2>
+      <div id="challenges"><span class="muted">none pending</span></div>
+    </div>
+
+    <div class="card">
+      <h2>PLAYERS ONLINE</h2>
+      <div id="players"><span class="muted">nobody else is here yet</span></div>
+    </div>
+    <div class="err" id="lobbyErr"></div>
+  </section>
+</main>
+
+<script type="module">
+  const $ = id => document.getElementById(id);
+  const SESSION_KEY = 'fobal.lobby.session';
+  // team names are free text typed by OTHER players — never let them into
+  // innerHTML unescaped
+  const esc = s => String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // sessionStorage on purpose: it is per-tab, so two tabs are two players
+  // (essential for local testing; hosted persistence can revisit this)
+  let session = null;   // { url, token }
+  try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch {}
+  const params = new URLSearchParams(location.search);
+  if (params.get('lobby')) $('lobbyUrl').value = params.get('lobby');
+  else if (session?.url) $('lobbyUrl').value = session.url;
+
+  const api = async (path, { method = 'GET', body } = {}) => {
+    const res = await fetch(`${session.url}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (res.status === 401 && path === '/lobby'){ logout(); throw new Error('session expired'); }
+    return res;
+  };
+
+  function show(view){
+    $('loginView').classList.toggle('hidden', view !== 'login');
+    $('lobbyView').classList.toggle('hidden', view !== 'lobby');
+    $('logoutBtn').classList.toggle('hidden', view !== 'lobby');
+  }
+
+  function logout(){
+    sessionStorage.removeItem(SESSION_KEY);
+    session = null;
+    clearInterval(pollTimer);
+    $('who').textContent = '';
+    show('login');
+  }
+  $('logoutBtn').onclick = logout;
+
+  // ---- login flow -------------------------------------------------------
+  $('requestBtn').onclick = async () => {
+    $('loginErr').textContent = '';
+    const url = $('lobbyUrl').value.replace(/\/+$/, '');
+    try {
+      const res = await fetch(`${url}/auth/request`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: $('email').value.trim() }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? res.status);
+      $('codeRow').classList.remove('hidden');
+      if (out.devCode){
+        $('code').value = out.devCode;
+        $('loginNote').textContent = 'dev mode: code auto-filled';
+      } else {
+        $('loginNote').textContent = 'check your email for the code';
+      }
+    } catch (err){ $('loginErr').textContent = String(err.message ?? err); }
+  };
+
+  $('verifyBtn').onclick = async () => {
+    $('loginErr').textContent = '';
+    const url = $('lobbyUrl').value.replace(/\/+$/, '');
+    try {
+      const res = await fetch(`${url}/auth/verify`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: $('email').value.trim(), code: $('code').value.trim() }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? res.status);
+      session = { url, token: out.token };
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      enterLobby();
+    } catch (err){ $('loginErr').textContent = String(err.message ?? err); }
+  };
+
+  // ---- lobby ------------------------------------------------------------
+  let pollTimer = null;
+  let enteredMatchId = sessionStorage.getItem('fobal.lobby.entered');
+
+  function matchClientUrl(match, token){
+    const ws = match.matchUrl.replace(/^http/, 'ws');
+    return `index.html?ws=${encodeURIComponent(ws)}&match=${encodeURIComponent(match.matchId)}&token=${encodeURIComponent(token)}`;
+  }
+
+  function render(state){
+    $('who').textContent = `${state.me.handle} · ${state.me.teamName}`;
+    $('teamName').textContent = state.me.teamName;
+
+    const players = state.players
+      .sort((a, b) => (b.online - a.online) || a.handle.localeCompare(b.handle))
+      .map(p => `
+        <div class="player">
+          <span class="dot ${p.online ? 'on' : ''}"></span>
+          <span class="name">${esc(p.handle)}</span>
+          <span class="team">${esc(p.teamName)}</span>
+          ${p.inMatch ? '<span class="tag">IN MATCH</span>'
+            : p.online ? `<button data-challenge="${p.accountId}">CHALLENGE</button>` : ''}
+        </div>`).join('');
+    $('players').innerHTML = players || '<span class="muted">nobody else is here yet</span>';
+
+    const rows = [
+      ...state.challenges.incoming.map(c => `
+        <div class="player">
+          <span class="name">⚔ ${esc(c.from.handle)} (${esc(c.from.teamName)}) challenges you</span>
+          <button class="primary" data-accept="${c.id}">ACCEPT</button>
+          <button class="danger" data-decline="${c.id}">DECLINE</button>
+        </div>`),
+      ...state.challenges.outgoing.map(c => `
+        <div class="player">
+          <span class="name">→ waiting for ${esc(c.to.handle)}…</span>
+          <button class="danger" data-decline="${c.id}">CANCEL</button>
+        </div>`),
+    ].join('');
+    $('challenges').innerHTML = rows || '<span class="muted">none pending</span>';
+
+    const match = state.match;
+    $('matchCard').classList.toggle('hidden', !match);
+    if (match){
+      $('matchLine').textContent = `${state.me.teamName} · match ${match.matchId}`;
+      $('enterBtn').onclick = () => {
+        sessionStorage.setItem('fobal.lobby.entered', match.matchId);
+        location.href = matchClientUrl(match, match.token);
+      };
+      $('specBtn').onclick = async () => {
+        const link = new URL(matchClientUrl(match, match.spectatorToken), location.href).href;
+        try { await navigator.clipboard.writeText(link); $('enterNote').textContent = 'spectator link copied'; }
+        catch { prompt('spectator link:', link); }
+      };
+      $('leaveBtn').onclick = async () => {
+        await api(`/matches/${match.matchId}/leave`, { method: 'POST', body: {} });
+        sessionStorage.removeItem('fobal.lobby.entered');
+        enteredMatchId = null;
+        poll();
+      };
+      // fresh match (not one we already entered and came back from): auto-enter
+      if (enteredMatchId !== match.matchId){
+        $('enterNote').textContent = 'entering in 3s…';
+        clearTimeout(render.autoEnter);
+        render.autoEnter = setTimeout(() => {
+          sessionStorage.setItem('fobal.lobby.entered', match.matchId);
+          location.href = matchClientUrl(match, match.token);
+        }, 3000);
+      } else {
+        $('enterNote').textContent = 'you can re-enter or share the spectator link';
+      }
+    } else {
+      clearTimeout(render.autoEnter);
+    }
+  }
+
+  document.addEventListener('click', async (e) => {
+    const el = e.target;
+    try {
+      if (el.dataset?.challenge) await api('/challenges', { method: 'POST', body: { to: el.dataset.challenge } });
+      else if (el.dataset?.accept) await api(`/challenges/${el.dataset.accept}/accept`, { method: 'POST', body: {} });
+      else if (el.dataset?.decline) await api(`/challenges/${el.dataset.decline}/decline`, { method: 'POST', body: {} });
+      else return;
+      const res = el.dataset ? await api('/lobby') : null;
+      if (res?.ok) render(await res.json());
+    } catch (err){ $('lobbyErr').textContent = String(err.message ?? err); }
+  });
+
+  $('renameBtn').onclick = async () => {
+    const name = prompt('team name (2–32 chars):');
+    if (!name) return;
+    const res = await api('/account/team', { method: 'POST', body: { teamName: name } });
+    const out = await res.json();
+    if (!res.ok) $('lobbyErr').textContent = out.error;
+    else poll();
+  };
+
+  async function poll(){
+    try {
+      const res = await api('/lobby');
+      if (!res.ok) return;
+      $('lobbyErr').textContent = '';
+      render(await res.json());
+    } catch (err){
+      if (session) $('lobbyErr').textContent = `lobby unreachable: ${err.message ?? err}`;
+    }
+  }
+
+  function enterLobby(){
+    show('lobby');
+    poll();
+    clearInterval(pollTimer);
+    pollTimer = setInterval(poll, 2000);
+  }
+
+  if (session?.token) enterLobby();
+  else show('login');
+</script>
+</body>
+</html>
