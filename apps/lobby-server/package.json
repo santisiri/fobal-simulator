@@ -13,10 +13,8 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@fobal/match-server": "*",
     "@fobal/protocol": "*",
     "tsx": "^4.19.0"
-  },
-  "devDependencies": {
-    "@fobal/match-server": "*"
   }
 }

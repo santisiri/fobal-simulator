@@ -18,7 +18,10 @@ const ACCOUNT = '368426158592';
 const REGION = 'sa-east-1';
 const PREFIX = 'fobal-staging';
 const HOSTNAME = 'matches-staging.fobal.ai';
+const LOBBY_HOSTNAME = 'lobby-staging.fobal.ai';
+const PLAY_HOSTNAME = 'play-staging.fobal.ai';
 const CONTAINER_PORT = 8473;
+const LOBBY_PORT = 8475;
 
 export class FobalStagingStack extends Stack {
   constructor(scope: Construct, id: string, props: StackProps = {}) {
@@ -31,6 +34,11 @@ export class FobalStagingStack extends Stack {
     const imageTag = this.node.tryGetContext('imageTag')?.toString() ?? 'staging';
     const certificateArn = this.node.tryGetContext('certificateArn')?.toString()
       ?? `arn:aws:acm:${REGION}:${ACCOUNT}:certificate/REPLACE_WITH_VALIDATED_CERTIFICATE_ID`;
+    // *.fobal.ai in sa-east-1 — added to the HTTPS listener for the lobby
+    // hostname. The ENTIRE lobby service is gated on this context so the
+    // stack keeps synthesizing exactly as before until the cert exists:
+    //   -c wildcardCertificateArn=arn:aws:acm:sa-east-1:…
+    const wildcardCertificateArn = this.node.tryGetContext('wildcardCertificateArn')?.toString();
 
     const boundary = iam.ManagedPolicy.fromManagedPolicyArn(
       this,
@@ -241,9 +249,9 @@ export class FobalStagingStack extends Stack {
         // per-IP caps must see the CLIENT ip, not the ALB's — the server
         // only honors x-forwarded-for when this is set
         FOBAL_TRUST_PROXY: '1',
-        // FOBAL_WS_ORIGINS stays unset until the client is hosted (B3):
-        // localhost dev pages still connect to staging today, and tools
-        // (no Origin header) always pass regardless
+        // B3: the hosted client plus local dev pages; tools (no Origin
+        // header) always pass regardless
+        FOBAL_WS_ORIGINS: `https://${PLAY_HOSTNAME},http://localhost:8471,http://localhost:8474`,
       },
       secrets: {
         FOBAL_SECRET: ecs.Secret.fromSecretsManager(tokenSecret),
@@ -335,12 +343,197 @@ export class FobalStagingStack extends Stack {
       }),
     });
 
-    loadBalancer.addListener('HttpsListener', {
+    const httpsListener = loadBalancer.addListener('HttpsListener', {
       port: 443,
       protocol: elbv2.ApplicationProtocol.HTTPS,
       certificates: [elbv2.ListenerCertificate.fromArn(certificateArn)],
       defaultTargetGroups: [targetGroup],
     });
+
+    // ---- lobby service (B4) — same image, second entrypoint, same ALB ----
+    // Everything below only exists once the *.fobal.ai sa-east-1 cert is
+    // passed via -c wildcardCertificateArn=…; without it the stack is
+    // byte-for-byte what it was before this block landed.
+    if (wildcardCertificateArn) {
+      httpsListener.addCertificates('WildcardCertificate', [
+        elbv2.ListenerCertificate.fromArn(wildcardCertificateArn),
+      ]);
+
+      // fresh environments (imperative, imported — standing rule):
+      //   aws logs create-log-group --log-group-name /fobal/staging/lobby-server --region sa-east-1
+      //   aws logs put-retention-policy --log-group-name /fobal/staging/lobby-server --retention-in-days 30
+      const lobbyLogGroup = logs.LogGroup.fromLogGroupName(
+        this,
+        'LobbyLogGroup',
+        '/fobal/staging/lobby-server',
+      );
+
+      const lobbySessionSecret = new secretsmanager.Secret(this, 'LobbySessionSecret', {
+        secretName: 'fobal/staging/lobby-server/session-secret',
+        generateSecretString: {
+          passwordLength: 48,
+          excludePunctuation: true,
+        },
+      });
+
+      const lobbyTaskRole = new iam.Role(this, 'LobbyTaskRole', {
+        roleName: 'Fobal-staging-lobby-server-task-role',
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        permissionsBoundary: boundary,
+        inlinePolicies: {
+          FobalLobbyTaskRole: new iam.PolicyDocument({
+            statements: [
+              // durable lobby state lives in the replay bucket under lobby/
+              new iam.PolicyStatement({
+                actions: ['s3:GetObject', 's3:PutObject'],
+                resources: [replayBucket.arnForObjects('lobby/*')],
+              }),
+              new iam.PolicyStatement({
+                actions: ['s3:ListBucket'],
+                resources: [replayBucket.bucketArn],
+              }),
+            ],
+          }),
+        },
+      });
+
+      const lobbyExecutionRole = new iam.Role(this, 'LobbyExecutionRole', {
+        roleName: 'Fobal-staging-lobby-server-execution-role',
+        assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+        permissionsBoundary: boundary,
+        inlinePolicies: {
+          FobalLobbyExecutionRole: new iam.PolicyDocument({
+            statements: [
+              new iam.PolicyStatement({
+                actions: [
+                  'ecr:BatchCheckLayerAvailability',
+                  'ecr:BatchGetImage',
+                  'ecr:GetDownloadUrlForLayer',
+                ],
+                resources: [repository.repositoryArn],
+              }),
+              new iam.PolicyStatement({
+                actions: ['ecr:GetAuthorizationToken'],
+                resources: ['*'],
+              }),
+              new iam.PolicyStatement({
+                actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+                resources: [`${lobbyLogGroup.logGroupArn}:*`],
+              }),
+              new iam.PolicyStatement({
+                actions: ['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'],
+                // the lobby shares the CREATE KEY with the match server — it
+                // is the only holder of it besides the match server itself
+                resources: [lobbySessionSecret.secretArn, createKey.secretArn],
+              }),
+            ],
+          }),
+        },
+      });
+
+      const lobbyTaskDefinition = new ecs.FargateTaskDefinition(this, 'LobbyTaskDefinition', {
+        family: `${PREFIX}-lobby-server`,
+        cpu: 256,
+        memoryLimitMiB: 512,
+        runtimePlatform: {
+          cpuArchitecture: ecs.CpuArchitecture.X86_64,
+          operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+        },
+        taskRole: lobbyTaskRole,
+        executionRole: lobbyExecutionRole,
+      });
+
+      lobbyTaskDefinition.addContainer('lobby-server', {
+        containerName: 'lobby-server',
+        image: ecs.ContainerImage.fromEcrRepository(repository, imageTag),
+        command: ['node_modules/.bin/tsx', 'apps/lobby-server/src/index.ts'],
+        logging: ecs.LogDrivers.awsLogs({
+          streamPrefix: 'lobby-server',
+          logGroup: lobbyLogGroup,
+        }),
+        environment: {
+          NODE_ENV: 'production',
+          PORT: String(LOBBY_PORT),
+          FOBAL_MATCH_URL: `https://${HOSTNAME}`,
+          FOBAL_PUBLIC_MATCH_URL: `https://${HOSTNAME}`,
+          FOBAL_LOBBY_STORE: '/data/lobby',
+          FOBAL_LOBBY_BACKEND: 's3',
+          FOBAL_LOBBY_BUCKET: replayBucket.bucketName,
+          FOBAL_LOBBY_S3_PREFIX: 'lobby/',
+          // TEMPORARY until email delivery (SES) lands: login codes return
+          // in the response. Fine for staging; must never survive into prod.
+          FOBAL_DEV_AUTH: '1',
+        },
+        secrets: {
+          FOBAL_LOBBY_SECRET: ecs.Secret.fromSecretsManager(lobbySessionSecret),
+          FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
+        },
+        portMappings: [{ containerPort: LOBBY_PORT, protocol: ecs.Protocol.TCP }],
+        healthCheck: {
+          command: ['CMD-SHELL', `node -e "fetch('http://127.0.0.1:${LOBBY_PORT}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"`],
+          interval: Duration.seconds(30),
+          timeout: Duration.seconds(5),
+          retries: 3,
+          startPeriod: Duration.seconds(30),
+        },
+      });
+
+      const lobbySecurityGroup = new ec2.SecurityGroup(this, 'LobbySecurityGroup', {
+        vpc,
+        securityGroupName: `${PREFIX}-lobby-server-sg`,
+        description: 'FOBAL staging lobby server task security group',
+        allowAllOutbound: false,
+      });
+      lobbySecurityGroup.addIngressRule(
+        albSecurityGroup,
+        ec2.Port.tcp(LOBBY_PORT),
+        'Only the public ALB can reach the lobby',
+      );
+      lobbySecurityGroup.addEgressRule(
+        ec2.Peer.anyIpv4(),
+        ec2.Port.tcp(443),
+        'HTTPS to AWS APIs and the match server via its public hostname',
+      );
+
+      const lobbyService = new ecs.FargateService(this, 'LobbyService', {
+        serviceName: `${PREFIX}-lobby-server`,
+        cluster,
+        taskDefinition: lobbyTaskDefinition,
+        desiredCount: 1,
+        assignPublicIp: true,
+        securityGroups: [lobbySecurityGroup],
+        vpcSubnets: { subnets: publicSubnets },
+        enableExecuteCommand: false,
+        circuitBreaker: { rollback: true },
+        minHealthyPercent: 0,
+        maxHealthyPercent: 200,
+      });
+
+      const lobbyTargetGroup = new elbv2.ApplicationTargetGroup(this, 'LobbyTargetGroup', {
+        targetGroupName: `${PREFIX}-lobby-tg`,
+        vpc,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        port: LOBBY_PORT,
+        targetType: elbv2.TargetType.IP,
+        healthCheck: {
+          enabled: true,
+          path: '/health',
+          healthyHttpCodes: '200',
+          interval: Duration.seconds(30),
+          timeout: Duration.seconds(5),
+        },
+        deregistrationDelay: Duration.seconds(30),
+      });
+      lobbyService.attachToApplicationTargetGroup(lobbyTargetGroup);
+
+      httpsListener.addAction('LobbyHostRule', {
+        priority: 10,
+        conditions: [elbv2.ListenerCondition.hostHeaders([LOBBY_HOSTNAME])],
+        action: elbv2.ListenerAction.forward([lobbyTargetGroup]),
+      });
+
+      new cdk.CfnOutput(this, 'LobbyHostname', { value: LOBBY_HOSTNAME });
+    }
 
     const hostedZoneId = this.node.tryGetContext('hostedZoneId')?.toString();
     const hostedZoneName = this.node.tryGetContext('hostedZoneName')?.toString();

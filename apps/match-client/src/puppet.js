@@ -88,7 +88,9 @@ export class GoldenPuppet {
   /** Load the golden page and wait for its game to boot. */
   mount(){
     const iframe = document.createElement('iframe');
-    iframe.src = '/index.html';
+    // hosted builds relocate the golden file (tools/build-client.mjs sets
+    // FOBAL_CONFIG); served from the repo root it lives at /index.html
+    iframe.src = (typeof window !== 'undefined' && window.FOBAL_CONFIG?.goldenUrl) || '/index.html';
     iframe.title = 'FOBAL online match (golden presentation)';
     iframe.style.cssText = 'width:100%;height:100%;border:0;pointer-events:none;';
     // replace, never append: a reconnect through the form mounts a fresh
@@ -122,14 +124,24 @@ export class GoldenPuppet {
     win.__present(manifest.rules?.ceremonies === true);
     game.goalReplay.cfg.enabled = false;  // the authoritative-engine hard rule, client-side too
     this.byExternal.clear();
+    // the golden scoreboard reads team.code (a static 3-letter tag baked
+    // into the built-in team defs) — derive it from the manifest names or
+    // every lobby match shows RED/SKY on the HUD. When both names share a
+    // 3-letter prefix (HOSTEDA/HOSTEDB), the third char becomes the first
+    // character where the names diverge so the tags stay distinct.
+    const cleaned = manifest.teams.map(t => t.name.replace(/[^A-Za-z0-9]/g, '').toUpperCase());
+    const codes = cleaned.map((n, i) => (n.slice(0, 3) || 'T' + (i + 1)).padEnd(3, 'X'));
+    if (codes[0] === codes[1]){
+      let d = 0;
+      while (d < cleaned[0].length && d < cleaned[1].length && cleaned[0][d] === cleaned[1][d]) d++;
+      codes[0] = (cleaned[0].slice(0, 2) + (cleaned[0][d] ?? '1')).padEnd(3, 'X');
+      codes[1] = (cleaned[1].slice(0, 2) + (cleaned[1][d] ?? '2')).padEnd(3, 'X');
+    }
     for (const idx of [0, 1]){
       const spec = manifest.teams[idx];
       const team = game.teams[idx];
       team.name = spec.name.toUpperCase();
-      // the golden scoreboard reads team.code (a static 3-letter tag baked
-      // into the built-in team defs) — derive it from the manifest name or
-      // every lobby match shows RED/SKY on the HUD
-      team.code = (spec.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'T' + (idx + 1)).padEnd(3, 'X');
+      team.code = codes[idx];
       const starters = spec.players.slice(0, 11);
       const benchSpec = spec.players.slice(11);
       const assignment = assignSlots(team.players.map(p => p.role), starters);

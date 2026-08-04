@@ -17,6 +17,7 @@ COPY packages/protocol/package.json packages/protocol/
 COPY packages/engine/package.json packages/engine/
 COPY apps/match-server/package.json apps/match-server/
 COPY apps/match-client/package.json apps/match-client/
+COPY apps/lobby-server/package.json apps/lobby-server/
 RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:22-slim
@@ -29,7 +30,11 @@ COPY package.json index.html ./
 COPY packages/protocol ./packages/protocol
 COPY packages/engine ./packages/engine
 COPY apps/match-server ./apps/match-server
-RUN mkdir -p /data/matches && chown -R node:node /data
+# the lobby (B1/B4) ships in the SAME image and runs as a second ECS service
+# with a command override:
+#   node_modules/.bin/tsx apps/lobby-server/src/index.ts
+COPY apps/lobby-server ./apps/lobby-server
+RUN mkdir -p /data/matches /data/lobby && chown -R node:node /data
 USER node
 EXPOSE 8473
 # mirrors the ECS container health check for local docker runs

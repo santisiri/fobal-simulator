@@ -82,6 +82,11 @@
   localBtn.onclick = () => mode('local');
   onlineBtn.onclick = () => mode('online');
 
+  // hosted builds inject window.FOBAL_CONFIG (tools/build-client.mjs);
+  // locally it is absent and the localhost defaults stand
+  if (window.FOBAL_CONFIG?.matchWsUrl)
+    document.getElementById('wsUrl').value = window.FOBAL_CONFIG.matchWsUrl;
+
   // golden presentation by default; ?simple keeps the minimal canvas renderer
   const useSimple = new URLSearchParams(location.search).has('simple');
   document.getElementById('spectator').style.display = useSimple ? 'block' : 'none';
