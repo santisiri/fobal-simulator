@@ -116,6 +116,7 @@
   const params = new URLSearchParams(location.search);
   if (params.get('lobby')) $('lobbyUrl').value = params.get('lobby');
   else if (session?.url) $('lobbyUrl').value = session.url;
+  else if (window.FOBAL_CONFIG?.lobbyUrl) $('lobbyUrl').value = window.FOBAL_CONFIG.lobbyUrl;
 
   const api = async (path, { method = 'GET', body } = {}) => {
     const res = await fetch(`${session.url}${path}`, {

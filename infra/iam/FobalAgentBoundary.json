@@ -279,7 +279,7 @@
       "Sid": "DenyRegionalDeploymentOutsideSaEastOne",
       "Effect": "Deny",
       "NotAction": [
-        "acm:ListCertificates",
+        "acm:*",
         "cloudfront:*",
         "ecr:GetAuthorizationToken",
         "iam:*",

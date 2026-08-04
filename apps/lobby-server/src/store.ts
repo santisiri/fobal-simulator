@@ -1,9 +1,14 @@
-// Durable lobby state. v0 is a small file-backed store: accounts and match
-// records survive restarts; presence, login codes and pending challenges are
-// deliberately ephemeral (they are seconds-to-minutes state). The DynamoDB
-// backend (B4, infra agent) arrives behind this same surface.
+// Durable lobby state: accounts and match records survive restarts;
+// presence, login codes and pending challenges are deliberately ephemeral
+// (seconds-to-minutes state). Two persistence layers, composable:
+//   - file (storeRoot): local dev, and the task's scratch disk
+//   - object store (S3 write-through + hydrate-on-boot): staging — Fargate
+//     disks are ephemeral, so accounts live in the replay bucket under a
+//     lobby/ prefix. Low write rate, tiny documents; DynamoDB only becomes
+//     worth its machinery when accounts turn into a real product surface.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ObjectStore } from '@fobal/match-server';
 
 export interface Account {
   accountId: string;
@@ -29,19 +34,57 @@ export interface MatchRecord {
 
 const MAX_MATCH_RECORDS = 200;
 
+export interface LobbyStoreOptions {
+  /** local directory (dev); omitted → memory + optional object store */
+  root?: string;
+  /** durable mirror (staging: the replay bucket) — call hydrate() on boot */
+  objectStore?: ObjectStore;
+  /** object key prefix (default 'lobby/') */
+  keyPrefix?: string;
+  /** mirror failures land here (they must never crash a request) */
+  onMirrorError?: (err: Error) => void;
+}
+
 export class LobbyStore {
   private accounts = new Map<string, Account>();
   private byEmail = new Map<string, string>();
   private matches: MatchRecord[] = [];
+  private root?: string;
+  private objects?: ObjectStore;
+  private prefix: string;
+  private onMirrorError: (err: Error) => void;
 
-  constructor(private root?: string){
-    if (!root) return;
-    mkdirSync(root, { recursive: true });
-    for (const account of this.readJson<Account[]>('accounts.json') ?? []){
-      this.accounts.set(account.accountId, account);
-      this.byEmail.set(account.email, account.accountId);
+  constructor(rootOrOptions?: string | LobbyStoreOptions){
+    const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions ?? {};
+    this.root = options.root;
+    this.objects = options.objectStore;
+    this.prefix = options.keyPrefix ?? 'lobby/';
+    this.onMirrorError = options.onMirrorError ?? (() => {});
+    if (this.root){
+      mkdirSync(this.root, { recursive: true });
+      for (const account of this.readJson<Account[]>('accounts.json') ?? []){
+        this.accounts.set(account.accountId, account);
+        this.byEmail.set(account.email, account.accountId);
+      }
+      this.matches = this.readJson<MatchRecord[]>('matches.json') ?? [];
     }
-    this.matches = this.readJson<MatchRecord[]>('matches.json') ?? [];
+  }
+
+  /** Load state from the object store (staging boot: the local disk is
+   *  empty, S3 is the memory). Object-store state wins over disk state. */
+  async hydrate(): Promise<void> {
+    if (!this.objects) return;
+    const accounts = await this.objects.get(`${this.prefix}accounts.json`);
+    if (accounts !== null){
+      this.accounts.clear();
+      this.byEmail.clear();
+      for (const account of JSON.parse(accounts) as Account[]){
+        this.accounts.set(account.accountId, account);
+        this.byEmail.set(account.email, account.accountId);
+      }
+    }
+    const matches = await this.objects.get(`${this.prefix}matches.json`);
+    if (matches !== null) this.matches = JSON.parse(matches) as MatchRecord[];
   }
 
   private readJson<T>(file: string): T | null {
@@ -50,8 +93,12 @@ export class LobbyStore {
   }
 
   private writeJson(file: string, value: unknown): void {
-    if (!this.root) return;
-    writeFileSync(join(this.root, file), JSON.stringify(value, null, 2));
+    const data = JSON.stringify(value, null, 2);
+    if (this.root) writeFileSync(join(this.root, file), data);
+    // fire-and-forget mirror: the local write already succeeded, a lost
+    // mirror write only costs durability across a task replacement
+    this.objects?.put(`${this.prefix}${file}`, data)
+      .catch(err => this.onMirrorError(err as Error));
   }
 
   private persistAccounts(): void { this.writeJson('accounts.json', [...this.accounts.values()]); }

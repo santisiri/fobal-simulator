@@ -27,6 +27,8 @@ export interface LobbyServerOptions {
   secret?: string;                  // session HMAC secret
   /** root for the file-backed store; omitted → memory-only (tests) */
   storeRoot?: string;
+  /** pre-built store (e.g. S3-mirrored, already hydrated) — overrides storeRoot */
+  store?: LobbyStore;
   /** where and how to create authoritative matches */
   matchServer: {
     url: string;                    // lobby → match server (may be internal)
@@ -88,7 +90,7 @@ const sanitizeHandle = (localPart: string): string =>
 
 export async function startLobbyServer(options: LobbyServerOptions): Promise<LobbyServer> {
   const secret = options.secret ?? randomBytes(24).toString('base64url');
-  const store = new LobbyStore(options.storeRoot);
+  const store = options.store ?? new LobbyStore(options.storeRoot);
   const corsOrigin = options.corsOrigin ?? '*';
   const json = jsonWithCors(corsOrigin);
   const presenceTtl = options.presenceTtlMs ?? 12_000;

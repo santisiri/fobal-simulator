@@ -155,20 +155,51 @@
       "Sid": "ElbFobalStaging",
       "Effect": "Allow",
       "Action": [
+        "elasticloadbalancing:AddListenerCertificates",
         "elasticloadbalancing:AddTags",
         "elasticloadbalancing:CreateListener",
         "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateRule",
         "elasticloadbalancing:CreateTargetGroup",
         "elasticloadbalancing:DeleteListener",
         "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteRule",
         "elasticloadbalancing:DeleteTargetGroup",
         "elasticloadbalancing:DeregisterTargets",
         "elasticloadbalancing:ModifyListener",
         "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyRule",
         "elasticloadbalancing:ModifyTargetGroup",
         "elasticloadbalancing:ModifyTargetGroupAttributes",
         "elasticloadbalancing:RegisterTargets",
-        "elasticloadbalancing:RemoveTags"
+        "elasticloadbalancing:RemoveListenerCertificates",
+        "elasticloadbalancing:RemoveTags",
+        "elasticloadbalancing:SetRulePriorities"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFrontStagingWeb",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateDistribution",
+        "cloudfront:CreateInvalidation",
+        "cloudfront:CreateOriginAccessControl",
+        "cloudfront:DeleteDistribution",
+        "cloudfront:DeleteOriginAccessControl",
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:GetInvalidation",
+        "cloudfront:GetOriginAccessControl",
+        "cloudfront:GetOriginAccessControlConfig",
+        "cloudfront:ListDistributions",
+        "cloudfront:ListInvalidations",
+        "cloudfront:ListOriginAccessControls",
+        "cloudfront:ListTagsForResource",
+        "cloudfront:TagResource",
+        "cloudfront:UntagResource",
+        "cloudfront:UpdateDistribution",
+        "cloudfront:UpdateOriginAccessControl"
       ],
       "Resource": "*"
     },
@@ -317,6 +348,8 @@
       "Resource": [
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-task-role",
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-execution-role",
+        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-execution-role",
         "arn:aws:iam::368426158592:role/cdk-fobalstag-cfn-exec-role-368426158592-sa-east-1"
       ],
       "Condition": {

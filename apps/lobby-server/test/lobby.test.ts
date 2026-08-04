@@ -217,3 +217,30 @@ describe('challenge → accept → authoritative match', () => {
     } finally { await lobby.close(); }
   });
 });
+
+describe('object-store persistence (staging: ephemeral Fargate disk)', () => {
+  test('accounts and match records hydrate from the object store across a "task replacement"', async () => {
+    const { MemoryObjectStore } = await import('@fobal/match-server');
+    const { LobbyStore } = await import('../src/index.js');
+    const objects = new MemoryObjectStore();
+
+    const first = new LobbyStore({ objectStore: objects });
+    await first.hydrate();
+    first.saveAccount({
+      accountId: 'acc-11111111', email: 'santi@fobal.ai', handle: 'santi',
+      teamKey: 'santi-11111111', teamName: 'GOLDEN PUPPETS', createdAt: new Date().toISOString(),
+    });
+    first.saveMatch({
+      matchId: 'lm-x', matchUrl: 'https://matches-staging.fobal.ai',
+      createdAt: new Date().toISOString(), spectatorToken: 'spec',
+      players: { 'acc-11111111': { teamId: 'team-santi-11111111', token: 't' } }, left: {},
+    });
+    await new Promise(r => setTimeout(r, 20));      // fire-and-forget mirror settles
+
+    // brand-new task: empty disk, same bucket
+    const second = new LobbyStore({ objectStore: objects });
+    await second.hydrate();
+    expect(second.getAccountByEmail('santi@fobal.ai')?.teamName).toBe('GOLDEN PUPPETS');
+    expect(second.matchesFor('acc-11111111')).toHaveLength(1);
+  });
+});

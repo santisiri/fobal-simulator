@@ -70,18 +70,44 @@
       "Sid": "AlbFobalStagingManagement",
       "Effect": "Allow",
       "Action": [
+        "elasticloadbalancing:AddListenerCertificates",
         "elasticloadbalancing:AddTags",
         "elasticloadbalancing:CreateListener",
         "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateRule",
         "elasticloadbalancing:CreateTargetGroup",
         "elasticloadbalancing:DeleteListener",
         "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:DeleteRule",
         "elasticloadbalancing:DeleteTargetGroup",
         "elasticloadbalancing:ModifyListener",
         "elasticloadbalancing:ModifyLoadBalancerAttributes",
+        "elasticloadbalancing:ModifyRule",
         "elasticloadbalancing:ModifyTargetGroup",
         "elasticloadbalancing:ModifyTargetGroupAttributes",
-        "elasticloadbalancing:RemoveTags"
+        "elasticloadbalancing:RemoveListenerCertificates",
+        "elasticloadbalancing:RemoveTags",
+        "elasticloadbalancing:SetRulePriorities"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFrontStagingWebStack",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateDistribution",
+        "cloudfront:CreateOriginAccessControl",
+        "cloudfront:DeleteDistribution",
+        "cloudfront:DeleteOriginAccessControl",
+        "cloudfront:GetDistribution",
+        "cloudfront:GetDistributionConfig",
+        "cloudfront:GetOriginAccessControl",
+        "cloudfront:GetOriginAccessControlConfig",
+        "cloudfront:ListTagsForResource",
+        "cloudfront:TagResource",
+        "cloudfront:UntagResource",
+        "cloudfront:UpdateDistribution",
+        "cloudfront:UpdateOriginAccessControl"
       ],
       "Resource": "*"
     },
@@ -225,7 +251,9 @@
       "Action": "iam:PassRole",
       "Resource": [
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-task-role",
-        "arn:aws:iam::368426158592:role/Fobal-staging-match-server-execution-role"
+        "arn:aws:iam::368426158592:role/Fobal-staging-match-server-execution-role",
+        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-execution-role"
       ],
       "Condition": {
         "StringEquals": {
