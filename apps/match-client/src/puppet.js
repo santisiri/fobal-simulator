@@ -256,9 +256,27 @@ export class GoldenPuppet {
    */
   enableCoaching(conn){
     const game = this.win.game;
-    const myTeamIdx = this.teamIdxByExternal.get(conn.teamId);
+    const myTeamIdx = this.teamIdxByExternal.get(conn.teamId) ?? 0;
+    this.myTeamIdx = myTeamIdx;
     this.iframe.style.pointerEvents = 'auto';
     const commandId = (tag) => `ui-${tag}-${Date.now()}`;
+
+    if (myTeamIdx !== 0){
+      // Dugout mirage: the golden panels hardcode teams[0] as "the coached
+      // team". For an away controller, the PANEL DRAWS ALONE receive a view
+      // of game with the team array reordered — their own bench, tactics
+      // sliders and coach label. The pitch, kits, score, crowd and every
+      // other surface render from the real game, identical for all viewers.
+      const mirage = new Proxy(game, {
+        get: (t, k) => k === 'teams' ? [t.teams[myTeamIdx], t.teams[1 - myTeamIdx]] : Reflect.get(t, k),
+        set: (t, k, v) => Reflect.set(t, k, v),
+      });
+      const r = game.renderer;
+      for (const m of ['drawSubPanel', 'drawTacticsPanel', 'drawCoachConsole']){
+        const orig = r[m].bind(r);
+        r[m] = () => orig(mirage);
+      }
+    }
 
     // ack/reject feedback through the golden announcer
     const prevAck = conn.hooks.onAck, prevRej = conn.hooks.onRejected;
@@ -270,7 +288,7 @@ export class GoldenPuppet {
 
     // bench panel CONFIRM funnel
     game.performSub = (team, out, sub) => {
-      if (myTeamIdx !== 0){ game.announce('BENCH: away-side panel not wired yet', 2.5); return false; }
+      if (team !== game.teams[myTeamIdx]){ game.announce("THAT'S THE OTHER DUGOUT", 2); return false; }
       const playerOut = this.externalOf.get(out), playerIn = this.externalOf.get(sub);
       if (!playerOut || !playerIn) return false;
       conn.sendCommand({ kind: 'substitution', commandId: commandId('sub'),
@@ -298,7 +316,7 @@ export class GoldenPuppet {
     const TACTIC_STR = ['scheme', 'attackSide', 'style'];
     const clamp01 = (v) => Math.min(1, Math.max(0, Number(v) || 0));
     const snapshotTactics = () => {
-      const team = game.teams[0], T = team.tactics, out = {};
+      const team = game.teams[myTeamIdx], T = team.tactics, out = {};
       for (const k of TACTIC_NUM) out[k] = +clamp01(T[k]).toFixed(3);
       for (const k of TACTIC_STR) if (T[k] !== undefined) out[k] = T[k];
       out.formation = team.assignedFormation ?? T.formation;
