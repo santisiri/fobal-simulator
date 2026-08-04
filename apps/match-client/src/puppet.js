@@ -491,6 +491,76 @@ export class GoldenPuppet {
     this.playClip(clips[0]);
   }
 
+  /**
+   * C1 — voice coaching. The golden coach console IS the voice UI: while
+   * you hold the talk control, the live transcript streams into the golden
+   * console's input line (blinking caret and all); on release, the final
+   * text goes through the exact applyCoach seam the typed console uses —
+   * one coach_text command, parsed authoritatively by the server's golden
+   * parseCoach. Browser-native speech recognition (v0): no keys, no infra;
+   * the C2 LLM interpreter later upgrades parsing + language coverage.
+   */
+  enableVoice(){
+    const win = this.win, game = this.win.game;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR){ this.voiceSupported = false; return false; }
+    this.voiceSupported = true;
+    this.voiceLang = navigator.language || 'en-US';
+    let rec = null;
+    const start = () => {
+      if (rec) return;
+      rec = new SR();
+      rec.lang = this.voiceLang;
+      rec.interimResults = true;
+      rec.continuous = true;
+      let finalText = '';
+      game.openCoach();
+      // voice mode owns the console: the golden textHandler would type the
+      // held talk key into the transcript. Escape cancels without sending.
+      game.input.textHandler = (e) => {
+        if (e.code === 'Escape'){ const r = rec; rec = null; r?.abort?.(); game.closeCoach(); }
+      };
+      game.coachText = '';
+      rec.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++){
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += t;
+          else interim += t;
+        }
+        game.coachText = (finalText + interim).trim().slice(0, 280);
+      };
+      rec.onerror = (e) => { game.announce('VOICE: ' + (e.error ?? 'error').toUpperCase(), 2.2); };
+      rec.onend = () => {
+        if (!rec) return;          // cancelled via Escape
+        rec = null;
+        this.submitVoiceTranscript(game.coachText);
+      };
+      try { rec.start(); game.announce('LISTENING…', 1.5); }
+      catch { rec = null; game.closeCoach(); }
+    };
+    const stop = () => { rec?.stop(); };   // onend delivers the final transcript
+    this.voiceStart = start;
+    this.voiceStop = stop;
+    // hold-to-talk on X inside the golden page (unused by golden shortcuts);
+    // guarded so typing an x in the open console never hijacks the mic
+    win.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyX' && !e.repeat && !game.coachOpen) start();
+    });
+    win.addEventListener('keyup', (e) => { if (e.code === 'KeyX') stop(); });
+    return true;
+  }
+
+  /** The transcript's exit door — also the headless test seam: everything
+   *  after the microphone is exactly the typed coach-console path. */
+  submitVoiceTranscript(text){
+    const game = this.win.game;
+    if (!game.coachOpen) game.openCoach();
+    game.coachText = String(text ?? '').trim().slice(0, 280);
+    if (game.coachText) game.applyCoach();   // controller override → coach_text command
+    else game.closeCoach();
+  }
+
   showBanner(text, live, seconds){
     if (!live && seconds !== 0) return;    // stale HT banners stay quiet on join
     const match = this.win.game.match;
