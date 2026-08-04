@@ -22,6 +22,7 @@ import { generateSigningKeys, SigningKeys } from './signing.js';
 import { signToken, verifyToken } from './tokens.js';
 import { extractGoalClips } from './replays.js';
 import { CoachInterpreterOptions, createCoachInterpreter } from './coach.js';
+import { noopTelemetry, Telemetry } from './telemetry.js';
 
 export interface MatchServerOptions {
   port?: number;                 // 0 → ephemeral
@@ -43,6 +44,21 @@ export interface MatchServerOptions {
   /** LLM tactical interpreter (C2); absent → the endpoint answers 501 and
    *  clients fall back to the golden parseCoach path */
   coach?: CoachInterpreterOptions;
+  /** structured logs + metrics; default silent (the CLI always provides one) */
+  telemetry?: Telemetry;
+  /** browser Origin allowlist for WebSocket upgrades. Unset/empty → allow
+   *  all. Requests WITHOUT an Origin header (server-to-server tools, the
+   *  acceptance scripts) are always allowed — origin checks defend against
+   *  cross-site browser connections, which cannot omit the header. */
+  wsOrigins?: string[];
+  /** concurrent WS connections allowed per client IP (default 20) */
+  maxConnectionsPerIp?: number;
+  /** total concurrent WS connections (default 500) */
+  maxConnections?: number;
+  /** derive client IPs from x-forwarded-for (set ONLY behind the ALB) */
+  trustProxy?: boolean;
+  /** gauge heartbeat interval; 0 disables (default 30s) */
+  heartbeatMs?: number;
 }
 
 export interface MatchServer {
@@ -97,15 +113,34 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   const corsOrigin = options.corsOrigin ?? '*';
   const json = jsonWithCors(corsOrigin);
   const interpretCoach = createCoachInterpreter(options.coach ?? {});
+  const telemetry = options.telemetry ?? noopTelemetry;
+  const wsOrigins = (options.wsOrigins ?? []).map(o => o.toLowerCase());
+  const maxPerIp = options.maxConnectionsPerIp ?? 20;
+  const maxConnections = options.maxConnections ?? 500;
   const rooms = new Map<string, MatchRoom>();
   const clipsCache = new Map<string, unknown>();
+  const connectionsByIp = new Map<string, number>();
+  let connectionsOpen = 0;
   let nextClientId = 1;
 
+  function clientIp(req: IncomingMessage): string {
+    if (options.trustProxy){
+      const xff = req.headers['x-forwarded-for'];
+      const first = (Array.isArray(xff) ? xff[0] : xff)?.split(',')[0]?.trim();
+      if (first) return first;
+    }
+    return req.socket.remoteAddress ?? 'unknown';
+  }
+
   const roomOptions = {
-    store, keys, ...(options.roomDefaults ?? {}),
+    store, keys, telemetry, ...(options.roomDefaults ?? {}),
     // finished matches are served from the store; keeping the room (a whole
     // vm sandbox + event history) alive would leak per match
-    onFinalized: (room: MatchRoom) => { room.stop(); rooms.delete(room.matchId); },
+    onFinalized: (room: MatchRoom) => {
+      room.stop();
+      rooms.delete(room.matchId);
+      telemetry.metric('RoomsActive', rooms.size);
+    },
   };
 
   function createMatch(rawManifest: unknown){
@@ -114,6 +149,9 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       throw new Error(`match ${manifest.matchId} already exists`);
     const room = MatchRoom.create(manifest, roomOptions);
     rooms.set(manifest.matchId, room);
+    telemetry.log('room_created', { matchId: manifest.matchId, teams: manifest.teams.map(t => t.name) });
+    telemetry.metric('RoomCreated', 1);
+    telemetry.metric('RoomsActive', rooms.size);
     if (options.autoDrive) room.startRealtime();
     const tokens: Record<string, string> = {};
     for (const team of manifest.teams)
@@ -226,6 +264,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         const snap = room.snapshot();
         const mine = snap.teams.findIndex(t => t.teamId === payload.teamId);
         const opp = snap.teams[1 - mine];
+        const startedAt = Date.now();
         const result = await interpretCoach(text.trim(), {
           teamName: room.manifest.teams[mine]?.name ?? payload.teamId,
           scoreLine: `${snap.score[0]}-${snap.score[1]}`,
@@ -233,6 +272,9 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           currentTactics: (snap.teams[mine]?.tactics ?? {}) as Record<string, unknown>,
           opponent: { formation: opp?.tactics.formation, style: opp?.tactics.style, pressing: opp?.tactics.pressing },
         });
+        const outcome = result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
+        telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
+        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
         return json(res, 200, result);
       }
 
@@ -260,8 +302,40 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
     }
   });
 
-  const wss = new WebSocketServer({ server: httpServer, maxPayload: 256 * 1024 });
-  wss.on('connection', (socket: WebSocket) => {
+  const wss = new WebSocketServer({
+    server: httpServer,
+    maxPayload: 256 * 1024,
+    // origin gate at the HTTP upgrade: a browser cannot forge or omit
+    // Origin, so an allowlist blocks cross-site pages from even opening a
+    // socket; tools (no Origin header) pass — they hold real tokens anyway
+    verifyClient: ({ origin }, cb) => {
+      if (!wsOrigins.length || !origin || wsOrigins.includes('*') || wsOrigins.includes(origin.toLowerCase()))
+        return cb(true);
+      telemetry.warn('ws_origin_rejected', { origin });
+      telemetry.metric('OriginRejected', 1);
+      cb(false, 403, 'origin not allowed');
+    },
+  });
+  wss.on('connection', (socket: WebSocket, req: IncomingMessage) => {
+    const ip = clientIp(req);
+    // connection caps: per-IP against one misbehaving client, global as the
+    // process backstop. 1013 = "try again later".
+    if ((connectionsByIp.get(ip) ?? 0) >= maxPerIp || connectionsOpen >= maxConnections){
+      telemetry.warn('ws_connection_capped', { ip, open: connectionsOpen });
+      telemetry.metric('ConnectionCapped', 1);
+      socket.close(1013, 'too many connections');
+      return;
+    }
+    connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
+    connectionsOpen++;
+    telemetry.metric('ConnectionsOpen', connectionsOpen);
+    const releaseIp = (): void => {
+      const left = (connectionsByIp.get(ip) ?? 1) - 1;
+      if (left <= 0) connectionsByIp.delete(ip);
+      else connectionsByIp.set(ip, left);
+      connectionsOpen--;
+      telemetry.metric('ConnectionsOpen', connectionsOpen);
+    };
     const clientId = nextClientId++;
     let room: MatchRoom | null = null;
     let client: RoomClient | null = null;
@@ -291,12 +365,16 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           }
           const payload = verifyToken(msg.token, secret);
           if (!payload || payload.matchId !== msg.matchId){
+            telemetry.warn('hello_rejected', { reason: 'unauthorized', matchId: msg.matchId, ip });
+            telemetry.metric('HelloRejected', 1);
             send({ type: 'error', code: 'unauthorized', message: 'invalid token for this match' });
             socket.close();
             return;
           }
           const target = rooms.get(msg.matchId);
           if (!target){
+            telemetry.warn('hello_rejected', { reason: 'unknown_match', matchId: msg.matchId, ip });
+            telemetry.metric('HelloRejected', 1);
             send({ type: 'error', code: 'unknown_match', message: 'no active match with that id' });
             socket.close();
             return;
@@ -304,6 +382,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           room = target;
           client = { id: clientId, role: payload.role, teamId: payload.teamId ?? null, send };
           clearTimeout(helloTimer);
+          telemetry.log('client_joined', { matchId: msg.matchId, role: payload.role, teamId: payload.teamId, ip });
           room.attach(client, msg.resumeFromSeq);
           return;
         }
@@ -320,9 +399,21 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       }
     });
 
-    socket.on('close', () => { clearTimeout(helloTimer); if (room) room.detach(clientId); });
+    socket.on('close', () => { clearTimeout(helloTimer); releaseIp(); if (room) room.detach(clientId); });
     socket.on('error', () => { /* close follows */ });
   });
+
+  // periodic gauges: cheap, and they make "is it alive / how loaded" a
+  // dashboard question instead of an ssh question
+  const heartbeatMs = options.heartbeatMs ?? 30_000;
+  const heartbeat = heartbeatMs > 0
+    ? setInterval(() => {
+        telemetry.metric('RoomsActive', rooms.size);
+        telemetry.metric('ConnectionsOpen', connectionsOpen);
+        telemetry.metric('MemoryRssMb', Math.round(process.memoryUsage.rss() / 1024 / 1024));
+      }, heartbeatMs)
+    : null;
+  heartbeat?.unref?.();
 
   await new Promise<void>(resolve => httpServer.listen(options.port ?? 0, resolve));
   const address = httpServer.address();
@@ -331,6 +422,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   return {
     httpServer, port, secret, createKey, store, rooms, createMatch,
     close: () => new Promise<void>((resolve) => {
+      if (heartbeat) clearInterval(heartbeat);
       for (const room of rooms.values()) room.stop();
       wss.close();
       httpServer.close(() => resolve());

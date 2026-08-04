@@ -15,6 +15,8 @@ export { MemoryObjectStore, S3ObjectStore } from './objectStore.js';
 export type { ObjectStore } from './objectStore.js';
 export { createCoachInterpreter } from './coach.js';
 export type { CoachContext, CoachInterpretation, CoachInterpreter, CoachInterpreterOptions } from './coach.js';
+export { createTelemetry, noopTelemetry } from './telemetry.js';
+export type { Telemetry, TelemetryOptions, MetricUnit } from './telemetry.js';
 
 // CLI entry — configuration is environment-only (ECS injects the secrets
 // from Secrets Manager; see infra/cdk/lib/fobal-staging-stack.ts):
@@ -26,12 +28,22 @@ export type { CoachContext, CoachInterpretation, CoachInterpreter, CoachInterpre
 //   FOBAL_REPLAY_BUCKET   S3 bucket (required for the s3 backend)
 //   FOBAL_S3_PREFIX       object key prefix (default matches/)
 //   FOBAL_SIGNING_KEY     PEM Ed25519 private key; ephemeral per boot when unset
+//   FOBAL_CLOUDWATCH_NAMESPACE  EMF metrics namespace (unset → plain log lines)
+//   FOBAL_WS_ORIGINS      comma-separated browser Origin allowlist for WS
+//                         upgrades (unset → allow all; tools always pass)
+//   FOBAL_MAX_CONN_PER_IP concurrent sockets per client IP (default 20)
+//   FOBAL_MAX_CONN        total concurrent sockets (default 500)
+//   FOBAL_TRUST_PROXY     '1' → client IP from x-forwarded-for (behind ALB)
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startMatchServer } = await import('./hub.js');
   const { MatchStore } = await import('./store.js');
   const { keysFromPem } = await import('./signing.js');
+  const { createTelemetry } = await import('./telemetry.js');
 
+  const telemetry = createTelemetry({
+    metricsNamespace: process.env.FOBAL_CLOUDWATCH_NAMESPACE,
+  });
   const backend = process.env.FOBAL_STORE_BACKEND ?? 'file';
   const storeRoot = process.env.FOBAL_STORE ?? 'var/matches';
   let store: InstanceType<typeof MatchStore>;
@@ -48,7 +60,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
       keyPrefix: process.env.FOBAL_S3_PREFIX ?? 'matches/',
     });
     const hydrated = await mirrored.hydrate();
-    console.log(JSON.stringify({ msg: 'store_hydrated', backend, bucket, matches: hydrated.length }));
+    telemetry.log('store_hydrated', { backend, bucket, matches: hydrated.length });
     store = mirrored;
     drain = () => mirrored.drain();
   } else if (backend === 'file'){
@@ -68,9 +80,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     // C2: the LLM coach interpreter activates when a key is present
     // (staging: Secrets Manager → env); FOBAL_AI_MODEL overrides the model
     coach: { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.FOBAL_AI_MODEL },
+    telemetry,
+    wsOrigins: process.env.FOBAL_WS_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean),
+    maxConnectionsPerIp: process.env.FOBAL_MAX_CONN_PER_IP ? Number(process.env.FOBAL_MAX_CONN_PER_IP) : undefined,
+    maxConnections: process.env.FOBAL_MAX_CONN ? Number(process.env.FOBAL_MAX_CONN) : undefined,
+    trustProxy: process.env.FOBAL_TRUST_PROXY === '1',
     autoDrive: true,   // drive created matches in real time; resume unfinished ones on boot
   });
-  console.log(JSON.stringify({ msg: 'listening', port: server.port, backend, activeRooms: server.rooms.size }));
+  telemetry.log('listening', { port: server.port, backend, activeRooms: server.rooms.size });
   // dev convenience only — a provisioned key must never reach the logs
   if (!process.env.FOBAL_CREATE_KEY)
     console.log(`generated match creation key: ${server.createKey}`);
@@ -79,7 +96,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const shutdown = async (signal: string): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    console.log(JSON.stringify({ msg: 'shutdown', signal }));
+    telemetry.log('shutdown', { signal });
     await server.close();       // stops rooms; last internal snapshots already on disk
     await drain();              // then let the S3 mirror finish uploading
     process.exit(0);
