@@ -37,6 +37,8 @@ export interface MatchServerOptions {
   autoDrive?: boolean;
   /** ms an unauthenticated socket may live before being terminated */
   helloTimeoutMs?: number;
+  /** Access-Control-Allow-Origin for the HTTP endpoints (default '*') */
+  corsOrigin?: string;
 }
 
 export interface MatchServer {
@@ -50,10 +52,19 @@ export interface MatchServer {
   close(): Promise<void>;
 }
 
-function json(res: ServerResponse, code: number, body: unknown): void {
-  const data = JSON.stringify(body);
-  res.writeHead(code, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) });
-  res.end(data);
+function jsonWithCors(corsOrigin: string) {
+  return function json(res: ServerResponse, code: number, body: unknown): void {
+    const data = JSON.stringify(body);
+    res.writeHead(code, {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(data),
+      // browser clients live on another origin (played locally or hosted at
+      // play.*); every GET is token-gated and auth travels in a header, not
+      // a cookie, so a permissive origin grants nothing by itself
+      'access-control-allow-origin': corsOrigin,
+    });
+    res.end(data);
+  };
 }
 
 async function readBody(req: IncomingMessage, limit = 1024 * 1024): Promise<string> {
@@ -74,6 +85,8 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   if (!options.store && options.storeRoot === undefined)
     throw new Error('startMatchServer requires either store or storeRoot');
   const store = options.store ?? new MatchStore(options.storeRoot!);
+  const corsOrigin = options.corsOrigin ?? '*';
+  const json = jsonWithCors(corsOrigin);
   const rooms = new Map<string, MatchRoom>();
   const clipsCache = new Map<string, unknown>();
   let nextClientId = 1;
@@ -121,6 +134,16 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
+
+      if (req.method === 'OPTIONS'){
+        res.writeHead(204, {
+          'access-control-allow-origin': corsOrigin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'authorization, content-type',
+          'access-control-max-age': '86400',
+        });
+        return res.end();
+      }
 
       // unauthenticated on purpose: the ALB/ECS health checks carry no token,
       // and nothing here leaks match data
