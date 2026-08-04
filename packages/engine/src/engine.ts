@@ -162,13 +162,21 @@ export class MatchEngine {
     const team = game.teams[teamIdx];
     if (command.kind === 'tactical'){
       const TacticalEngine = this.handle.evalIn('TacticalEngine');
-      if (command.payload.type === 'patch'){
-        TacticalEngine.apply(game, team, translateTactics(command.payload.patch, this.ids), 'command');
-      } else {
-        const parseCoach = this.handle.evalIn('parseCoach');
-        const { script, msgs } = parseCoach(command.payload.text, team);
-        if (msgs.length) TacticalEngine.apply(game, team, script, msgs.join(' · '));
-        else this.tap.emitSynthetic('other', { commandId: command.commandId, coachText: 'not understood' });
+      // the golden tactic log hardcodes the home team — attribute the event
+      // to the team the command actually addressed (cleared right after so
+      // golden-internal tactic shifts keep their own labeling)
+      this.tap.attributeNextTactic(command.teamId);
+      try {
+        if (command.payload.type === 'patch'){
+          TacticalEngine.apply(game, team, translateTactics(command.payload.patch, this.ids), 'command');
+        } else {
+          const parseCoach = this.handle.evalIn('parseCoach');
+          const { script, msgs } = parseCoach(command.payload.text, team);
+          if (msgs.length) TacticalEngine.apply(game, team, script, msgs.join(' · '));
+          else this.tap.emitSynthetic('other', { commandId: command.commandId, coachText: 'not understood' });
+        }
+      } finally {
+        this.tap.clearTacticAttribution();
       }
     } else if (command.kind === 'substitution'){
       const out = this.findByPid(team, this.ids.pid(command.playerOut));

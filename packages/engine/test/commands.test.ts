@@ -109,3 +109,28 @@ describe('deltas', () => {
     expect(third.players ?? []).toHaveLength(0);
   });
 });
+
+describe('tactic event attribution', () => {
+  test('a tactical command for the AWAY team emits an away-attributed event', () => {
+    // the golden notifyTactic log hardcodes the home team; the engine must
+    // attribute command-driven tactic events to the commanding team
+    const engine = MatchEngine.create(sampleManifest());
+    engine.run(120);
+    expect(engine.submit(acc(0, 200, {
+      kind: 'tactical', commandId: 'away-tac', teamId: 'team-comets',
+      payload: { type: 'patch', patch: { pressing: 0.95, defLine: 0.15 } },
+    })).accepted).toBe(true);
+    engine.run(200);
+    const tactics = engine.events().filter(e => e.type === 'tactic_change');
+    expect(tactics.length).toBeGreaterThan(0);
+    expect(tactics[tactics.length - 1]!.teamId).toBe('team-comets');
+    // coach text takes the same bracketed path
+    expect(engine.submit(acc(1, 500, {
+      kind: 'tactical', commandId: 'away-coach', teamId: 'team-comets',
+      payload: { type: 'coach_text', text: 'press high and play long balls' },
+    })).accepted).toBe(true);
+    engine.run(300);
+    const after = engine.events().filter(e => e.type === 'tactic_change');
+    expect(after[after.length - 1]!.teamId).toBe('team-comets');
+  });
+});

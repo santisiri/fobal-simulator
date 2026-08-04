@@ -46,8 +46,19 @@ export function formatClock(tMatch: number): string {
 export class EventTap {
   readonly events: MatchEvent[] = [];
   private seq = 0;
+  private tacticAttribution: string | null = null;
 
   constructor(private handle: GoldenHandle, private ids: IdMap){}
+
+  /**
+   * The golden notifyTactic hardcodes teams[0] when logging — a relic of
+   * "the human coaches home" — so a tactical command applied to the AWAY
+   * team is recorded with the wrong side. The engine brackets command
+   * application with this one-shot hint; the next 'tactic' recorder event
+   * is attributed to the commanding team instead of the golden guess.
+   */
+  attributeNextTactic(teamId: string): void { this.tacticAttribution = teamId; }
+  clearTacticAttribution(): void { this.tacticAttribution = null; }
 
   /** Wraps game.recorder.log — the single semantic chokepoint. */
   install(): void {
@@ -80,7 +91,11 @@ export class EventTap {
     // substitutions carry the pair as on/off pids, not actor/target
     const playerId = this.extPlayer(data.actor) ?? (type === 'substitution' ? this.extPlayer(data.on) : undefined);
     const targetExtra = type === 'substitution' ? this.extPlayer(data.off) : undefined;
-    const teamId = this.extTeam(data.team) ?? (playerId ? this.teamOfPlayer(playerId) : undefined);
+    let teamId = this.extTeam(data.team) ?? (playerId ? this.teamOfPlayer(playerId) : undefined);
+    if (type === 'tactic' && this.tacticAttribution !== null){
+      teamId = this.tacticAttribution;
+      this.tacticAttribution = null;
+    }
     const event: MatchEvent = {
       seq: this.seq++,
       tick: game.simTick,
