@@ -21,6 +21,16 @@ export interface Account {
   createdAt: string;
 }
 
+/** Cached POINTER to the signed result — the match server remains the sole
+ *  author; the lobby copies the summary once the match finishes. */
+export interface MatchResultSummary {
+  finalScore: [number, number];
+  /** teamId order matching finalScore (from the signed MatchResult) */
+  teams: [string, string];
+  finalStateHash: string;
+  finishedAt: string;
+}
+
 export interface MatchRecord {
   matchId: string;
   /** public http(s) base of the match server (clients derive the ws url) */
@@ -30,6 +40,7 @@ export interface MatchRecord {
   /** per-account join info; the OTHER player's token is never served to you */
   players: Record<string, { teamId: string; token: string }>;
   left: Record<string, boolean>;
+  result?: MatchResultSummary;
 }
 
 const MAX_MATCH_RECORDS = 200;
