@@ -13,6 +13,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.700.0",
     "@fobal/match-server": "*",
     "@fobal/protocol": "*",
     "tsx": "^4.19.0"

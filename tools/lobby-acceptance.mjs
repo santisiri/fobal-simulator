@@ -8,6 +8,10 @@
 //     --lobby https://lobby-staging.fobal.ai \
 //     --match-ws wss://matches-staging.fobal.ai
 //
+// Once staging retires dev auth (SES slice), pass the server-held test key
+// so the script can read codes: --test-key <value of the
+// fobal/staging/lobby-server/test-login-key secret>.
+//
 // Add --full (LAST on the command line) to also wait for full time
 // (~4 minutes) and verify B5: history with mirrored outcomes, automatic
 // player freeing, and rematch. Local smoke:
@@ -26,6 +30,7 @@ const args = parseArgs(process.argv.slice(2));
 const lobby = (args.lobby ?? 'http://localhost:8485').replace(/\/+$/, '');
 const matchWs = (args['match-ws'] ?? 'ws://localhost:8483').replace(/\/+$/, '');
 const full = 'full' in args;
+const testKey = args['test-key'];
 
 let passed = 0, failed = 0;
 const check = (name, ok, detail = '') => {
@@ -36,7 +41,12 @@ const check = (name, ok, detail = '') => {
 const post = async (path, body, token) => {
   const res = await fetch(`${lobby}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      // the test key rides every auth request; servers without one ignore it
+      ...(testKey ? { 'x-fobal-test-key': testKey } : {}),
+    },
     body: JSON.stringify(body),
   });
   return { status: res.status, body: await res.json().catch(() => ({})) };
@@ -49,7 +59,7 @@ const getState = async (token) => {
 async function login(email){
   const req = await post('/auth/request', { email });
   if (req.status !== 200 || !req.body.devCode)
-    throw new Error(`dev-auth login unavailable (${req.status}): ${JSON.stringify(req.body)}`);
+    throw new Error(`code not revealed (${req.status}) — pass --test-key on SES-auth servers: ${JSON.stringify(req.body)}`);
   const ver = await post('/auth/verify', { email, code: req.body.devCode });
   if (ver.status !== 200) throw new Error(`verify failed (${ver.status})`);
   return { token: ver.body.token, accountId: ver.body.account.accountId };

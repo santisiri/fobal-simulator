@@ -375,6 +375,22 @@
       ]
     },
     {
+      "Sid": "SesIdentityAndSandboxManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ses:CreateEmailIdentity",
+        "ses:DeleteEmailIdentity",
+        "ses:GetAccount",
+        "ses:GetEmailIdentity",
+        "ses:ListEmailIdentities",
+        "ses:PutAccountDetails",
+        "ses:SendEmail",
+        "ses:TagResource",
+        "ses:UntagResource"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "AcmCertificateManagement",
       "Effect": "Allow",
       "Action": [
