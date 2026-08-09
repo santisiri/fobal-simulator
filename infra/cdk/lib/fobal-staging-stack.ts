@@ -376,6 +376,16 @@ export class FobalStagingStack extends Stack {
         },
       });
 
+      // acceptance scripts present this via x-fobal-test-key to receive login
+      // codes in the response; real users only ever get codes by email
+      const lobbyTestLoginKey = new secretsmanager.Secret(this, 'LobbyTestLoginKey', {
+        secretName: 'fobal/staging/lobby-server/test-login-key',
+        generateSecretString: {
+          passwordLength: 48,
+          excludePunctuation: true,
+        },
+      });
+
       const lobbyTaskRole = new iam.Role(this, 'LobbyTaskRole', {
         roleName: 'Fobal-staging-lobby-server-task-role',
         assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -391,6 +401,11 @@ export class FobalStagingStack extends Stack {
               new iam.PolicyStatement({
                 actions: ['s3:ListBucket'],
                 resources: [replayBucket.bucketArn],
+              }),
+              // login codes go out via SES as the verified fobal.ai identity
+              new iam.PolicyStatement({
+                actions: ['ses:SendEmail'],
+                resources: [`arn:aws:ses:${REGION}:${ACCOUNT}:identity/fobal.ai`],
               }),
             ],
           }),
@@ -424,7 +439,7 @@ export class FobalStagingStack extends Stack {
                 actions: ['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'],
                 // the lobby shares the CREATE KEY with the match server — it
                 // is the only holder of it besides the match server itself
-                resources: [lobbySessionSecret.secretArn, createKey.secretArn],
+                resources: [lobbySessionSecret.secretArn, lobbyTestLoginKey.secretArn, createKey.secretArn],
               }),
             ],
           }),
@@ -460,12 +475,14 @@ export class FobalStagingStack extends Stack {
           FOBAL_LOBBY_BACKEND: 's3',
           FOBAL_LOBBY_BUCKET: replayBucket.bucketName,
           FOBAL_LOBBY_S3_PREFIX: 'lobby/',
-          // TEMPORARY until email delivery (SES) lands: login codes return
-          // in the response. Fine for staging; must never survive into prod.
-          FOBAL_DEV_AUTH: '1',
+          // login codes are DELIVERED (never returned): SES as fobal.ai.
+          // Acceptance scripts read codes via the test-login-key secret.
+          FOBAL_EMAIL_BACKEND: 'ses',
+          FOBAL_EMAIL_FROM: 'lobby@fobal.ai',
         },
         secrets: {
           FOBAL_LOBBY_SECRET: ecs.Secret.fromSecretsManager(lobbySessionSecret),
+          FOBAL_TEST_LOGIN_KEY: ecs.Secret.fromSecretsManager(lobbyTestLoginKey),
           FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
         },
         portMappings: [{ containerPort: LOBBY_PORT, protocol: ecs.Protocol.TCP }],

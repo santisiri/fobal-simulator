@@ -39,10 +39,17 @@ export interface LobbyServerOptions {
     createKey: string;
     publicUrl?: string;             // browser → match server (default: url)
   };
-  /** return login codes in the response instead of delivering them (DEV ONLY;
-   *  real delivery — SES — is a Phase B follow-up, seam: deliverCode) */
+  /** return login codes in the response instead of delivering them (LOCAL
+   *  DEV ONLY — staging/production deliver by email via deliverCode) */
   devAuth?: boolean;
+  /** production code delivery (SES: createSesDeliverer). With neither this
+   *  nor devAuth configured, /auth/request answers 501 — codes must never
+   *  silently vanish into a black hole. */
   deliverCode?: (email: string, code: string) => void | Promise<void>;
+  /** acceptance backdoor: requests carrying x-fobal-test-key equal to this
+   *  secret get the code in the response even with devAuth off. Held in
+   *  Secrets Manager on staging; never reaches clients. */
+  testLoginKey?: string;
   corsOrigin?: string;              // default '*'
   presenceTtlMs?: number;           // default 12s (client polls every ~2s)
   matchActiveMs?: number;           // default 10min (matches run ~3.5min)
@@ -268,16 +275,27 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         catch { return json(res, 400, { error: 'invalid JSON body' }); }
         if (typeof email !== 'string' || !EMAIL_RE.test(email) || email.length > 254)
           return json(res, 400, { error: 'a valid email is required' });
+        if (!options.devAuth && !options.deliverCode)
+          return json(res, 501, { error: 'login delivery is not configured' });
         const key = email.toLowerCase();
         const existing = loginCodes.get(key);
         if (existing && Date.now() - existing.lastRequestAt < authInterval)
           return json(res, 429, { error: 'code already sent — wait a few seconds' });
         const code = randomBytes(4).toString('hex');
         loginCodes.set(key, { code, expiresAt: Date.now() + LOGIN_CODE_TTL_MS, lastRequestAt: Date.now() });
-        await options.deliverCode?.(key, code);
-        // dev transport: the code rides the response; production delivery
-        // (SES) plugs into deliverCode and this branch stays off
-        return json(res, 200, options.devAuth ? { ok: true, devCode: code } : { ok: true });
+        if (options.deliverCode){
+          try { await options.deliverCode(key, code); }
+          catch {
+            // failed send must not leave a live code (or a rate-limit lock)
+            loginCodes.delete(key);
+            return json(res, 502, { error: 'could not send the login code — try again shortly' });
+          }
+        }
+        // the code rides the response for local dev, and for the acceptance
+        // scripts when they present the server-held test key
+        const reveal = options.devAuth === true
+          || (options.testLoginKey !== undefined && req.headers['x-fobal-test-key'] === options.testLoginKey);
+        return json(res, 200, reveal ? { ok: true, devCode: code } : { ok: true });
       }
 
       if (req.method === 'POST' && url.pathname === '/auth/verify'){

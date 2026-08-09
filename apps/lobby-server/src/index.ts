@@ -5,6 +5,8 @@ export type { Account, MatchRecord, MatchResultSummary, LobbyStoreOptions } from
 export { signSession, verifySession, SESSION_MAX_AGE_MS } from './sessions.js';
 export type { SessionPayload } from './sessions.js';
 export { buildTeam, buildManifest } from './teams.js';
+export { createSesDeliverer } from './email.js';
+export type { SesDelivererOptions } from './email.js';
 
 // CLI entry — configuration is environment-only:
 //   PORT                    listen port (default 8475)
@@ -16,6 +18,10 @@ export { buildTeam, buildManifest } from './teams.js';
 //                           (default: FOBAL_MATCH_URL)
 //   FOBAL_CREATE_KEY        match-server create key (REQUIRED)
 //   FOBAL_DEV_AUTH          '1' → login codes returned in the response (dev)
+//   FOBAL_EMAIL_BACKEND     'ses' → deliver codes by email (SESv2)
+//   FOBAL_EMAIL_FROM        verified sender identity (required for ses)
+//   FOBAL_TEST_LOGIN_KEY    secret; requests with x-fobal-test-key equal to
+//                           it receive the code in the response (acceptance)
 //   FOBAL_CORS_ORIGIN       Access-Control-Allow-Origin (default '*')
 //   FOBAL_LOBBY_BACKEND     'file' (default) or 's3' (hydrate + write-through
 //                           mirror; Fargate disks are ephemeral)
@@ -52,10 +58,23 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     store = new LobbyStore(storeRoot);
   }
   const devAuth = process.env.FOBAL_DEV_AUTH === '1';
+  let deliverCode;
+  if (process.env.FOBAL_EMAIL_BACKEND === 'ses'){
+    const from = process.env.FOBAL_EMAIL_FROM;
+    if (!from){
+      console.error('FOBAL_EMAIL_BACKEND=ses requires FOBAL_EMAIL_FROM (a verified SES identity)');
+      process.exit(1);
+    }
+    const { createSesDeliverer } = await import('./email.js');
+    deliverCode = createSesDeliverer({ from });
+    console.log(JSON.stringify({ msg: 'email_delivery', backend: 'ses', from }));
+  }
   const server = await startLobbyServer({
     port: Number(process.env.PORT ?? 8475),
     secret: process.env.FOBAL_LOBBY_SECRET,
     store,
+    deliverCode,
+    testLoginKey: process.env.FOBAL_TEST_LOGIN_KEY,
     matchServer: {
       url: process.env.FOBAL_MATCH_URL ?? 'http://localhost:8473',
       publicUrl: process.env.FOBAL_PUBLIC_MATCH_URL,
