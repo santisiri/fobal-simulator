@@ -154,3 +154,54 @@ AWS requires broad `Resource: "*"` for several read/list APIs:
 - `cloudformation:DescribeStacks` and related stack discovery in some CDK flows
 
 Those actions are read-only except `ecr:GetAuthorizationToken`, which returns a registry login token and cannot be repository-scoped.
+
+## Hosted client (play-staging.fobal.ai) — imperative, NOT stack-managed
+
+The CloudFront distribution serving the built client is created and managed
+IMPERATIVELY under the engineer role, not by CloudFormation. This is a
+deliberate exception, forced by a reproducible AWS quirk, and it also fits
+the standing rule that long-lived resources are created imperatively.
+
+**The quirk (isolated 2026-08-08, kept for the record):** creating an
+ENABLED `AWS::CloudFront::Distribution` with an ACM certificate through
+CloudFormation using the boundary-carrying exec role
+(`cdk-fobalstag-cfn-exec-role-*`) deterministically fails with
+`InvalidViewerCertificate` ("The specified SSL certificate doesn't
+exist…"), even though: the cert is ISSUED in us-east-1 with a full chain;
+the synthesized template carries the correct ARN; the boundary's default
+version exempts `acm:*` from the region lock; the exec role's identity
+policy grants `acm:Describe*/Get*/List*`; and the IDENTICAL config succeeds
+via `aws cloudfront create-distribution` under the engineer SSO role — and
+via CloudFormation for DISABLED distributions. Discriminator matrix:
+engineer+CLI+enabled ✓, root+CLI+disabled ✓, CFN+exec-role+disabled ✓ (not
+retested post-fix but earlier evidence), CFN+exec-role+enabled ✗ (5×,
+request ids in PR #32/#33 thread). Conclusion: CloudFront's on-behalf-of
+certificate visibility check fails closed for this principal via CFN;
+the written policies do not explain it.
+
+**Deployed resources (created under the engineer role):**
+
+- Distribution: `E35URO4KFESJYU`, domain `dozmg6c3es7yz.cloudfront.net`,
+  alias `play-staging.fobal.ai`, cert `*.fobal.ai`
+  (`arn:aws:acm:us-east-1:368426158592:certificate/eb808baf-f8c4-4a3a-8af9-4d1e57410c40`
+  — us-east-1 on purpose: CloudFront viewer certs must live there),
+  default root object `index.html`, redirect-to-https, compress,
+  CachingOptimized managed policy, http2and3, PriceClass_All.
+- Origin Access Control: `E24QXXYXV4R7X4` (s3, sigv4, always-sign) over
+  `fobal-staging-client-368426158592.s3.sa-east-1.amazonaws.com`.
+- Client bucket policy: CloudFront service principal `s3:GetObject` scoped
+  by `AWS:SourceArn` to the distribution, plus a deny-insecure-transport
+  statement. Applied imperatively (`aws s3api put-bucket-policy`).
+
+**Client redeploy runbook** (engineer role; no CDK involved):
+
+    node tools/build-client.mjs \
+      --lobby-url https://lobby-staging.fobal.ai \
+      --match-ws  wss://matches-staging.fobal.ai
+    aws s3 sync dist/client s3://fobal-staging-client-368426158592/ --delete
+    aws cloudfront create-invalidation --distribution-id E35URO4KFESJYU --paths '/*'
+
+DNS at iwantmyname: `play-staging.fobal.ai` CNAME →
+`dozmg6c3es7yz.cloudfront.net`; `lobby-staging.fobal.ai` CNAME → the ALB
+DNS name. The `fobal-staging-web` CDK stack that originally owned the
+distribution was retired in favor of this runbook.
