@@ -8,14 +8,18 @@
 //   POST /auth/verify                 {email, code} → {token, account}
 //   GET  /lobby                       roster + challenges + my active match
 //   POST /account/team                {teamName} rename my team
-//   POST /challenges                  {to} challenge a player
+//   POST /challenges                  {to, rematchOf?} challenge a player
 //   POST /challenges/:id/accept       creates the authoritative match
 //   POST /challenges/:id/decline      decline (or cancel your own)
 //   POST /matches/:id/leave           back to the lobby
+//   GET  /history                     my finished matches, W/D/L perspective
 //
 // Trust boundary: the lobby holds the match-server create key SERVER-SIDE
 // and never serves it. Players receive only role-scoped match tokens; the
-// match server remains the sole author of match state and signed results.
+// match server remains the sole author of match state and signed results —
+// B5 history merely CACHES result summaries the lobby reads back with the
+// spectator token it already holds (and uses them to auto-free players at
+// full time, so nobody has to click LEAVE).
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
 import { signSession, verifySession } from './sessions.js';
@@ -44,6 +48,10 @@ export interface LobbyServerOptions {
   matchActiveMs?: number;           // default 10min (matches run ~3.5min)
   challengeTtlMs?: number;          // default 2min
   authRequestIntervalMs?: number;   // default 5s per email
+  /** don't look for a result before a match is this old (default 3min) */
+  resultCheckAfterMs?: number;
+  /** min interval between result checks per match (default 20s) */
+  resultCheckEveryMs?: number;
 }
 
 export interface LobbyServer {
@@ -54,7 +62,7 @@ export interface LobbyServer {
   close(): Promise<void>;
 }
 
-interface Challenge { id: string; from: string; to: string; createdAt: number; }
+interface Challenge { id: string; from: string; to: string; createdAt: number; rematchOf?: string; }
 interface LoginCode { code: string; expiresAt: number; lastRequestAt: number; }
 
 const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
@@ -97,20 +105,70 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const matchActiveMs = options.matchActiveMs ?? 10 * 60 * 1000;
   const challengeTtl = options.challengeTtlMs ?? 2 * 60 * 1000;
   const authInterval = options.authRequestIntervalMs ?? 5_000;
+  const resultAfter = options.resultCheckAfterMs ?? 3 * 60 * 1000;
+  const resultEvery = options.resultCheckEveryMs ?? 20_000;
   const matchUrl = options.matchServer.url.replace(/\/+$/, '');
   const publicMatchUrl = (options.matchServer.publicUrl ?? matchUrl).replace(/\/+$/, '');
 
   const loginCodes = new Map<string, LoginCode>();
   const presence = new Map<string, number>();
   const challenges = new Map<string, Challenge>();
+  const resultChecks = new Map<string, number>();   // matchId → last poll ms
 
   const online = (accountId: string): boolean =>
     (presence.get(accountId) ?? 0) > Date.now() - presenceTtl;
 
+  /** a match with a known result is over — players are free, no LEAVE needed */
   function activeMatchFor(accountId: string): MatchRecord | null {
     const cutoff = Date.now() - matchActiveMs;
     return store.matchesFor(accountId).find(m =>
-      !m.left[accountId] && Date.parse(m.createdAt) > cutoff) ?? null;
+      !m.result && !m.left[accountId] && Date.parse(m.createdAt) > cutoff) ?? null;
+  }
+
+  /** Fetch-and-cache the signed result once the match server has one. The
+   *  lobby reads with the spectator token it minted the record with; a 404
+   *  simply means the match is still playing. Throttled per match. */
+  async function ensureResult(record: MatchRecord): Promise<void> {
+    if (record.result) return;
+    if (Date.now() - Date.parse(record.createdAt) < resultAfter) return;
+    const last = resultChecks.get(record.matchId) ?? 0;
+    if (Date.now() - last < resultEvery) return;
+    resultChecks.set(record.matchId, Date.now());
+    try {
+      const res = await fetch(`${matchUrl}/matches/${record.matchId}/result`, {
+        headers: { authorization: `Bearer ${record.spectatorToken}` },
+      });
+      if (res.status !== 200) return;
+      const result = await res.json() as {
+        finalScore: [number, number]; teams: [string, string]; finalStateHash: string;
+      };
+      record.result = {
+        finalScore: result.finalScore,
+        teams: result.teams,
+        finalStateHash: result.finalStateHash,
+        finishedAt: new Date().toISOString(),
+      };
+      store.saveMatch(record);
+      resultChecks.delete(record.matchId);
+    } catch { /* match server unreachable — retried on a later poll */ }
+  }
+
+  function outcomeFor(record: MatchRecord, accountId: string): { my: number; opp: number; outcome: 'W' | 'D' | 'L' } | null {
+    const mine = record.players[accountId];
+    if (!record.result || !mine) return null;
+    const idx = record.result.teams[0] === mine.teamId ? 0 : 1;
+    const my = record.result.finalScore[idx]!;
+    const opp = record.result.finalScore[1 - idx]!;
+    return { my, opp, outcome: my > opp ? 'W' : my < opp ? 'L' : 'D' };
+  }
+
+  function recordTally(accountId: string): { w: number; d: number; l: number } {
+    const tally = { w: 0, d: 0, l: 0 };
+    for (const m of store.matchesFor(accountId)){
+      const o = outcomeFor(m, accountId);
+      if (o) tally[o.outcome === 'W' ? 'w' : o.outcome === 'D' ? 'd' : 'l']++;
+    }
+    return tally;
   }
 
   function sweepChallenges(): void {
@@ -150,21 +208,27 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       from: from ? publicAccount(from) : { accountId: c.from, handle: '?', teamName: '?' },
       to: to ? publicAccount(to) : { accountId: c.to, handle: '?', teamName: '?' },
       createdAt: new Date(c.createdAt).toISOString(),
+      rematch: c.rematchOf !== undefined,
     };
   }
 
-  function lobbyState(me: Account){
+  async function lobbyState(me: Account){
     sweepChallenges();
+    // full-time detection rides the poll: check my current match (throttled)
+    // so players free up automatically shortly after the final whistle
+    const current = activeMatchFor(me.accountId);
+    if (current) await ensureResult(current);
     const mine = [...challenges.values()];
     const match = activeMatchFor(me.accountId);
     return {
-      me: { ...publicAccount(me), email: me.email },
+      me: { ...publicAccount(me), email: me.email, record: recordTally(me.accountId) },
       players: store.listAccounts()
         .filter(a => a.accountId !== me.accountId)
         .map(a => ({
           ...publicAccount(a),
           online: online(a.accountId),
           inMatch: activeMatchFor(a.accountId) !== null,
+          record: recordTally(a.accountId),
         })),
       challenges: {
         incoming: mine.filter(c => c.to === me.accountId).map(challengeView),
@@ -248,7 +312,27 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (!me) return json(res, 401, { error: 'session token required' });
 
       if (req.method === 'GET' && url.pathname === '/lobby')
-        return json(res, 200, lobbyState(me));
+        return json(res, 200, await lobbyState(me));
+
+      if (req.method === 'GET' && url.pathname === '/history'){
+        const mine = store.matchesFor(me.accountId).slice(0, 20);
+        for (const record of mine) await ensureResult(record);
+        return json(res, 200, {
+          matches: mine.map(record => {
+            const oppId = Object.keys(record.players).find(id => id !== me.accountId);
+            const opp = oppId ? store.getAccount(oppId) : null;
+            const o = outcomeFor(record, me.accountId);
+            return {
+              matchId: record.matchId,
+              createdAt: record.createdAt,
+              finishedAt: record.result?.finishedAt ?? null,
+              opponent: opp ? publicAccount(opp) : null,
+              outcome: o?.outcome ?? null,
+              score: o ? [o.my, o.opp] : null,
+            };
+          }),
+        });
+      }
 
       if (req.method === 'POST' && url.pathname === '/account/team'){
         let teamName: unknown;
@@ -264,8 +348,12 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
 
       if (req.method === 'POST' && url.pathname === '/challenges'){
         sweepChallenges();
-        let to: unknown;
-        try { to = (JSON.parse(await readBody(req)) as { to?: unknown }).to; }
+        let to: unknown, rematchOf: unknown;
+        try {
+          const body = JSON.parse(await readBody(req)) as { to?: unknown; rematchOf?: unknown };
+          to = body.to;
+          rematchOf = body.rematchOf;
+        }
         catch { return json(res, 400, { error: 'invalid JSON body' }); }
         if (typeof to !== 'string' || to === me.accountId)
           return json(res, 400, { error: 'challenge someone else' });
@@ -277,9 +365,17 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         for (const c of challenges.values())
           if ((c.from === me.accountId && c.to === to) || (c.from === to && c.to === me.accountId))
             return json(res, 409, { error: 'a challenge between you is already pending' });
+        // rematch is just a challenge wearing history: the reference must be a
+        // match the two of you actually played (it only decorates the invite)
+        if (rematchOf !== undefined){
+          const played = typeof rematchOf === 'string'
+            && store.matchesFor(me.accountId).some(m => m.matchId === rematchOf && m.players[to] !== undefined);
+          if (!played) return json(res, 400, { error: 'rematchOf must be a match you both played' });
+        }
         const challenge: Challenge = {
           id: `ch-${randomBytes(4).toString('hex')}`,
           from: me.accountId, to, createdAt: Date.now(),
+          ...(typeof rematchOf === 'string' ? { rematchOf } : {}),
         };
         challenges.set(challenge.id, challenge);
         return json(res, 201, { challenge: challengeView(challenge) });

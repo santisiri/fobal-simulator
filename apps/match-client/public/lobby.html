@@ -33,6 +33,13 @@
   .player .team { opacity: 0.65; font-size: 12px; }
   .tag { font-size: 10px; letter-spacing: 1px; padding: 2px 6px; border-radius: 4px;
     border: 1px solid rgba(232,238,245,0.3); opacity: 0.8; }
+  .rec { font-size: 11px; opacity: 0.6; letter-spacing: 1px; }
+  .badge { font-weight: 700; width: 20px; height: 20px; border-radius: 4px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+  .badge.W { background: #123726; color: #2be08f; }
+  .badge.D { background: #1c2430; color: #9fb2c8; }
+  .badge.L { background: #3a1420; color: #ffb0a8; }
+  .badge.live { background: #0c1320; color: #e8eef5; font-size: 9px; width: auto; padding: 0 6px; }
   .muted { opacity: 0.6; font-size: 12px; }
   .err { color: #ffb0a8; font-size: 12px; min-height: 16px; }
   #matchCard { border-color: #2be08f; box-shadow: 0 0 24px rgba(43,224,143,0.15); }
@@ -96,6 +103,11 @@
     <div class="card">
       <h2>PLAYERS ONLINE</h2>
       <div id="players"><span class="muted">nobody else is here yet</span></div>
+    </div>
+
+    <div class="card">
+      <h2>MATCH HISTORY</h2>
+      <div id="history"><span class="muted">no matches yet — challenge someone</span></div>
     </div>
     <div class="err" id="lobbyErr"></div>
   </section>
@@ -189,16 +201,18 @@
     return `index.html?ws=${encodeURIComponent(ws)}&match=${encodeURIComponent(match.matchId)}&token=${encodeURIComponent(token)}`;
   }
 
+  const rec = r => r ? `<span class="rec">${r.w}W ${r.d}D ${r.l}L</span>` : '';
+
   function render(state){
     $('who').textContent = `${state.me.handle} · ${state.me.teamName}`;
-    $('teamName').textContent = state.me.teamName;
+    $('teamName').innerHTML = `${esc(state.me.teamName)} &nbsp;${rec(state.me.record)}`;
 
     const players = state.players
       .sort((a, b) => (b.online - a.online) || a.handle.localeCompare(b.handle))
       .map(p => `
         <div class="player">
           <span class="dot ${p.online ? 'on' : ''}"></span>
-          <span class="name">${esc(p.handle)}</span>
+          <span class="name">${esc(p.handle)} ${rec(p.record)}</span>
           <span class="team">${esc(p.teamName)}</span>
           ${p.inMatch ? '<span class="tag">IN MATCH</span>'
             : p.online ? `<button data-challenge="${p.accountId}">CHALLENGE</button>` : ''}
@@ -208,7 +222,7 @@
     const rows = [
       ...state.challenges.incoming.map(c => `
         <div class="player">
-          <span class="name">⚔ ${esc(c.from.handle)} (${esc(c.from.teamName)}) challenges you</span>
+          <span class="name">⚔ ${esc(c.from.handle)} (${esc(c.from.teamName)}) ${c.rematch ? 'wants a REMATCH' : 'challenges you'}</span>
           <button class="primary" data-accept="${c.id}">ACCEPT</button>
           <button class="danger" data-decline="${c.id}">DECLINE</button>
         </div>`),
@@ -258,12 +272,21 @@
   document.addEventListener('click', async (e) => {
     const el = e.target;
     try {
-      if (el.dataset?.challenge) await api('/challenges', { method: 'POST', body: { to: el.dataset.challenge } });
-      else if (el.dataset?.accept) await api(`/challenges/${el.dataset.accept}/accept`, { method: 'POST', body: {} });
-      else if (el.dataset?.decline) await api(`/challenges/${el.dataset.decline}/decline`, { method: 'POST', body: {} });
+      let action = null;
+      if (el.dataset?.challenge) action = await api('/challenges', { method: 'POST', body: { to: el.dataset.challenge } });
+      else if (el.dataset?.rematch) action = await api('/challenges', { method: 'POST', body: { to: el.dataset.rematch, rematchOf: el.dataset.rematchOf } });
+      else if (el.dataset?.accept) action = await api(`/challenges/${el.dataset.accept}/accept`, { method: 'POST', body: {} });
+      else if (el.dataset?.decline) action = await api(`/challenges/${el.dataset.decline}/decline`, { method: 'POST', body: {} });
       else return;
-      const res = el.dataset ? await api('/lobby') : null;
-      if (res?.ok) render(await res.json());
+      if (!action.ok){
+        const out = await action.json().catch(() => ({}));
+        $('lobbyErr').textContent = out.error ?? `request failed (${action.status})`;
+        errHoldUntil = Date.now() + 6000;   // outlive the poll's auto-clear
+      } else {
+        $('lobbyErr').textContent = '';
+      }
+      const res = await api('/lobby');
+      if (res.ok) render(await res.json());
     } catch (err){ $('lobbyErr').textContent = String(err.message ?? err); }
   });
 
@@ -276,12 +299,45 @@
     else poll();
   };
 
+  const ago = iso => {
+    const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+    return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago`;
+  };
+
+  function renderHistory(history){
+    const rows = history.matches.map(m => `
+      <div class="player">
+        ${m.outcome ? `<span class="badge ${m.outcome}">${m.outcome}</span>` : '<span class="badge live">LIVE</span>'}
+        <span class="name">${m.score ? `<b>${m.score[0]} - ${m.score[1]}</b>` : '· - ·'}
+          vs ${m.opponent ? `${esc(m.opponent.handle)} (${esc(m.opponent.teamName)})` : '?'}</span>
+        <span class="team">${ago(m.finishedAt ?? m.createdAt)}</span>
+        ${m.outcome && m.opponent ? `<button data-rematch="${m.opponent.accountId}" data-rematch-of="${m.matchId}">REMATCH</button>` : ''}
+      </div>`).join('');
+    $('history').innerHTML = rows || '<span class="muted">no matches yet — challenge someone</span>';
+  }
+
+  async function fetchHistory(){
+    try {
+      const res = await api('/history');
+      if (res.ok) renderHistory(await res.json());
+    } catch { /* next cycle */ }
+  }
+
+  let pollCount = 0;
+  let wasInMatch = false;
+  let errHoldUntil = 0;
   async function poll(){
     try {
       const res = await api('/lobby');
       if (!res.ok) return;
-      $('lobbyErr').textContent = '';
-      render(await res.json());
+      if (Date.now() > errHoldUntil) $('lobbyErr').textContent = '';
+      const state = await res.json();
+      render(state);
+      // refresh history on a slow cadence, and IMMEDIATELY when my match
+      // just ended (full time detected server-side) so the result pops in
+      const ended = wasInMatch && !state.match;
+      wasInMatch = !!state.match;
+      if (ended || pollCount++ % 5 === 0) await fetchHistory();
     } catch (err){
       if (session) $('lobbyErr').textContent = `lobby unreachable: ${err.message ?? err}`;
     }

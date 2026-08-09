@@ -8,7 +8,9 @@
 //     --lobby https://lobby-staging.fobal.ai \
 //     --match-ws wss://matches-staging.fobal.ai
 //
-// Local smoke:
+// Add --full (LAST on the command line) to also wait for full time
+// (~4 minutes) and verify B5: history with mirrored outcomes, automatic
+// player freeing, and rematch. Local smoke:
 //   npx tsx tools/lobby-acceptance.mjs --lobby http://localhost:8485 --match-ws ws://localhost:8483
 import WebSocket from 'ws';
 
@@ -23,6 +25,7 @@ function parseArgs(argv){
 const args = parseArgs(process.argv.slice(2));
 const lobby = (args.lobby ?? 'http://localhost:8485').replace(/\/+$/, '');
 const matchWs = (args['match-ws'] ?? 'ws://localhost:8483').replace(/\/+$/, '');
+const full = 'full' in args;
 
 let passed = 0, failed = 0;
 const check = (name, ok, detail = '') => {
@@ -111,10 +114,42 @@ if (am && bm){
     `${ws3.message.type}/${ws3.message.role ?? ws3.message.code}`);
   wa.close(); wb.close(); ws3.close();
 
-  await post(`/matches/${am.matchId}/leave`, {}, a.token);
-  await post(`/matches/${bm.matchId}/leave`, {}, b.token);
-  const after = await getState(a.token);
-  check('leave frees the players', after.body.match === null);
+  if (!full){
+    await post(`/matches/${am.matchId}/leave`, {}, a.token);
+    await post(`/matches/${bm.matchId}/leave`, {}, b.token);
+    const after = await getState(a.token);
+    check('leave frees the players', after.body.match === null);
+  } else {
+    // B5 — ride the match to full time and verify the lifecycle
+    console.log('\n--full: waiting for full time (~4 minutes real time)…');
+    const history = async (token) => {
+      const res = await fetch(`${lobby}/history`, { headers: { authorization: `Bearer ${token}` } });
+      return (await res.json()).matches ?? [];
+    };
+    let entry = null;
+    const deadline = Date.now() + 6.5 * 60_000;
+    while (Date.now() < deadline){
+      await new Promise(r => setTimeout(r, 15_000));
+      entry = (await history(a.token)).find(m => m.matchId === am.matchId);
+      if (entry?.outcome) break;
+    }
+    check('history reports the finished match with an outcome', !!entry?.outcome,
+      entry ? `${entry.outcome} ${JSON.stringify(entry.score)}` : 'never finished');
+    if (entry?.outcome){
+      const entryB = (await history(b.token)).find(m => m.matchId === bm.matchId);
+      const flip = { W: 'L', L: 'W', D: 'D' };
+      check('both players see mirrored outcomes and scores',
+        !!entryB && entryB.outcome === flip[entry.outcome]
+          && JSON.stringify(entryB.score) === JSON.stringify([entry.score[1], entry.score[0]]),
+        entryB ? `${entry.outcome}${JSON.stringify(entry.score)} vs ${entryB.outcome}${JSON.stringify(entryB.score)}` : 'B has no entry');
+      const freed = await getState(a.token);
+      check('full time auto-frees the players (no LEAVE needed)', freed.body.match === null);
+      const rematch = await post('/challenges', { to: b.accountId, rematchOf: am.matchId }, a.token);
+      check('rematch challenge accepted', rematch.status === 201, `status ${rematch.status}`);
+      if (rematch.status === 201)
+        await post(`/challenges/${rematch.body.challenge.id}/decline`, {}, a.token);
+    }
+  }
 }
 
 console.log(`\n${passed}/${passed + failed} checks passed`);
