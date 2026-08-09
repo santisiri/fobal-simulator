@@ -265,9 +265,9 @@
       "Sid": "AcmCertificateRead",
       "Effect": "Allow",
       "Action": [
-        "acm:DescribeCertificate",
-        "acm:GetCertificate",
-        "acm:ListCertificates"
+        "acm:Describe*",
+        "acm:Get*",
+        "acm:List*"
       ],
       "Resource": "*"
     },
