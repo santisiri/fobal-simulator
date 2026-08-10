@@ -40,6 +40,10 @@
   .badge.D { background: #1c2430; color: #9fb2c8; }
   .badge.L { background: #3a1420; color: #ffb0a8; }
   .badge.live { background: #0c1320; color: #e8eef5; font-size: 9px; width: auto; padding: 0 6px; }
+  .squadRow { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+  .squadRow .rl { width: 30px; opacity: 0.55; font-size: 11px; flex: none; }
+  .squadRow input.pname { flex: 1; padding: 4px 8px; min-width: 0; }
+  input[type=color] { padding: 0; width: 34px; height: 26px; cursor: pointer; }
   .muted { opacity: 0.6; font-size: 12px; }
   .err { color: #ffb0a8; font-size: 12px; min-height: 16px; }
   #matchCard { border-color: #2be08f; box-shadow: 0 0 24px rgba(43,224,143,0.15); }
@@ -91,7 +95,22 @@
       <h2>MY TEAM</h2>
       <div class="row">
         <span id="teamName" style="font-weight:700; letter-spacing:1px;"></span>
-        <button id="renameBtn" title="rename">✎</button>
+        <button id="renameBtn" title="rename team">✎</button>
+        <button id="squadBtn">EDIT SQUAD</button>
+      </div>
+      <div id="squadPanel" class="hidden">
+        <div class="row" style="margin-top:10px;">
+          <span class="muted">KIT</span>
+          <input type="color" id="kitPrimary" value="#d8342c" title="primary — shirt and socks">
+          <input type="color" id="kitSecondary" value="#f2ece0" title="secondary — shorts and trim">
+          <span class="muted">shirt · shorts</span>
+        </div>
+        <div id="squadList" style="margin:8px 0;"></div>
+        <div class="row">
+          <button id="squadSave" class="primary">SAVE SQUAD</button>
+          <button id="squadClose">CLOSE</button>
+          <span class="muted" id="squadNote"></span>
+        </div>
       </div>
     </div>
 
@@ -289,6 +308,43 @@
       if (res.ok) render(await res.json());
     } catch (err){ $('lobbyErr').textContent = String(err.message ?? err); }
   });
+
+  // ---- squad editor (M1: names + kit; ratings are not editable) ---------
+  let squadDefaults = {};
+  $('squadBtn').onclick = async () => {
+    const panel = $('squadPanel');
+    if (!panel.classList.contains('hidden')){ panel.classList.add('hidden'); return; }
+    const res = await api('/squad');
+    if (!res.ok) return;
+    const squad = await res.json();
+    squadDefaults = Object.fromEntries(squad.players.map(p => [p.playerId, p.defaultName]));
+    if (squad.colors?.primary) $('kitPrimary').value = squad.colors.primary;
+    if (squad.colors?.secondary) $('kitSecondary').value = squad.colors.secondary;
+    $('squadList').innerHTML = squad.players.map(p => `
+      <div class="squadRow">
+        <span class="rl">#${p.shirtNumber}</span><span class="rl">${esc(p.role)}</span>
+        <input class="pname" data-pid="${p.playerId}" value="${esc(p.name)}" maxlength="24">
+        <button data-preset="${p.playerId}" title="reset to default">↺</button>
+      </div>`).join('');
+    for (const btn of document.querySelectorAll('[data-preset]'))
+      btn.onclick = () => {
+        const input = document.querySelector(`.pname[data-pid="${btn.dataset.preset}"]`);
+        input.value = squadDefaults[btn.dataset.preset] ?? input.value;
+      };
+    $('squadNote').textContent = '';
+    panel.classList.remove('hidden');
+  };
+  $('squadClose').onclick = () => $('squadPanel').classList.add('hidden');
+  $('squadSave').onclick = async () => {
+    const players = [...document.querySelectorAll('#squadList .pname')]
+      .map(el => ({ playerId: el.dataset.pid, name: el.value }));
+    const res = await api('/squad', { method: 'POST', body: {
+      colors: { primary: $('kitPrimary').value, secondary: $('kitSecondary').value },
+      players,
+    } });
+    const out = await res.json().catch(() => ({}));
+    $('squadNote').textContent = res.ok ? 'saved — your next match wears it' : (out.error ?? 'save failed');
+  };
 
   $('renameBtn').onclick = async () => {
     const name = prompt('team name (2–32 chars):');

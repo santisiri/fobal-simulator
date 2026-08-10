@@ -142,6 +142,21 @@ export class GoldenPuppet {
       const team = game.teams[idx];
       team.name = spec.name.toUpperCase();
       team.code = codes[idx];
+      // manifest kit colors (M1 team identity): primary → shirt+socks,
+      // secondary → shorts+trim — mirroring the golden defs' own pattern.
+      // Player bodies copy the kit into per-player app objects at reset, so
+      // both the kit AND every non-GK body get repainted (GKs keep gkKit).
+      if (spec.colors?.primary || spec.colors?.secondary){
+        if (spec.colors.primary){ team.kit.shirt = spec.colors.primary; team.kit.socks = spec.colors.primary; }
+        if (spec.colors.secondary){ team.kit.shorts = spec.colors.secondary; team.kit.trim = spec.colors.secondary; }
+        for (const gp of [...team.players, ...(team.bench ?? [])]){
+          if (gp.isGK || !gp.app) continue;
+          gp.app.shirt = team.kit.shirt;
+          gp.app.shorts = team.kit.shorts;
+          gp.app.socks = team.kit.socks;
+          gp.app.trim = team.kit.trim;
+        }
+      }
       const starters = spec.players.slice(0, 11);
       const benchSpec = spec.players.slice(11);
       const assignment = assignSlots(team.players.map(p => p.role), starters);

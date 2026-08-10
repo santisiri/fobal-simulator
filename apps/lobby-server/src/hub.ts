@@ -8,6 +8,8 @@
 //   POST /auth/verify                 {email, code} → {token, account}
 //   GET  /lobby                       roster + challenges + my active match
 //   POST /account/team                {teamName} rename my team
+//   GET  /squad                       my players + kit (defaults annotated)
+//   POST /squad                       {colors?, players?} edit names/kit
 //   POST /challenges                  {to, rematchOf?} challenge a player
 //   POST /challenges/:id/accept       creates the authoritative match
 //   POST /challenges/:id/decline      decline (or cancel your own)
@@ -22,9 +24,10 @@
 // full time, so nobody has to click LEAVE).
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
 import { randomBytes, randomInt } from 'node:crypto';
+import { TeamSnapshot } from '@fobal/protocol';
 import { signSession, verifySession } from './sessions.js';
-import { Account, LobbyStore, MatchRecord } from './store.js';
-import { buildManifest } from './teams.js';
+import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
+import { buildManifest, buildTeam } from './teams.js';
 
 export interface LobbyServerOptions {
   port?: number;                    // 0 → ephemeral
@@ -102,6 +105,9 @@ async function readBody(req: IncomingMessage, limit = 16 * 1024): Promise<string
 
 const sanitizeHandle = (localPart: string): string =>
   localPart.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'coach';
+
+const HEX_COLOR = /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/;
+const cleanName = (s: string): string => s.replace(/[\u0000-\u001f\u007f]/g, '').trim();
 
 export async function startLobbyServer(options: LobbyServerOptions): Promise<LobbyServer> {
   const secret = options.secret ?? randomBytes(24).toString('base64url');
@@ -349,6 +355,84 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
               score: o ? [o.my, o.opp] : null,
             };
           }),
+        });
+      }
+
+      if (req.method === 'GET' && url.pathname === '/squad'){
+        const base = buildTeam(me, { customized: false });
+        const final = buildTeam(me);
+        return json(res, 200, {
+          teamName: me.teamName,
+          colors: me.squad?.colors ?? null,
+          players: final.players.map((p, i) => ({
+            playerId: p.playerId,
+            name: p.name,
+            defaultName: base.players[i]!.name,
+            role: p.role,
+            shirtNumber: p.shirtNumber,
+          })),
+        });
+      }
+
+      if (req.method === 'POST' && url.pathname === '/squad'){
+        let body: { colors?: unknown; players?: unknown };
+        try { body = JSON.parse(await readBody(req)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        const squad: SquadCustomization = { ...(me.squad ?? {}) };
+
+        if (body.colors !== undefined){
+          const colors = body.colors as { primary?: unknown; secondary?: unknown };
+          const next: { primary?: string; secondary?: string } = {};
+          for (const key of ['primary', 'secondary'] as const){
+            const v = colors?.[key];
+            if (v === undefined || v === null || v === '') continue;
+            if (typeof v !== 'string' || !HEX_COLOR.test(v))
+              return json(res, 400, { error: `${key} must be a hex color like #d8342c` });
+            next[key] = v.toLowerCase();
+          }
+          if (next.primary || next.secondary) squad.colors = next;
+          else delete squad.colors;
+        }
+
+        if (body.players !== undefined){
+          if (!Array.isArray(body.players)) return json(res, 400, { error: 'players must be an array' });
+          const base = buildTeam(me, { customized: false });
+          const defaults = new Map(base.players.map(p => [p.playerId, p.name]));
+          const names = { ...(squad.playerNames ?? {}) };
+          for (const entry of body.players as Array<{ playerId?: unknown; name?: unknown }>){
+            if (typeof entry?.playerId !== 'string' || !defaults.has(entry.playerId))
+              return json(res, 400, { error: `unknown playerId ${String(entry?.playerId)}` });
+            if (typeof entry.name !== 'string') return json(res, 400, { error: 'name must be a string' });
+            const name = cleanName(entry.name);
+            if (name.length < 2 || name.length > 24)
+              return json(res, 400, { error: 'player names must be 2–24 characters' });
+            // saving the default back clears the override — the store stays lean
+            if (name === defaults.get(entry.playerId)) delete names[entry.playerId];
+            else names[entry.playerId] = name;
+          }
+          if (Object.keys(names).length) squad.playerNames = names;
+          else delete squad.playerNames;
+        }
+
+        const updated: Account = { ...me, squad: (squad.colors || squad.playerNames) ? squad : undefined };
+        // the manifest contract is the last word — never store a squad the
+        // match server would reject at challenge time
+        const check = TeamSnapshot.safeParse(buildTeam(updated));
+        if (!check.success)
+          return json(res, 400, { error: `squad rejected: ${check.error.issues[0]?.message ?? 'invalid'}` });
+        store.saveAccount(updated);
+        const final = buildTeam(updated);
+        const base = buildTeam(updated, { customized: false });
+        return json(res, 200, {
+          teamName: updated.teamName,
+          colors: updated.squad?.colors ?? null,
+          players: final.players.map((p, i) => ({
+            playerId: p.playerId,
+            name: p.name,
+            defaultName: base.players[i]!.name,
+            role: p.role,
+            shirtNumber: p.shirtNumber,
+          })),
         });
       }
 
