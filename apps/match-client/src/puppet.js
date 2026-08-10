@@ -124,6 +124,10 @@ export class GoldenPuppet {
     win.__present(manifest.rules?.ceremonies === true);
     game.goalReplay.cfg.enabled = false;  // the authoritative-engine hard rule, client-side too
     this.byExternal.clear();
+    // manifest player specs by external id — the lean HUD's player card
+    // reads ratings/bio from here (the golden bodies carry only cosmetics)
+    this.manifestPlayers = new Map(
+      manifest.teams.flatMap(t => t.players.map(p => [p.playerId, { ...p, teamName: t.name }])));
     // the golden scoreboard reads team.code (a static 3-letter tag baked
     // into the built-in team defs) — derive it from the manifest names or
     // every lobby match shows RED/SKY on the HUD. When both names share a
@@ -613,12 +617,25 @@ export class GoldenPuppet {
     const stop = () => { rec?.stop(); };   // onend delivers the final transcript
     this.voiceStart = start;
     this.voiceStop = stop;
-    // hold-to-talk on X inside the golden page (unused by golden shortcuts);
-    // guarded so typing an x in the open console never hijacks the mic
+    // hold-to-talk on SPACE (the natural push-to-talk key) or X, inside the
+    // golden page. Space is swallowed so the golden page never scrolls or
+    // reacts; both are guarded so typing in the open console (or a golden
+    // human-mode key) never hijacks the mic.
+    const talkKey = (e) => e.code === 'Space' || e.code === 'KeyX';
     win.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyX' && !e.repeat && !game.coachOpen) start();
+      if (!talkKey(e) || game.coachOpen) return;
+      if (e.code === 'Space') e.preventDefault();
+      if (!e.repeat) start();
     });
-    win.addEventListener('keyup', (e) => { if (e.code === 'KeyX') stop(); });
+    win.addEventListener('keyup', (e) => { if (talkKey(e)) stop(); });
+    // the SHELL window too: focus often sits outside the iframe after
+    // clicking dock buttons, and push-to-talk must not care where focus is
+    window.addEventListener('keydown', (e) => {
+      if (!talkKey(e) || game.coachOpen) return;
+      if (e.code === 'Space') e.preventDefault();
+      if (!e.repeat) start();
+    });
+    window.addEventListener('keyup', (e) => { if (talkKey(e)) stop(); });
     return true;
   }
 
@@ -703,6 +720,7 @@ export class GoldenPuppet {
       while (eventIdx < events.length && events[eventIdx].tick <= playhead)
         this.handleEvent(events[eventIdx++], true);
       this.apply(interpolated(), dt);
+      if (this.lean) this.leanTick();
       if (hooks.onTick) hooks.onTick(playhead, game.match.clock ? game.match.clock() : '');
       if (playhead >= lastTick){
         over = true;
@@ -717,6 +735,76 @@ export class GoldenPuppet {
   }
 
   setReplaySpeed(x){ this.replaySpeed = x; }
+
+  /** M1 polish — the lean HUD. Everything here IMPOSES on the golden from
+   *  outside (its own toggles, its mutable UITheme, instant pill expiry);
+   *  index.html stays untouched. The shell provides the replacement chrome:
+   *  a bottom dock (which covers the golden chip row and hints bar with an
+   *  opaque bar) and an HTML player card fed by onPlayerCard. */
+  enableLeanHud({ onPlayerCard } = {}){
+    const win = this.win, game = win.game;
+    this.lean = true;
+    this.onPlayerCard = onPlayerCard ?? null;
+    game.showMap = false;                 // the golden's own minimap toggle
+    // typography: the golden HUD calls UITheme.sans/mono on every draw —
+    // repoint them at the display faces (graceful fallback while loading).
+    // UITheme is a top-level const (a global LEXICAL binding, not a window
+    // property), so the iframe's own eval fetches the object — the same
+    // trick the engine's evalIn uses for TacticalEngine.
+    const SANS = '"Space Grotesk", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif';
+    const MONO = '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    try {
+      const theme = win.UITheme ?? win.eval('UITheme');
+      theme.sans = (w, s) => w + ' ' + s + 'px ' + SANS;
+      theme.mono = (w, s) => w + ' ' + s + 'px ' + MONO;
+    } catch { /* fonts stay golden-default if the binding is unreachable */ }
+    const doc = this.iframe.contentDocument;
+    if (doc && !doc.getElementById('fobal-fonts')){
+      const link = doc.createElement('link');
+      link.id = 'fobal-fonts';
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap';
+      doc.head.appendChild(link);
+    }
+    // ticker pills off — the FEED panel keeps the full history; each pill is
+    // expired the moment commentate lands it
+    const commentate = game.commentate.bind(game);
+    game.commentate = (type, d) => {
+      commentate(type, d);
+      if (game.events) for (const e of game.events) e.until = 0;
+    };
+    if (game.events) game.events.length = 0;
+    // player clicks must reach the golden hit-testing even for spectators —
+    // the profile panel is intercepted in leanTick and served as HTML
+    this.iframe.style.pointerEvents = 'auto';
+  }
+
+  /** Per-frame lean duties: convert the golden profile panel into the
+   *  shell's HTML player card the instant a body is clicked. */
+  leanTick(){
+    const game = this.win.game;
+    if (game.panel?.type !== 'profile') return;
+    const gp = game.statsFor;
+    game.closePanel();
+    game.statsFor = null;
+    if (!gp || !this.onPlayerCard) return;
+    const extId = this.externalOf.get(gp);
+    const spec = extId ? this.manifestPlayers?.get(extId) : null;
+    this.onPlayerCard({
+      name: gp.name,
+      num: gp.num,
+      role: spec?.role ?? gp.role ?? '',
+      flag: gp.flag ?? '',
+      nat: gp.nat ?? '',
+      age: spec?.age ?? gp.age ?? null,
+      teamName: gp.team?.name ?? spec?.teamName ?? '',
+      kit: gp.team?.kit?.shirt ?? '#2be08f',
+      stamina: typeof gp.stamina === 'number' ? gp.stamina : null,
+      yellow: gp.stats?.yellow ?? 0,
+      red: gp.stats?.red ?? 0,
+      ratings: spec?.ratings ?? null,
+    });
+  }
 
   showBanner(text, live, seconds){
     if (!live && seconds !== 0) return;    // stale HT banners stay quiet on join
@@ -768,6 +856,7 @@ export class GoldenPuppet {
           while (this.tape.length && this.tape[0].tick < horizon) this.tape.shift();
         }
       }
+      if (this.lean) this.leanTick();
       if (this.clip){ this.pumpClip(dt); return; }
       if (frame) this.apply(frame, dt);
     };
