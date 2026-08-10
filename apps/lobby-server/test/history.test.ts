@@ -81,6 +81,10 @@ describe('B5 — history, auto-free and rematch', () => {
       const entryB = historyB.matches.find(m => m.matchId === matchId)!;
       expect(entryA.finishedAt).not.toBeNull();
       expect(entryA.opponent).toMatchObject({ handle: 'away' });
+      // replay-theater coordinates ride each entry (spectator-scoped only)
+      const replayable = entryA as unknown as { matchUrl: string; spectatorToken: string };
+      expect(replayable.matchUrl).toContain('http');
+      expect(replayable.spectatorToken).toBeTruthy();
       expect(entryB.opponent).toMatchObject({ handle: 'home' });
       // A is the challenger → home → teams[0] of the signed result
       expect(entryA.score).toEqual(result.finalScore);

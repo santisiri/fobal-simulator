@@ -223,8 +223,11 @@ export class GoldenPuppet {
           game.announce('GOAL!', 3);
           if (game.stadium) game.stadium.react('goal', team);
           // broadcast truck: let the celebration breathe, then roll the tape
-          const goalTick = e.tick, scorerId = e.playerId;
-          this.clipTimer = setTimeout(() => this.playGoalClip(goalTick, scorerId), 1600);
+          // (not in the theater — a replay inside the replay helps no one)
+          if (!this.theater){
+            const goalTick = e.tick, scorerId = e.playerId;
+            this.clipTimer = setTimeout(() => this.playGoalClip(goalTick, scorerId), 1600);
+          }
         }
         return;
       case 'card': {
@@ -628,6 +631,92 @@ export class GoldenPuppet {
     if (game.coachText) game.applyCoach();   // controller override → coach_text command
     else game.closeCoach();
   }
+
+  /** M1.2 — Replay Theater: pure PLAYBACK of the server-recorded frame
+   *  stream (GET /matches/:id/replays/stream). The client must never
+   *  re-simulate: the vm pins Math.random to a seeded stream before boot
+   *  and a browser cannot reproduce its position (the live renderer keeps
+   *  consuming draws between steps) — divergence was observed, not
+   *  theorized. So the vm re-simulates once server-side, and this theater
+   *  interpolates the recorded 10Hz frames through the SAME apply() path a
+   *  live spectator uses, firing recorded events into the golden organs at
+   *  their ticks. */
+  playReplay(stream, hooks = {}){
+    this.stop();
+    this.theater = true;
+    this.configure(stream.manifest);
+    const game = this.win.game;
+    const frames = stream.frames;
+    const events = [...(stream.events ?? [])].sort((a, b) => a.seq - b.seq);
+    const lastTick = frames[frames.length - 1].tick;
+    this.replaySpeed = 1;
+    let playhead = frames[0].tick;
+    let frameIdx = 0;
+    let eventIdx = 0;
+    let over = false;
+
+    const lerp = (a, b, k) => a + (b - a) * k;
+    const interpolated = () => {
+      while (frameIdx < frames.length - 2 && frames[frameIdx + 1].tick <= playhead) frameIdx++;
+      const a = frames[frameIdx];
+      const b = frames[Math.min(frameIdx + 1, frames.length - 1)];
+      const span = Math.max(1, b.tick - a.tick);
+      const k = Math.max(0, Math.min(1, (playhead - a.tick) / span));
+      const byId = new Map(b.players.map(p => [p.playerId, p]));
+      const players = new Map();
+      for (const p of a.players){
+        const n = byId.get(p.playerId) ?? p;
+        players.set(p.playerId, {
+          position: { x: lerp(p.position.x, n.position.x, k), y: lerp(p.position.y, n.position.y, k) },
+          facing: p.facing,
+          action: p.action,
+          onPitch: p.onPitch,
+        });
+      }
+      return {
+        tick: Math.round(playhead),
+        clock: a.clock,
+        matchState: a.matchState,
+        score: a.score,
+        ball: {
+          position: {
+            x: lerp(a.ball.position.x, b.ball.position.x, k),
+            y: lerp(a.ball.position.y, b.ball.position.y, k),
+            z: lerp(a.ball.position.z, b.ball.position.z, k),
+          },
+          velocity: a.ball.velocity,
+        },
+        players,
+      };
+    };
+
+    this.lastT = performance.now();
+    // visible frames cap at 100ms (jank guard); the hidden path must CATCH
+    // UP instead — browsers throttle background timers to ~1Hz and a
+    // self-paced playback would otherwise crawl whenever the tab blurs
+    const pump = (t, maxDt) => {
+      const dt = Math.min(maxDt, (t - this.lastT) / 1000);
+      this.lastT = t;
+      game.animT += dt;
+      if (over) return;
+      playhead = Math.min(playhead + dt * 60 * this.replaySpeed, lastTick);
+      while (eventIdx < events.length && events[eventIdx].tick <= playhead)
+        this.handleEvent(events[eventIdx++], true);
+      this.apply(interpolated(), dt);
+      if (hooks.onTick) hooks.onTick(playhead, game.match.clock ? game.match.clock() : '');
+      if (playhead >= lastTick){
+        over = true;
+        hooks.onEnd?.({ score: [...game.match.score], tick: lastTick });
+      }
+    };
+    const loop = (t) => { this.raf = requestAnimationFrame(loop); pump(t, 0.1); };
+    this.raf = requestAnimationFrame(loop);
+    this.fallback = setInterval(() => {
+      if (document.visibilityState === 'hidden') pump(performance.now(), 4);
+    }, 250);
+  }
+
+  setReplaySpeed(x){ this.replaySpeed = x; }
 
   showBanner(text, live, seconds){
     if (!live && seconds !== 0) return;    // stale HT banners stay quiet on join

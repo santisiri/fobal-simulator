@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { MatchStore, SAFE_ID, writeAtomic } from './store.js';
 import type { ObjectStore } from './objectStore.js';
 
-const REL_PATHS = /^(manifest\.json|commands\.jsonl|events\.jsonl|internal-latest\.json|result\.json|clips\.json|snapshots\/\d{8}\.json)$/;
+const REL_PATHS = /^(manifest\.json|commands\.jsonl|events\.jsonl|internal-latest\.json|result\.json|clips\.json|stream\.json|snapshots\/\d{8}\.json)$/;
 
 interface KeyState { dirty: boolean }
 

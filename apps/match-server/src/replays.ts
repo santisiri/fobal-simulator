@@ -27,6 +27,79 @@ export interface GoalClipOptions {
   stride?: number;       // capture every Nth tick (2 = 30fps)
 }
 
+// ---------------------------------------------------------------------------
+// Full-match replay stream (M1.2 replay theater). The client must NEVER
+// re-simulate — browser and vm runs diverge (the vm pins Math.random to a
+// seeded stream before boot; a browser cannot reproduce its position, and
+// the live renderer keeps consuming draws between steps). So the SERVER, the
+// one legitimate re-simulator, replays manifest + command log through the vm
+// engine and records a slim protocol-snapshot-shaped frame every `stride`
+// ticks (6 = 10Hz — the live delta rate). Clients play the recording.
+// ---------------------------------------------------------------------------
+
+export interface ReplayStreamFrame {
+  tick: number;
+  clock: string;
+  matchState: string;
+  score: [number, number];
+  ball: { position: { x: number; y: number; z: number }; velocity: { x: number; y: number; z: number } };
+  players: Array<{
+    playerId: string;
+    position: { x: number; y: number };
+    facing: number;
+    action: string;
+    onPitch: boolean;
+  }>;
+}
+
+export interface ReplayStream {
+  stride: number;
+  frames: ReplayStreamFrame[];
+}
+
+export function extractReplayStream(
+  manifest: MatchManifest,
+  commands: AcceptedCommand[],
+  { stride = 6 }: { stride?: number } = {},
+): ReplayStream {
+  const engine = MatchEngine.create(manifest);
+  for (const c of [...commands].sort((a, b) => a.seq - b.seq)){
+    const r = engine.submit(c);
+    if (!r.accepted) throw new Error(`replay stream re-simulation: command ${c.seq} rejected: ${r.reason}`);
+  }
+  const r2 = (n: number): number => Math.round(n * 100) / 100;
+  const frames: ReplayStreamFrame[] = [];
+  const capture = (): void => {
+    const s = engine.snapshot();
+    frames.push({
+      tick: s.tick,
+      clock: s.clock,
+      matchState: s.matchState,
+      score: s.score,
+      ball: {
+        position: { x: r2(s.ball.position.x), y: r2(s.ball.position.y), z: r2(s.ball.position.z) },
+        velocity: { x: r2(s.ball.velocity.x), y: r2(s.ball.velocity.y), z: r2(s.ball.velocity.z) },
+      },
+      players: s.players.map(p => ({
+        playerId: p.playerId,
+        position: { x: r2(p.position.x), y: r2(p.position.y) },
+        facing: r2(p.facing),
+        action: p.action,
+        onPitch: p.onPitch,
+      })),
+    });
+  };
+  capture();                        // kickoff line-up
+  const MAX = 60 * 60 * 60;         // safety cap far above any real match
+  let guard = 0;
+  while (!engine.isOver() && guard++ < MAX){
+    engine.tick();
+    if (engine.currentTick % stride === 0) capture();
+  }
+  if (frames[frames.length - 1]!.tick !== engine.currentTick) capture();   // final whistle state
+  return { stride, frames };
+}
+
 export function extractGoalClips(
   manifest: MatchManifest,
   commands: AcceptedCommand[],

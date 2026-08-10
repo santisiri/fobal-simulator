@@ -353,6 +353,11 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
               opponent: opp ? publicAccount(opp) : null,
               outcome: o?.outcome ?? null,
               score: o ? [o.my, o.opp] : null,
+              // replay theater coordinates: the spectator token is shareable
+              // by design, and GET /replay serves finished matches from the
+              // store long after the room is gone
+              matchUrl: record.matchUrl,
+              spectatorToken: record.spectatorToken,
             };
           }),
         });
