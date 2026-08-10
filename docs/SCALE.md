@@ -93,3 +93,21 @@ put far away.
   zero the counters before the measurement window.
 - Ambient load (other dev servers on the same machine) skews stages —
   compare curves, not absolute single runs.
+
+## Chaos check (M2 proof — `tools/chaos-check.mjs`)
+
+SIGKILL the match-server process group with 10 realtime matches under
+spectator load, restart on the same store, real `MatchConnection` clients
+doing their own backoff:
+
+```
+{"matches":10,"statusesDuringOutage":["reconnecting"],"reconnected":10,
+ "advancing":10,"rewindTicks":{"max":330,"avg":320,"withinInternalCadence":true}}
+```
+
+Every client saw the outage as `reconnecting`, every one reconnected, every
+match resumed and kept advancing. Resume rewound ~5.5s of match time (the
+distance to the last persisted internal snapshot; bounded by the 30s
+`internalEvery` cadence). That bound is the durability price of
+snapshot-cadence persistence — acceptable, and now measured rather than
+assumed.
