@@ -517,7 +517,11 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
               headers: { authorization: `Bearer ${options.matchServer.createKey}`, 'content-type': 'application/json' },
               body: JSON.stringify(manifest),
             });
-            const body = await upstream.json() as typeof created & { error?: string };
+            const body = await upstream.json() as typeof created & { error?: string; code?: string };
+            // M2 backpressure: capacity is temporary — surface it plainly
+            // and KEEP the challenge so accepting again just works
+            if (upstream.status === 503 || body.code === 'server_full')
+              return json(res, 503, { error: 'the match servers are full — try again in a minute' });
             if (upstream.status !== 201)
               return json(res, 502, { error: `match server rejected the match: ${body.error ?? upstream.status}` });
             created = body;
