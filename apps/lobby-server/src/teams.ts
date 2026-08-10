@@ -36,15 +36,24 @@ function player(account: Account, i: number, role: PlayerSnapshot['role']): Play
   };
 }
 
-export function buildTeam(account: Account): TeamSnapshot {
+export function buildTeam(account: Account, { customized = true } = {}): TeamSnapshot {
+  const players = [
+    ...ROLES_XI.map((role, i) => player(account, i, role)),
+    ...ROLES_BENCH.map((role, i) => player(account, 11 + i, role)),
+  ];
+  const squad = customized ? account.squad : undefined;
+  if (squad?.playerNames)
+    for (const p of players){
+      const custom = squad.playerNames[p.playerId];
+      if (custom) p.name = custom;
+    }
   return {
     teamId: `team-${account.teamKey}`,
     name: account.teamName,
+    ...(squad?.colors && (squad.colors.primary || squad.colors.secondary)
+      ? { colors: squad.colors } : {}),
     formation: '442',
-    players: [
-      ...ROLES_XI.map((role, i) => player(account, i, role)),
-      ...ROLES_BENCH.map((role, i) => player(account, 11 + i, role)),
-    ],
+    players,
   };
 }
 

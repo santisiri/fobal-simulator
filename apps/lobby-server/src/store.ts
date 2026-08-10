@@ -10,6 +10,15 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObjectStore } from '@fobal/match-server';
 
+/** Player-identity overrides on top of the generated squad. Ratings and
+ *  roles are NOT here on purpose — self-buffing is not a feature. */
+export interface SquadCustomization {
+  /** kit: primary → shirt+socks, secondary → shorts+trim */
+  colors?: { primary?: string; secondary?: string };
+  /** custom player names keyed by generated playerId */
+  playerNames?: Record<string, string>;
+}
+
 export interface Account {
   accountId: string;
   email: string;
@@ -19,6 +28,7 @@ export interface Account {
   teamKey: string;
   teamName: string;
   createdAt: string;
+  squad?: SquadCustomization;
 }
 
 /** Cached POINTER to the signed result — the match server remains the sole

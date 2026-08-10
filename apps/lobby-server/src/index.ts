@@ -1,7 +1,7 @@
 export { startLobbyServer } from './hub.js';
 export type { LobbyServer, LobbyServerOptions } from './hub.js';
 export { LobbyStore } from './store.js';
-export type { Account, MatchRecord, MatchResultSummary, LobbyStoreOptions } from './store.js';
+export type { Account, MatchRecord, MatchResultSummary, SquadCustomization, LobbyStoreOptions } from './store.js';
 export { signSession, verifySession, SESSION_MAX_AGE_MS } from './sessions.js';
 export type { SessionPayload } from './sessions.js';
 export { buildTeam, buildManifest } from './teams.js';
