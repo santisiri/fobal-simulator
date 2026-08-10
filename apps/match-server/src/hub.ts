@@ -59,6 +59,11 @@ export interface MatchServerOptions {
   trustProxy?: boolean;
   /** gauge heartbeat interval; 0 disables (default 30s) */
   heartbeatMs?: number;
+  /** concurrent room cap (M2 backpressure): creations beyond it get 503 and
+   *  the lobby tells players the servers are full. Default 25 — each room
+   *  is a ~7.7MB vm sandbox and the deployed 512MB task OOMs near 30
+   *  (docs/SCALE.md); raise via env with bigger tasks. */
+  maxRooms?: number;
 }
 
 export interface MatchServer {
@@ -143,8 +148,17 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
     },
   };
 
+  const maxRooms = options.maxRooms ?? 25;
+
   function createMatch(rawManifest: unknown){
     const manifest = MatchManifest.parse(rawManifest);
+    if (rooms.size >= maxRooms){
+      telemetry.warn('room_capacity_rejected', { activeRooms: rooms.size, maxRooms });
+      telemetry.metric('RoomCapacityRejected', 1);
+      const err = new Error(`server full: ${rooms.size}/${maxRooms} rooms`);
+      (err as Error & { code?: string }).code = 'server_full';
+      throw err;
+    }
     if (rooms.has(manifest.matchId) || store.exists(manifest.matchId))
       throw new Error(`match ${manifest.matchId} already exists`);
     const room = MatchRoom.create(manifest, roomOptions);
@@ -200,6 +214,8 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           ok: true,
           protocolVersion: PROTOCOL_VERSION,
           activeRooms: rooms.size,
+          maxRooms,
+          rssMb: Math.round(process.memoryUsage.rss() / 1024 / 1024),
           uptimeSeconds: Math.round(process.uptime()),
         });
       }
@@ -214,7 +230,8 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           const created = createMatch(manifest);
           return json(res, 201, created);
         } catch (err){
-          return json(res, 400, { error: (err as Error).message });
+          const e = err as Error & { code?: string };
+          return json(res, e.code === 'server_full' ? 503 : 400, { error: e.message, ...(e.code ? { code: e.code } : {}) });
         }
       }
 

@@ -34,6 +34,7 @@ export type { Telemetry, TelemetryOptions, MetricUnit } from './telemetry.js';
 //   FOBAL_MAX_CONN_PER_IP concurrent sockets per client IP (default 20)
 //   FOBAL_MAX_CONN        total concurrent sockets (default 500)
 //   FOBAL_TRUST_PROXY     '1' → client IP from x-forwarded-for (behind ALB)
+//   FOBAL_MAX_ROOMS       concurrent room cap (default 40; docs/SCALE.md)
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startMatchServer } = await import('./hub.js');
@@ -85,6 +86,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     maxConnectionsPerIp: process.env.FOBAL_MAX_CONN_PER_IP ? Number(process.env.FOBAL_MAX_CONN_PER_IP) : undefined,
     maxConnections: process.env.FOBAL_MAX_CONN ? Number(process.env.FOBAL_MAX_CONN) : undefined,
     trustProxy: process.env.FOBAL_TRUST_PROXY === '1',
+    maxRooms: process.env.FOBAL_MAX_ROOMS ? Number(process.env.FOBAL_MAX_ROOMS) : undefined,
     autoDrive: true,   // drive created matches in real time; resume unfinished ones on boot
   });
   telemetry.log('listening', { port: server.port, backend, activeRooms: server.rooms.size });

@@ -159,3 +159,38 @@ describe('telemetry', () => {
     expect(JSON.parse(plain[0]!).level).toBe('metric');
   });
 });
+
+describe('room capacity backpressure (M2)', () => {
+  test('creations beyond maxRooms get 503 server_full; capacity frees on finalize', async () => {
+    const { server } = await (async () => {
+      const lines: string[] = [];
+      const telemetry = createTelemetry({ write: l => lines.push(l) });
+      const server = await startMatchServer({
+        port: 0, storeRoot: tmp(), createKey: 'cap-ck', autoDrive: false,
+        telemetry, heartbeatMs: 0, maxRooms: 1,
+      });
+      return { server, lines };
+    })();
+    try {
+      const create = (id: string) => fetch(`http://127.0.0.1:${server.port}/matches`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer cap-ck', 'content-type': 'application/json' },
+        body: JSON.stringify(sampleManifest({ matchId: id })),
+      });
+      expect((await create('cap-1')).status).toBe(201);
+      const full = await create('cap-2');
+      expect(full.status).toBe(503);
+      expect(await full.json()).toMatchObject({ code: 'server_full' });
+
+      // health advertises capacity for anyone who wants to pre-check
+      const health = await (await fetch(`http://127.0.0.1:${server.port}/health`)).json() as
+        { activeRooms: number; maxRooms: number; rssMb: number };
+      expect(health).toMatchObject({ activeRooms: 1, maxRooms: 1 });
+      expect(health.rssMb).toBeGreaterThan(0);
+
+      // a finished room frees its slot (finalize evicts)
+      await server.rooms.get('cap-1')!.runTurbo();
+      expect((await create('cap-3')).status).toBe(201);
+    } finally { await server.close(); }
+  }, 120_000);
+});

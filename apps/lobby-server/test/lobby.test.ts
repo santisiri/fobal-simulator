@@ -244,3 +244,28 @@ describe('object-store persistence (staging: ephemeral Fargate disk)', () => {
     expect(second.matchesFor('acc-11111111')).toHaveLength(1);
   });
 });
+
+describe('capacity backpressure (M2)', () => {
+  test('a full match server surfaces 503 and the challenge SURVIVES for retry', async () => {
+    const match = await startMatchServer({ port: 0, storeRoot: tmp(), createKey: 'lobby-ck', autoDrive: false, maxRooms: 0 });
+    const lobby = await startLobbyServer({
+      port: 0, devAuth: true, authRequestIntervalMs: 0,
+      matchServer: { url: `http://127.0.0.1:${match.port}`, createKey: 'lobby-ck' },
+    });
+    const base = `http://127.0.0.1:${lobby.port}`;
+    try {
+      const a = await login(base, 'a@fobal.ai');
+      const b = await login(base, 'b@fobal.ai');
+      const { challenge } = await (await post(`${base}/challenges`, { to: b.accountId }, a.token)).json() as { challenge: { id: string } };
+
+      const accepted = await post(`${base}/challenges/${challenge.id}/accept`, {}, b.token);
+      expect(accepted.status).toBe(503);
+      expect(((await accepted.json()) as { error: string }).error).toContain('full');
+
+      // the challenge is still pending — accepting later can succeed
+      const bState = await state(base, b.token);
+      expect(bState.challenges.incoming).toHaveLength(1);
+      expect(bState.match).toBeNull();
+    } finally { await lobby.close(); await match.close(); }
+  });
+});
