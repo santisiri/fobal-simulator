@@ -367,9 +367,15 @@
         <span class="name">${m.score ? `<b>${m.score[0]} - ${m.score[1]}</b>` : '· - ·'}
           vs ${m.opponent ? `${esc(m.opponent.handle)} (${esc(m.opponent.teamName)})` : '?'}</span>
         <span class="team">${ago(m.finishedAt ?? m.createdAt)}</span>
+        ${m.outcome ? `<button data-watch="${m.matchId}" data-watch-url="${esc(m.matchUrl)}" data-watch-token="${esc(m.spectatorToken)}">WATCH</button>` : ''}
         ${m.outcome && m.opponent ? `<button data-rematch="${m.opponent.accountId}" data-rematch-of="${m.matchId}">REMATCH</button>` : ''}
       </div>`).join('');
     $('history').innerHTML = rows || '<span class="muted">no matches yet — challenge someone</span>';
+    for (const btn of document.querySelectorAll('[data-watch]'))
+      btn.onclick = () => {
+        location.href = `index.html?replayUrl=${encodeURIComponent(btn.dataset.watchUrl)}`
+          + `&match=${encodeURIComponent(btn.dataset.watch)}&token=${encodeURIComponent(btn.dataset.watchToken)}`;
+      };
   }
 
   async function fetchHistory(){

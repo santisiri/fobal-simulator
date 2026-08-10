@@ -20,7 +20,7 @@ import { MatchRoom, RoomClient } from './room.js';
 import { MatchStore } from './store.js';
 import { generateSigningKeys, SigningKeys } from './signing.js';
 import { signToken, verifyToken } from './tokens.js';
-import { extractGoalClips } from './replays.js';
+import { extractGoalClips, extractReplayStream } from './replays.js';
 import { CoachInterpreterOptions, createCoachInterpreter } from './coach.js';
 import { noopTelemetry, Telemetry } from './telemetry.js';
 
@@ -276,6 +276,31 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
         telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
         return json(res, 200, result);
+      }
+
+      // M1.2 replay theater: the full match as a recorded frame stream. The
+      // vm re-simulates ONCE (the only legitimate re-simulator), the result
+      // is cached, and clients purely play it back.
+      if (req.method === 'GET' && parts[0] === 'matches' && parts[2] === 'replays' && parts[3] === 'stream'){
+        const matchId = parts[1]!;
+        if (!store.exists(matchId) && !rooms.has(matchId)) return json(res, 404, { error: 'unknown match' });
+        if (!authorizedFor(req, matchId)) return json(res, 401, { error: 'match token required' });
+        const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
+        if (!result) return json(res, 404, { error: 'match not finished' });
+        let stream = store.loadStream(matchId);
+        if (!stream){
+          const startedAt = Date.now();
+          stream = extractReplayStream(store.loadManifest(matchId), store.loadCommands(matchId));
+          store.saveStream(matchId, stream);
+          telemetry.log('replay_stream_built', { matchId, ms: Date.now() - startedAt });
+        }
+        return json(res, 200, {
+          matchId,
+          manifest: store.loadManifest(matchId),
+          events: store.loadEvents(matchId),
+          result,
+          ...(stream as object),
+        });
       }
 
       if (req.method === 'GET' && parts[0] === 'matches' && parts[2] === 'replays' && parts[3] === 'goals'){

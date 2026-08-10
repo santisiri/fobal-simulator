@@ -120,6 +120,16 @@ export class MatchStore {
     return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
   }
 
+  saveStream(matchId: string, stream: unknown): void {
+    writeAtomic(join(this.dir(matchId), 'stream.json'), JSON.stringify(stream));
+    this.touched(matchId, 'stream.json');
+  }
+
+  loadStream(matchId: string): unknown | null {
+    const file = join(this.dir(matchId), 'stream.json');
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+  }
+
   private readJsonl<T>(file: string): T[] {
     if (!existsSync(file)) return [];
     const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);

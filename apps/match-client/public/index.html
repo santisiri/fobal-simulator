@@ -32,6 +32,12 @@
     user-select: none; -webkit-user-select: none; touch-action: none; }
   #micBtn.on { display: block; }
   #micBtn.listening { background: #3a1420; border-color: #e25948; color: #ffb0a8; }
+  #replayBar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 8px; align-items: center; background: rgba(8,13,22,0.92);
+    padding: 8px 12px; border: 1px solid rgba(70,200,150,0.3); border-radius: 8px; z-index: 3;
+    font-size: 12px; letter-spacing: 1px; }
+  #replayBar.on { display: flex; }
+  #replayBar button.speed.active { background: #123726; border-color: #2be08f; }
 </style>
 </head>
 <body>
@@ -63,6 +69,15 @@
     <div id="goldenHost"></div>
     <canvas id="spectator"></canvas>
     <button id="micBtn" title="or hold X">🎙 HOLD TO COACH</button>
+    <div id="replayBar">
+      <span>📼 REPLAY</span>
+      <span id="replayClock">00:00</span>
+      <button class="speed active" data-speed="1">1×</button>
+      <button class="speed" data-speed="2">2×</button>
+      <button class="speed" data-speed="4">4×</button>
+      <span id="replayStatus"></span>
+      <a href="lobby.html" style="color:#2be08f; text-decoration:none;">✕ LOBBY</a>
+    </div>
   </section>
 </main>
 <script type="module">
@@ -155,6 +170,47 @@
     document.getElementById('token').value = boot.get('token');
     mode('online');
     document.getElementById('onlineForm').requestSubmit();
+  }
+
+  // replay theater (M1.2): ?replayUrl=…&match=…&token=… — fetch the
+  // ReplayFile and re-run it through the golden sim, no server connection
+  if (boot.get('replayUrl') && boot.get('match') && boot.get('token')){
+    mode('online');
+    document.getElementById('onlineForm').classList.add('hidden');
+    const bar = document.getElementById('replayBar');
+    bar.classList.add('on');
+    (async () => {
+      const status = document.getElementById('replayStatus');
+      try {
+        status.textContent = 'loading…';
+        const base = boot.get('replayUrl').replace(/\/+$/, '');
+        const res = await fetch(`${base}/matches/${boot.get('match')}/replays/stream`, {
+          headers: { authorization: `Bearer ${boot.get('token')}` },
+        });
+        if (!res.ok) throw new Error(`replay fetch failed (${res.status})`);
+        const stream = await res.json();
+        puppet = new GoldenPuppet(document.getElementById('goldenHost'));
+        await puppet.mount();
+        puppet.playReplay(stream, {
+          onTick: (_tick, clock) => { document.getElementById('replayClock').textContent = clock; },
+          onEnd: ({ score }) => {
+            const recorded = stream.result?.finalScore;
+            status.textContent = recorded && (score[0] !== recorded[0] || score[1] !== recorded[1])
+              ? `⚠ diverged: ${score.join('-')} vs recorded ${recorded.join('-')}`
+              : `full time ${score.join(' - ')}`;
+          },
+        });
+        status.textContent = '';
+        for (const btn of bar.querySelectorAll('button.speed'))
+          btn.onclick = () => {
+            puppet.setReplaySpeed(Number(btn.dataset.speed));
+            for (const b of bar.querySelectorAll('button.speed')) b.classList.toggle('active', b === btn);
+          };
+        window.__puppet = puppet;
+      } catch (err){
+        status.textContent = String(err.message ?? err);
+      }
+    })();
   }
 </script>
 </body>
