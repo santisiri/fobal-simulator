@@ -3,23 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FOBAL Lobby</title>
+<meta name="description" content="FOBAL lobby — find an opponent, coach by voice, keep the rivalry.">
+<meta name="theme-color" content="#070b12">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<title>FOBAL — Lobby</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --sans: "Space Grotesk", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
   html, body { margin: 0; min-height: 100%; background: #070b12; color: #e8eef5;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    font-family: var(--mono); }
   header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
     border-bottom: 1px solid rgba(70,200,150,0.25); }
-  header h1 { font-size: 14px; margin: 0; letter-spacing: 2px; }
+  header h1 { font-family: var(--sans); font-weight: 800; font-size: 15px; margin: 0;
+    letter-spacing: 3px; }
   header h1 span { color: #2be08f; }
   header .who { margin-left: auto; font-size: 12px; opacity: 0.8; }
   main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
   .card { background: rgba(12,19,32,0.9); border: 1px solid rgba(70,200,150,0.3);
     border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  .card h2 { margin: 0 0 12px; font-size: 12px; letter-spacing: 2px; color: #2be08f; }
+  .card h2 { font-family: var(--sans); margin: 0 0 12px; font-size: 12px;
+    letter-spacing: 2.5px; color: #2be08f; }
   button, input { background: #0c1320; color: #e8eef5; border: 1px solid rgba(70,200,150,0.4);
     border-radius: 6px; padding: 8px 12px; font: inherit; }
-  button { cursor: pointer; }
+  button { cursor: pointer; font-family: var(--sans); font-weight: 600; letter-spacing: 0.5px; }
   button:hover { border-color: #2be08f; }
   button.danger { border-color: rgba(226,89,72,0.5); }
   button.primary { background: #123726; border-color: #2be08f; font-weight: 700; }
@@ -49,6 +61,17 @@
   #matchCard { border-color: #2be08f; box-shadow: 0 0 24px rgba(43,224,143,0.15); }
   #matchCard .big { font-size: 18px; font-weight: 700; letter-spacing: 1px; margin: 4px 0 12px; }
   .hidden { display: none; }
+  @media (max-width: 480px) {
+    header { padding: 8px 10px; }
+    header h1 { font-size: 12px; letter-spacing: 1px; }
+    header .who { font-size: 10px; }
+    main { padding: 14px 8px; }
+    .card { padding: 12px 10px; margin-bottom: 12px; }
+    button, input { padding: 6px 9px; font-size: 12px; }
+    .player { flex-wrap: wrap; row-gap: 4px; }
+    .player .team { font-size: 11px; }
+    #matchCard .big { font-size: 15px; }
+  }
 </style>
 </head>
 <body>
