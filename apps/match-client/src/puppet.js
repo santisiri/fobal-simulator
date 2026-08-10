@@ -702,12 +702,21 @@ export class GoldenPuppet {
       playhead = Math.min(playhead + dt * 60 * this.replaySpeed, lastTick);
       while (eventIdx < events.length && events[eventIdx].tick <= playhead)
         this.handleEvent(events[eventIdx++], true);
+      if (playhead >= lastTick){
+        // land EXACTLY on the recorded final state (incl. FULLTIME, which
+        // gates the golden full-time stat line) — never an interpolation
+        over = true;
+        const final = frames[frames.length - 1];
+        const players = new Map(final.players.map(p => [p.playerId, {
+          position: p.position, facing: p.facing, action: p.action, onPitch: p.onPitch,
+        }]));
+        this.apply({ ...final, players }, dt);
+        if (hooks.onTick) hooks.onTick(playhead, game.match.clock ? game.match.clock() : '');
+        hooks.onEnd?.({ score: [...game.match.score], tick: lastTick });
+        return;
+      }
       this.apply(interpolated(), dt);
       if (hooks.onTick) hooks.onTick(playhead, game.match.clock ? game.match.clock() : '');
-      if (playhead >= lastTick){
-        over = true;
-        hooks.onEnd?.({ score: [...game.match.score], tick: lastTick });
-      }
     };
     const loop = (t) => { this.raf = requestAnimationFrame(loop); pump(t, 0.1); };
     this.raf = requestAnimationFrame(loop);
