@@ -269,3 +269,41 @@ describe('capacity backpressure (M2)', () => {
     } finally { await lobby.close(); await match.close(); }
   });
 });
+
+describe('abuse limits (M2)', () => {
+  test('challenge spam hits 429 at the rolling-window cap', async () => {
+    const { base, close } = await boot({ challengeLimit: { count: 2, windowMs: 60_000 } });
+    try {
+      const a = await login(base, 'spam@fobal.ai');
+      const b = await login(base, 'victim1@fobal.ai');
+      const c = await login(base, 'victim2@fobal.ai');
+      const d = await login(base, 'victim3@fobal.ai');
+
+      const first = await post(`${base}/challenges`, { to: b.accountId }, a.token);
+      expect(first.status).toBe(201);
+      const { challenge } = await first.json() as { challenge: { id: string } };
+      await post(`${base}/challenges/${challenge.id}/decline`, {}, a.token);   // declining frees nothing
+      expect((await post(`${base}/challenges`, { to: c.accountId }, a.token)).status).toBe(201);
+
+      const third = await post(`${base}/challenges`, { to: d.accountId }, a.token);
+      expect(third.status).toBe(429);
+      // and the cap is per-CREATOR: the victim can still challenge freely
+      expect((await post(`${base}/challenges`, { to: d.accountId }, b.token)).status).toBe(201);
+    } finally { await close(); }
+  });
+
+  test('slurs are rejected on team and player names, plain and leet-speak', async () => {
+    const { base, close } = await boot();
+    try {
+      const a = await login(base, 'mod@fobal.ai');
+      expect((await post(`${base}/account/team`, { teamName: 'N1gger FC' }, a.token)).status).toBe(400);
+      expect((await post(`${base}/account/team`, { teamName: 'FA660T UNITED' }, a.token)).status).toBe(400);
+      expect((await post(`${base}/account/team`, { teamName: 'Golden Puppets' }, a.token)).status).toBe(200);
+
+      const squad = await (await get(`${base}/squad`, a.token)).json() as { players: Array<{ playerId: string }> };
+      const pid = squad.players[9]!.playerId;
+      expect((await post(`${base}/squad`, { players: [{ playerId: pid, name: 'h1tl3r' }] }, a.token)).status).toBe(400);
+      expect((await post(`${base}/squad`, { players: [{ playerId: pid, name: 'La Pulga' }] }, a.token)).status).toBe(200);
+    } finally { await close(); }
+  });
+});

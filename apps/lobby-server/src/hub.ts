@@ -28,6 +28,7 @@ import { TeamSnapshot } from '@fobal/protocol';
 import { signSession, verifySession } from './sessions.js';
 import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
 import { buildManifest, buildTeam } from './teams.js';
+import { nameAllowed } from './names.js';
 
 export interface LobbyServerOptions {
   port?: number;                    // 0 → ephemeral
@@ -62,6 +63,9 @@ export interface LobbyServerOptions {
   resultCheckAfterMs?: number;
   /** min interval between result checks per match (default 20s) */
   resultCheckEveryMs?: number;
+  /** challenge-spam guard (M2): max challenges an account may CREATE per
+   *  rolling window (default 8 per 10min) */
+  challengeLimit?: { count: number; windowMs: number };
 }
 
 export interface LobbyServer {
@@ -127,6 +131,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const presence = new Map<string, number>();
   const challenges = new Map<string, Challenge>();
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
+  const challengeLimit = options.challengeLimit ?? { count: 8, windowMs: 10 * 60 * 1000 };
+  const challengeTimes = new Map<string, number[]>();  // accountId → creation times
 
   const online = (accountId: string): boolean =>
     (presence.get(accountId) ?? 0) > Date.now() - presenceTtl;
@@ -411,6 +417,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
             const name = cleanName(entry.name);
             if (name.length < 2 || name.length > 24)
               return json(res, 400, { error: 'player names must be 2–24 characters' });
+            if (!nameAllowed(name))
+              return json(res, 400, { error: 'that player name is not allowed' });
             // saving the default back clears the override — the store stays lean
             if (name === defaults.get(entry.playerId)) delete names[entry.playerId];
             else names[entry.playerId] = name;
@@ -449,6 +457,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         const clean = teamName.replace(/[\u0000-\u001f\u007f]/g, '').trim();
         if (clean.length < 2 || clean.length > 32)
           return json(res, 400, { error: 'teamName must be 2–32 characters' });
+        if (!nameAllowed(clean))
+          return json(res, 400, { error: 'that name is not allowed' });
         store.saveAccount({ ...me, teamName: clean });
         return json(res, 200, { account: publicAccount({ ...me, teamName: clean }) });
       }
@@ -472,6 +482,13 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         for (const c of challenges.values())
           if ((c.from === me.accountId && c.to === to) || (c.from === to && c.to === me.accountId))
             return json(res, 409, { error: 'a challenge between you is already pending' });
+        // challenge-spam guard: creations per account per rolling window —
+        // declining and re-challenging in good faith never gets near it
+        const times = (challengeTimes.get(me.accountId) ?? []).filter(t => t > Date.now() - challengeLimit.windowMs);
+        if (times.length >= challengeLimit.count){
+          challengeTimes.set(me.accountId, times);
+          return json(res, 429, { error: 'easy, coach — too many challenges; try again in a few minutes' });
+        }
         // rematch is just a challenge wearing history: the reference must be a
         // match the two of you actually played (it only decorates the invite)
         if (rematchOf !== undefined){
@@ -485,6 +502,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           ...(typeof rematchOf === 'string' ? { rematchOf } : {}),
         };
         challenges.set(challenge.id, challenge);
+        challengeTimes.set(me.accountId, [...times, Date.now()]);
         return json(res, 201, { challenge: challengeView(challenge) });
       }
 
