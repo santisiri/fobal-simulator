@@ -205,3 +205,40 @@ DNS at iwantmyname: `play-staging.fobal.ai` CNAME →
 `dozmg6c3es7yz.cloudfront.net`; `lobby-staging.fobal.ai` CNAME → the ALB
 DNS name. The `fobal-staging-web` CDK stack that originally owned the
 distribution was retired in favor of this runbook.
+
+## Production environment (M3)
+
+Same account, same VPC, fully parallel `fobal-prod-*` world defined by
+`infra/cdk/lib/envs.ts` (one parameterized stack, per-env values; the
+staging template was verified BYTE-IDENTICAL across the refactor):
+
+- Stack `fobal-prod-match-server`: matches.fobal.ai + lobby.fobal.ai on its
+  own ALB; match task 0.5 vCPU / 1 GB with `FOBAL_MAX_ROOMS=90` (the
+  SCALE.md capacity rung); `FOBAL_WS_ORIGINS=https://play.fobal.ai` ONLY —
+  no localhost escape hatches in prod.
+- **Stable Ed25519 signing key** (prod results verify forever):
+  `fobal/prod/match-server/signing-key`, created imperatively ONCE via
+  `npx tsx tools/generate-signing-key.mjs | aws secretsmanager create-secret
+  --name fobal/prod/match-server/signing-key --secret-string file:///dev/stdin
+  --region sa-east-1` (the tool refuses to print to a TTY), imported by the
+  stack and injected as FOBAL_SIGNING_KEY. Rotation invalidates verification
+  of previously signed results — treat as long-lived identity.
+- Certificates: the existing `*.fobal.ai` wildcards (sa-east-1 for the ALB,
+  us-east-1 for CloudFront) already cover matches/lobby/play.fobal.ai — no
+  new certs.
+- Imperative one-time resources (standing rule): `fobal-prod-match-server`
+  ECR repo (or reuse the staging repo's images — they are env-agnostic; we
+  create a prod repo for lifecycle isolation), `fobal-prod-replays-<acct>`
+  bucket, `fobal-prod-client-<acct>` bucket, `/fobal/prod/match-server` +
+  `/fobal/prod/lobby-server` log groups, the signing-key secret, and the
+  prod CloudFront distribution per the imperative runbook above (same
+  CFN+exec-role quirk applies — do NOT attempt the distribution via CFN).
+- Lobby: SES from lobby@fobal.ai (same verified identity), test-login-key
+  secret for acceptance, NO dev auth. SES production access must be
+  APPROVED for strangers to receive codes.
+- Deploy contexts: `-c imageTag=… -c prodCertificateArn=<sa-east-1
+  wildcard> -c prodWildcardCertificateArn=<same>`.
+- IAM: engineer/boundary/cfn-exec were widened to fobal-prod-* scopes and
+  Environment/Scope tag values ['staging','production']/['fobal-staging',
+  'fobal-prod']. The boundary sits at ~6,001 of 6,144 non-ws chars — the
+  NEXT boundary change must slim something first.

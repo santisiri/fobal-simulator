@@ -13,32 +13,33 @@ import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
+import { FobalEnvConfig } from './envs.js';
 
 const ACCOUNT = '368426158592';
 const REGION = 'sa-east-1';
-const PREFIX = 'fobal-staging';
-const HOSTNAME = 'matches-staging.fobal.ai';
-const LOBBY_HOSTNAME = 'lobby-staging.fobal.ai';
-const PLAY_HOSTNAME = 'play-staging.fobal.ai';
 const CONTAINER_PORT = 8473;
 const LOBBY_PORT = 8475;
 
-export class FobalStagingStack extends Stack {
-  constructor(scope: Construct, id: string, props: StackProps = {}) {
+export class FobalStack extends Stack {
+  constructor(scope: Construct, id: string, envCfg: FobalEnvConfig, props: StackProps = {}) {
     super(scope, id, props);
+    const PREFIX = envCfg.prefix;
+    const HOSTNAME = envCfg.matchesHostname;
+    const LOBBY_HOSTNAME = envCfg.lobbyHostname;
+    const ROLE = envCfg.roleInfix;
 
     Tags.of(this).add('Project', 'Fobal');
-    Tags.of(this).add('Environment', 'staging');
+    Tags.of(this).add('Environment', envCfg.environmentTag);
     Tags.of(this).add('Scope', PREFIX);
 
     const imageTag = this.node.tryGetContext('imageTag')?.toString() ?? 'staging';
-    const certificateArn = this.node.tryGetContext('certificateArn')?.toString()
+    const certificateArn = this.node.tryGetContext(envCfg.certContextKey)?.toString()
       ?? `arn:aws:acm:${REGION}:${ACCOUNT}:certificate/REPLACE_WITH_VALIDATED_CERTIFICATE_ID`;
     // *.fobal.ai in sa-east-1 — added to the HTTPS listener for the lobby
     // hostname. The ENTIRE lobby service is gated on this context so the
     // stack keeps synthesizing exactly as before until the cert exists:
     //   -c wildcardCertificateArn=arn:aws:acm:sa-east-1:…
-    const wildcardCertificateArn = this.node.tryGetContext('wildcardCertificateArn')?.toString();
+    const wildcardCertificateArn = this.node.tryGetContext(envCfg.wildcardCertContextKey)?.toString();
 
     const boundary = iam.ManagedPolicy.fromManagedPolicyArn(
       this,
@@ -120,7 +121,7 @@ export class FobalStagingStack extends Stack {
     });
 
     const tokenSecret = new secretsmanager.Secret(this, 'TokenSecret', {
-      secretName: 'fobal/staging/match-server/token-secret',
+      secretName: `${envCfg.secretsPrefix}/match-server/token-secret`,
       generateSecretString: {
         passwordLength: 48,
         excludePunctuation: true,
@@ -128,7 +129,7 @@ export class FobalStagingStack extends Stack {
     });
 
     const createKey = new secretsmanager.Secret(this, 'CreateKey', {
-      secretName: 'fobal/staging/match-server/create-key',
+      secretName: `${envCfg.secretsPrefix}/match-server/create-key`,
       generateSecretString: {
         passwordLength: 48,
         excludePunctuation: true,
@@ -144,11 +145,11 @@ export class FobalStagingStack extends Stack {
     const logGroup = logs.LogGroup.fromLogGroupName(
       this,
       'MatchServerLogGroup',
-      '/fobal/staging/match-server',
+      envCfg.namespace,
     );
 
     const taskRole = new iam.Role(this, 'TaskRole', {
-      roleName: 'Fobal-staging-match-server-task-role',
+      roleName: `Fobal-${ROLE}-match-server-task-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       permissionsBoundary: boundary,
       inlinePolicies: {
@@ -167,14 +168,14 @@ export class FobalStagingStack extends Stack {
             new iam.PolicyStatement({
               actions: ['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'],
               resources: [
-                `arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:fobal/staging/match-server/*`,
+                `arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:${envCfg.secretsPrefix}/match-server/*`,
               ],
             }),
             new iam.PolicyStatement({
               actions: ['cloudwatch:PutMetricData'],
               resources: ['*'],
               conditions: {
-                StringEquals: { 'cloudwatch:namespace': '/fobal/staging/match-server' },
+                StringEquals: { 'cloudwatch:namespace': envCfg.namespace },
               },
             }),
           ],
@@ -182,8 +183,17 @@ export class FobalStagingStack extends Stack {
       },
     });
 
+    // prod only: results must verify across task restarts — a long-lived
+    // Ed25519 key created imperatively ONCE and imported (standing rule):
+    //   npx tsx tools/generate-signing-key.mjs | aws secretsmanager create-secret \
+    //     --name fobal/prod/match-server/signing-key --secret-string file:///dev/stdin
+    const signingSecret = envCfg.stableSigningKey
+      ? secretsmanager.Secret.fromSecretNameV2(
+          this, 'SigningKeySecret', `${envCfg.secretsPrefix}/match-server/signing-key`)
+      : null;
+
     const executionRole = new iam.Role(this, 'ExecutionRole', {
-      roleName: 'Fobal-staging-match-server-execution-role',
+      roleName: `Fobal-${ROLE}-match-server-execution-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       permissionsBoundary: boundary,
       inlinePolicies: {
@@ -207,7 +217,12 @@ export class FobalStagingStack extends Stack {
             }),
             new iam.PolicyStatement({
               actions: ['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'],
-              resources: [tokenSecret.secretArn, createKey.secretArn],
+              resources: [
+                tokenSecret.secretArn,
+                createKey.secretArn,
+                // fromSecretNameV2 arns lack the random suffix — wildcard it
+                ...(signingSecret ? [`${signingSecret.secretArn}-??????`] : []),
+              ],
             }),
           ],
         }),
@@ -222,8 +237,8 @@ export class FobalStagingStack extends Stack {
 
     const taskDefinition = new ecs.FargateTaskDefinition(this, 'TaskDefinition', {
       family: `${PREFIX}-match-server`,
-      cpu: 256,
-      memoryLimitMiB: 512,
+      cpu: envCfg.taskCpu,
+      memoryLimitMiB: envCfg.taskMemoryMiB,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.X86_64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
@@ -245,17 +260,19 @@ export class FobalStagingStack extends Stack {
         FOBAL_STORE: '/data/matches',
         FOBAL_STORE_BACKEND: 's3',
         FOBAL_REPLAY_BUCKET: replayBucket.bucketName,
-        FOBAL_CLOUDWATCH_NAMESPACE: '/fobal/staging/match-server',
+        FOBAL_CLOUDWATCH_NAMESPACE: envCfg.namespace,
         // per-IP caps must see the CLIENT ip, not the ALB's — the server
         // only honors x-forwarded-for when this is set
         FOBAL_TRUST_PROXY: '1',
         // B3: the hosted client plus local dev pages; tools (no Origin
         // header) always pass regardless
-        FOBAL_WS_ORIGINS: `https://${PLAY_HOSTNAME},http://localhost:8471,http://localhost:8474`,
+        FOBAL_WS_ORIGINS: envCfg.wsOrigins,
+        ...(envCfg.maxRooms ? { FOBAL_MAX_ROOMS: envCfg.maxRooms } : {}),
       },
       secrets: {
         FOBAL_SECRET: ecs.Secret.fromSecretsManager(tokenSecret),
         FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
+        ...(signingSecret ? { FOBAL_SIGNING_KEY: ecs.Secret.fromSecretsManager(signingSecret) } : {}),
       },
       portMappings: [
         {
@@ -365,11 +382,11 @@ export class FobalStagingStack extends Stack {
       const lobbyLogGroup = logs.LogGroup.fromLogGroupName(
         this,
         'LobbyLogGroup',
-        '/fobal/staging/lobby-server',
+        envCfg.lobbyLogGroup,
       );
 
       const lobbySessionSecret = new secretsmanager.Secret(this, 'LobbySessionSecret', {
-        secretName: 'fobal/staging/lobby-server/session-secret',
+        secretName: `${envCfg.secretsPrefix}/lobby-server/session-secret`,
         generateSecretString: {
           passwordLength: 48,
           excludePunctuation: true,
@@ -379,7 +396,7 @@ export class FobalStagingStack extends Stack {
       // acceptance scripts present this via x-fobal-test-key to receive login
       // codes in the response; real users only ever get codes by email
       const lobbyTestLoginKey = new secretsmanager.Secret(this, 'LobbyTestLoginKey', {
-        secretName: 'fobal/staging/lobby-server/test-login-key',
+        secretName: `${envCfg.secretsPrefix}/lobby-server/test-login-key`,
         generateSecretString: {
           passwordLength: 48,
           excludePunctuation: true,
@@ -387,7 +404,7 @@ export class FobalStagingStack extends Stack {
       });
 
       const lobbyTaskRole = new iam.Role(this, 'LobbyTaskRole', {
-        roleName: 'Fobal-staging-lobby-server-task-role',
+        roleName: `Fobal-${ROLE}-lobby-server-task-role`,
         assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
         permissionsBoundary: boundary,
         inlinePolicies: {
@@ -413,7 +430,7 @@ export class FobalStagingStack extends Stack {
       });
 
       const lobbyExecutionRole = new iam.Role(this, 'LobbyExecutionRole', {
-        roleName: 'Fobal-staging-lobby-server-execution-role',
+        roleName: `Fobal-${ROLE}-lobby-server-execution-role`,
         assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
         permissionsBoundary: boundary,
         inlinePolicies: {

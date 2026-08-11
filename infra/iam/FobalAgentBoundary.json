@@ -107,7 +107,8 @@
       ],
       "NotResource": [
         "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-staging-*/*",
-        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*"
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*",
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-prod-*/*"
       ]
     },
     {
@@ -127,7 +128,8 @@
       ],
       "NotResource": [
         "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*",
-        "arn:aws:ecr:sa-east-1:368426158592:repository/cdk-fobalstag-*"
+        "arn:aws:ecr:sa-east-1:368426158592:repository/cdk-fobalstag-*",
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-prod-*"
       ]
     },
     {
@@ -142,7 +144,10 @@
         "secretsmanager:Untag*",
         "secretsmanager:Update*"
       ],
-      "NotResource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*"
+      "NotResource": [
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*",
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/prod/*"
+      ]
     },
     {
       "Sid": "DenyLogsMutationsOutsideFobalNamespace",
@@ -156,7 +161,9 @@
       ],
       "NotResource": [
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
-        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*:*"
       ]
     },
     {
@@ -172,7 +179,9 @@
         "arn:aws:s3:::fobal-staging-*",
         "arn:aws:s3:::fobal-staging-*/*",
         "arn:aws:s3:::cdk-fobalstag-*",
-        "arn:aws:s3:::cdk-fobalstag-*/*"
+        "arn:aws:s3:::cdk-fobalstag-*/*",
+        "arn:aws:s3:::fobal-prod-*",
+        "arn:aws:s3:::fobal-prod-*/*"
       ]
     },
     {
@@ -188,8 +197,14 @@
       "Condition": {
         "StringNotEqualsIfExists": {
           "aws:RequestTag/Project": "Fobal",
-          "aws:RequestTag/Environment": "staging",
-          "aws:RequestTag/Scope": "fobal-staging"
+          "aws:RequestTag/Environment": [
+            "staging",
+            "production"
+          ],
+          "aws:RequestTag/Scope": [
+            "fobal-staging",
+            "fobal-prod"
+          ]
         }
       }
     },
@@ -201,8 +216,14 @@
       "Condition": {
         "StringNotEqualsIfExists": {
           "aws:RequestTag/Project": "Fobal",
-          "aws:RequestTag/Environment": "staging",
-          "aws:RequestTag/Scope": "fobal-staging"
+          "aws:RequestTag/Environment": [
+            "staging",
+            "production"
+          ],
+          "aws:RequestTag/Scope": [
+            "fobal-staging",
+            "fobal-prod"
+          ]
         }
       }
     },
@@ -223,8 +244,14 @@
       "Condition": {
         "StringNotEqualsIfExists": {
           "aws:ResourceTag/Project": "Fobal",
-          "aws:ResourceTag/Environment": "staging",
-          "aws:ResourceTag/Scope": "fobal-staging"
+          "aws:ResourceTag/Environment": [
+            "staging",
+            "production"
+          ],
+          "aws:ResourceTag/Scope": [
+            "fobal-staging",
+            "fobal-prod"
+          ]
         }
       }
     },
@@ -258,7 +285,10 @@
       "Sid": "DenyFobalBucketDeletion",
       "Effect": "Deny",
       "Action": "s3:DeleteBucket",
-      "Resource": "arn:aws:s3:::fobal-staging-*"
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-*",
+        "arn:aws:s3:::fobal-prod-*"
+      ]
     },
     {
       "Sid": "DenyProductionAndMainnetNamedResources",
