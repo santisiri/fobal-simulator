@@ -295,7 +295,13 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           return json(res, 429, { error: 'code already sent — wait a few seconds' });
         const code = randomBytes(4).toString('hex');
         loginCodes.set(key, { code, expiresAt: Date.now() + LOGIN_CODE_TTL_MS, lastRequestAt: Date.now() });
-        if (options.deliverCode){
+        // the code rides the response for local dev and for the acceptance
+        // scripts presenting the server-held test key — and a code that is
+        // being HANDED BACK is never also emailed (acceptance must not
+        // depend on SES health, burn sending quota, or mail ghost inboxes)
+        const reveal = options.devAuth === true
+          || (options.testLoginKey !== undefined && req.headers['x-fobal-test-key'] === options.testLoginKey);
+        if (!reveal && options.deliverCode){
           try { await options.deliverCode(key, code); }
           catch {
             // failed send must not leave a live code (or a rate-limit lock)
@@ -303,10 +309,6 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
             return json(res, 502, { error: 'could not send the login code — try again shortly' });
           }
         }
-        // the code rides the response for local dev, and for the acceptance
-        // scripts when they present the server-held test key
-        const reveal = options.devAuth === true
-          || (options.testLoginKey !== undefined && req.headers['x-fobal-test-key'] === options.testLoginKey);
         return json(res, 200, reveal ? { ok: true, devCode: code } : { ok: true });
       }
 

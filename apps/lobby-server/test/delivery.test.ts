@@ -73,8 +73,12 @@ describe('login-code delivery', () => {
     } finally { await close(); }
   });
 
-  test('the test key reveals the code ONLY with the exact header', async () => {
-    const { base, close } = await boot({ deliverCode: () => {}, testLoginKey: 'acceptance-secret' });
+  test('the test key reveals the code ONLY with the exact header — and revealed codes are never ALSO emailed', async () => {
+    const delivered: string[] = [];
+    const { base, close } = await boot({
+      deliverCode: (email) => { delivered.push(email); },
+      testLoginKey: 'acceptance-secret',
+    });
     try {
       const plain = await (await post(`${base}/auth/request`, { email: 'a@fobal.ai' })).json() as { devCode?: string };
       expect(plain.devCode).toBeUndefined();
@@ -84,6 +88,22 @@ describe('login-code delivery', () => {
       const right = await (await post(`${base}/auth/request`, { email: 'c@fobal.ai' },
         { 'x-fobal-test-key': 'acceptance-secret' })).json() as { devCode?: string };
       expect(right.devCode).toBeDefined();
+      // only the NON-revealed requests were emailed — acceptance must work
+      // with SES down, in the sandbox, or before the identity verifies
+      expect(delivered).toEqual(['a@fobal.ai', 'b@fobal.ai']);
+    } finally { await close(); }
+  });
+
+  test('a broken deliverer cannot block test-key logins (SES down ≠ acceptance down)', async () => {
+    const { base, close } = await boot({
+      deliverCode: () => { throw new Error('ses exploded'); },
+      testLoginKey: 'k',
+    });
+    try {
+      expect((await post(`${base}/auth/request`, { email: 'x@fobal.ai' })).status).toBe(502);
+      const keyed = await post(`${base}/auth/request`, { email: 'y@fobal.ai' }, { 'x-fobal-test-key': 'k' });
+      expect(keyed.status).toBe(200);
+      expect(((await keyed.json()) as { devCode?: string }).devCode).toBeDefined();
     } finally { await close(); }
   });
 
