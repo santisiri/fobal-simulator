@@ -27,7 +27,8 @@
       ],
       "Resource": [
         "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-staging-*/*",
-        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*"
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/CDKToolkit-fobalstag/*",
+        "arn:aws:cloudformation:sa-east-1:368426158592:stack/fobal-prod-*/*"
       ]
     },
     {
@@ -95,7 +96,8 @@
       ],
       "Resource": [
         "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*",
-        "arn:aws:ecr:sa-east-1:368426158592:repository/cdk-fobalstag-container-assets-368426158592-sa-east-1"
+        "arn:aws:ecr:sa-east-1:368426158592:repository/cdk-fobalstag-container-assets-368426158592-sa-east-1",
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-prod-*"
       ]
     },
     {
@@ -146,8 +148,14 @@
       "Condition": {
         "StringEqualsIfExists": {
           "aws:RequestTag/Project": "Fobal",
-          "aws:RequestTag/Environment": "staging",
-          "aws:RequestTag/Scope": "fobal-staging"
+          "aws:RequestTag/Environment": [
+            "staging",
+            "production"
+          ],
+          "aws:RequestTag/Scope": [
+            "fobal-staging",
+            "fobal-prod"
+          ]
         }
       }
     },
@@ -225,7 +233,9 @@
       ],
       "Resource": [
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
-        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*:*"
       ]
     },
     {
@@ -248,7 +258,10 @@
       "Resource": "*",
       "Condition": {
         "StringEqualsIfExists": {
-          "cloudwatch:namespace": "/fobal/staging/match-server"
+          "cloudwatch:namespace": [
+            "/fobal/staging/match-server",
+            "/fobal/prod/match-server"
+          ]
         }
       }
     },
@@ -266,7 +279,10 @@
         "secretsmanager:UntagResource",
         "secretsmanager:UpdateSecret"
       ],
-      "Resource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*"
+      "Resource": [
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*",
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/prod/*"
+      ]
     },
     {
       "Sid": "S3FobalStagingBuckets",
@@ -293,7 +309,8 @@
       ],
       "Resource": [
         "arn:aws:s3:::fobal-staging-*",
-        "arn:aws:s3:::cdk-fobalstag-assets-368426158592-sa-east-1"
+        "arn:aws:s3:::cdk-fobalstag-assets-368426158592-sa-east-1",
+        "arn:aws:s3:::fobal-prod-*"
       ]
     },
     {
@@ -307,7 +324,8 @@
       ],
       "Resource": [
         "arn:aws:s3:::fobal-staging-*/*",
-        "arn:aws:s3:::cdk-fobalstag-assets-368426158592-sa-east-1/*"
+        "arn:aws:s3:::cdk-fobalstag-assets-368426158592-sa-east-1/*",
+        "arn:aws:s3:::fobal-prod-*/*"
       ]
     },
     {
@@ -350,7 +368,11 @@
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-execution-role",
         "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-task-role",
         "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-execution-role",
-        "arn:aws:iam::368426158592:role/cdk-fobalstag-cfn-exec-role-368426158592-sa-east-1"
+        "arn:aws:iam::368426158592:role/cdk-fobalstag-cfn-exec-role-368426158592-sa-east-1",
+        "arn:aws:iam::368426158592:role/Fobal-prod-match-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-match-server-execution-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-lobby-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-lobby-server-execution-role"
       ],
       "Condition": {
         "StringEqualsIfExists": {

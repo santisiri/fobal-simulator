@@ -13,7 +13,10 @@
         "ecr:TagResource",
         "ecr:UntagResource"
       ],
-      "Resource": "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*"
+      "Resource": [
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-*",
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-prod-*"
+      ]
     },
     {
       "Sid": "EcsFobalStagingManagement",
@@ -61,8 +64,14 @@
       "Condition": {
         "StringEqualsIfExists": {
           "aws:RequestTag/Project": "Fobal",
-          "aws:RequestTag/Environment": "staging",
-          "aws:RequestTag/Scope": "fobal-staging"
+          "aws:RequestTag/Environment": [
+            "staging",
+            "production"
+          ],
+          "aws:RequestTag/Scope": [
+            "fobal-staging",
+            "fobal-prod"
+          ]
         }
       }
     },
@@ -129,7 +138,9 @@
       ],
       "Resource": [
         "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*",
-        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*"
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/staging/*:*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*",
+        "arn:aws:logs:sa-east-1:368426158592:log-group:/fobal/prod/*:*"
       ]
     },
     {
@@ -179,7 +190,10 @@
         "secretsmanager:UntagResource",
         "secretsmanager:UpdateSecret"
       ],
-      "Resource": "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*"
+      "Resource": [
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/staging/*",
+        "arn:aws:secretsmanager:sa-east-1:368426158592:secret:fobal/prod/*"
+      ]
     },
     {
       "Sid": "S3FobalBucketManagement",
@@ -201,7 +215,10 @@
         "s3:PutBucketVersioning",
         "s3:PutLifecycleConfiguration"
       ],
-      "Resource": "arn:aws:s3:::fobal-staging-*"
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-*",
+        "arn:aws:s3:::fobal-prod-*"
+      ]
     },
     {
       "Sid": "S3FobalObjectManagement",
@@ -212,7 +229,10 @@
         "s3:GetObject",
         "s3:PutObject"
       ],
-      "Resource": "arn:aws:s3:::fobal-staging-*/*"
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-*/*",
+        "arn:aws:s3:::fobal-prod-*/*"
+      ]
     },
     {
       "Sid": "IamFobalRoleManagement",
@@ -253,7 +273,11 @@
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-task-role",
         "arn:aws:iam::368426158592:role/Fobal-staging-match-server-execution-role",
         "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-task-role",
-        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-execution-role"
+        "arn:aws:iam::368426158592:role/Fobal-staging-lobby-server-execution-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-match-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-match-server-execution-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-lobby-server-task-role",
+        "arn:aws:iam::368426158592:role/Fobal-prod-lobby-server-execution-role"
       ],
       "Condition": {
         "StringEquals": {
