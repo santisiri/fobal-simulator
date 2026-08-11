@@ -1,0 +1,11 @@
+# Foundry
+out/
+cache/
+broadcast/
+.gas-snapshot
+# deps (installed via forge install)
+lib/
+# secrets
+.env
+# local deployment artifacts (chainId-named); keep the dir
+deployments/*.json
