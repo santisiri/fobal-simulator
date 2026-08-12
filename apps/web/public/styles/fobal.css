@@ -1,0 +1,131 @@
+/* FOBAL design system — the game UI in the language of fobal.ai.
+   Navy field, pixel-football spirit, on-chain green, holder purple.
+   Display: Space Grotesk. Body: DM Sans. Data: monospace. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0a0f1e;
+  --bg-2: #070b16;
+  --panel: #0d1428;
+  --panel-2: #111a33;
+  --ink: #f8fafc;
+  --dim: rgba(248, 250, 252, 0.56);
+  --faint: rgba(248, 250, 252, 0.34);
+  --green: #22c55e;
+  --green-ink: #041a0c;
+  --purple: #a855f7;
+  --line: rgba(120, 150, 200, 0.16);
+  --line-strong: rgba(120, 150, 200, 0.3);
+  --grass: #12351f;
+  --sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --radius: 12px;
+  --maxw: 1080px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* the field: a faint iso-pitch grid that grounds every screen in football */
+body.field {
+  background:
+    radial-gradient(1200px 600px at 50% -10%, rgba(34, 197, 94, 0.06), transparent 60%),
+    linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 44px,
+    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 44px 100%,
+    var(--bg);
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ---- type ---- */
+.display { font-family: var(--display); font-weight: 800; letter-spacing: -0.5px; line-height: 1.02; }
+.mono { font-family: var(--mono); }
+.label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 2.4px;
+  text-transform: uppercase; color: var(--dim);
+}
+.label.green { color: var(--green); }
+.label.purple { color: var(--purple); }
+.muted { color: var(--dim); }
+h1, h2, h3 { font-family: var(--display); font-weight: 800; margin: 0; }
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px; border-bottom: 1px solid var(--line);
+}
+.brand { font-family: var(--display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+.brand .ai { color: var(--green); }
+.topbar .spacer { flex: 1; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border: 1px solid var(--line-strong); border-radius: 999px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--dim);
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.chip.green { border-color: rgba(34, 197, 94, 0.4); color: var(--green); }
+.chip.purple { border-color: rgba(168, 85, 247, 0.4); color: var(--purple); }
+
+/* ---- buttons ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  font-family: var(--display); font-weight: 700; font-size: 14px; letter-spacing: 0.7px;
+  padding: 13px 22px; border-radius: 10px; border: 1px solid var(--line-strong);
+  background: var(--panel); color: var(--ink); cursor: pointer; transition: all 0.15s ease;
+}
+.btn:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.btn:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.btn.primary { background: var(--green); color: var(--green-ink); border-color: var(--green); box-shadow: 0 6px 24px rgba(34, 197, 94, 0.24); }
+.btn.primary:hover { box-shadow: 0 8px 30px rgba(34, 197, 94, 0.34); }
+.btn.ghost { background: transparent; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn.lg { padding: 15px 28px; font-size: 15px; }
+
+/* ---- panels ---- */
+.panel {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+
+/* ---- inputs ---- */
+.input {
+  width: 100%; padding: 13px 15px; border-radius: 10px;
+  background: var(--bg-2); border: 1px solid var(--line-strong); color: var(--ink);
+  font-family: var(--sans); font-size: 15px;
+}
+.input:focus { outline: none; border-color: var(--green); }
+input[type=color] { width: 46px; height: 40px; padding: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-2); cursor: pointer; }
+
+/* ---- rating bars ---- */
+.rating { display: grid; grid-template-columns: 34px 1fr 26px; gap: 8px; align-items: center; font-size: 11px; }
+.rating .lb { color: var(--dim); letter-spacing: 1px; font-family: var(--mono); }
+.rating .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.09); overflow: hidden; }
+.rating .bar i { display: block; height: 100%; border-radius: 3px; }
+.rating .val { text-align: right; font-weight: 700; font-family: var(--mono); }
+
+/* ---- marquee ---- */
+.marquee { overflow: hidden; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 10px 0; }
+.marquee .track { display: inline-flex; gap: 28px; white-space: nowrap; animation: scroll 32s linear infinite; }
+.marquee .track span { font-family: var(--mono); font-size: 12px; letter-spacing: 2px; color: var(--faint); }
+.marquee .track .dot { color: var(--green); }
+@keyframes scroll { to { transform: translateX(-50%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee .track { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
+
+@media (max-width: 640px) {
+  .topbar { padding: 10px 12px; gap: 8px; }
+  .brand { font-size: 14px; }
+}

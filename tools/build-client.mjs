@@ -91,6 +91,14 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
+// 5. the web app surfaces (onboarding wizard + shared design system). These
+//    are static and self-contained; relative paths resolve at the dist root.
+cpSync(join(root, 'apps/web/public/styles'), join(outDir, 'styles'), { recursive: true });
+cpSync(join(root, 'apps/web/public/js'), join(outDir, 'js'), { recursive: true });
+for (const page of ['onboarding.html']) {
+  writeFileSync(join(outDir, page), readFileSync(join(root, 'apps/web/public', page)));
+}
+
 console.log(`client built → ${outDir}`);
 console.log(`  lobby:  ${lobbyUrl}`);
 console.log(`  match:  ${matchWs}`);
