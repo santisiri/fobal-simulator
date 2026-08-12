@@ -91,12 +91,21 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 5. the web app surfaces (onboarding wizard + shared design system). These
-//    are static and self-contained; relative paths resolve at the dist root.
+// 5. the web app surfaces (onboarding, hub, play + shared design system).
+//    Static and self-contained; relative paths resolve at the dist root. A
+//    FOBAL_CONFIG snippet is injected so play.html can find the relocated
+//    golden (/golden/index.html) and the lobby URL — same config the shell
+//    and lobby receive.
 cpSync(join(root, 'apps/web/public/styles'), join(outDir, 'styles'), { recursive: true });
 cpSync(join(root, 'apps/web/public/js'), join(outDir, 'js'), { recursive: true });
-for (const page of ['onboarding.html', 'hub.html']) {
-  writeFileSync(join(outDir, page), readFileSync(join(root, 'apps/web/public', page)));
+const webConfig = `<script>window.FOBAL_CONFIG = ${JSON.stringify({
+  lobbyUrl, matchWsUrl: matchWs, goldenUrl: '/golden/index.html',
+})};</script>\n<link rel="stylesheet" href="styles/fobal.css">`;
+for (const page of ['onboarding.html', 'hub.html', 'play.html']) {
+  const html = readFileSync(join(root, 'apps/web/public', page), 'utf8');
+  writeFileSync(join(outDir, page), rewrite(page, html, [
+    ['<link rel="stylesheet" href="styles/fobal.css">', webConfig],
+  ]));
 }
 
 console.log(`client built → ${outDir}`);
