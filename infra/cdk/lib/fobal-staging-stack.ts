@@ -192,6 +192,21 @@ export class FobalStack extends Stack {
           this, 'SigningKeySecret', `${envCfg.secretsPrefix}/match-server/signing-key`)
       : null;
 
+    // M4 voice: the Claude interpreter + hosted STT keys. Gated on
+    // -c aiSecrets=1 so deploys stay valid until the secrets exist
+    // (created imperatively; a missing referenced secret crash-loops the
+    // task at launch):
+    //   aws secretsmanager create-secret --name <prefix>/match-server/anthropic-key --secret-string <key>
+    //   aws secretsmanager create-secret --name <prefix>/match-server/stt-key --secret-string <key>
+    const aiSecrets = this.node.tryGetContext('aiSecrets')
+      ? {
+          anthropic: secretsmanager.Secret.fromSecretNameV2(
+            this, 'AnthropicKeySecret', `${envCfg.secretsPrefix}/match-server/anthropic-key`),
+          stt: secretsmanager.Secret.fromSecretNameV2(
+            this, 'SttKeySecret', `${envCfg.secretsPrefix}/match-server/stt-key`),
+        }
+      : null;
+
     const executionRole = new iam.Role(this, 'ExecutionRole', {
       roleName: `Fobal-${ROLE}-match-server-execution-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -222,6 +237,7 @@ export class FobalStack extends Stack {
                 createKey.secretArn,
                 // fromSecretNameV2 arns lack the random suffix — wildcard it
                 ...(signingSecret ? [`${signingSecret.secretArn}-??????`] : []),
+                ...(aiSecrets ? [`${aiSecrets.anthropic.secretArn}-??????`, `${aiSecrets.stt.secretArn}-??????`] : []),
               ],
             }),
           ],
@@ -273,6 +289,10 @@ export class FobalStack extends Stack {
         FOBAL_SECRET: ecs.Secret.fromSecretsManager(tokenSecret),
         FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
         ...(signingSecret ? { FOBAL_SIGNING_KEY: ecs.Secret.fromSecretsManager(signingSecret) } : {}),
+        ...(aiSecrets ? {
+          ANTHROPIC_API_KEY: ecs.Secret.fromSecretsManager(aiSecrets.anthropic),
+          FOBAL_STT_API_KEY: ecs.Secret.fromSecretsManager(aiSecrets.stt),
+        } : {}),
       },
       portMappings: [
         {

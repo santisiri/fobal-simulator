@@ -22,6 +22,7 @@ import { generateSigningKeys, SigningKeys } from './signing.js';
 import { signToken, verifyToken } from './tokens.js';
 import { extractGoalClips, extractReplayStream } from './replays.js';
 import { CoachInterpreterOptions, createCoachInterpreter } from './coach.js';
+import { createTranscriber, SttOptions } from './stt.js';
 import { noopTelemetry, Telemetry } from './telemetry.js';
 
 export interface MatchServerOptions {
@@ -44,6 +45,9 @@ export interface MatchServerOptions {
   /** LLM tactical interpreter (C2); absent → the endpoint answers 501 and
    *  clients fall back to the golden parseCoach path */
   coach?: CoachInterpreterOptions;
+  /** hosted speech-to-text (M4); absent → /coach/voice answers 501 and
+   *  clients fall back to browser speech recognition */
+  stt?: SttOptions;
   /** structured logs + metrics; default silent (the CLI always provides one) */
   telemetry?: Telemetry;
   /** browser Origin allowlist for WebSocket upgrades. Unset/empty → allow
@@ -97,7 +101,7 @@ function parseClockMinutes(clock: string): number {
   return m ? Number(m[1]) : 0;
 }
 
-async function readBody(req: IncomingMessage, limit = 1024 * 1024): Promise<string> {
+async function readBodyRaw(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req){
@@ -105,7 +109,27 @@ async function readBody(req: IncomingMessage, limit = 1024 * 1024): Promise<stri
     if (size > limit) throw new Error('body too large');
     chunks.push(chunk as Buffer);
   }
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+/** Consume the WHOLE body (up to a hard ceiling), then report the size.
+ *  Aborting a request stream mid-read destroys the socket and leaves the
+ *  client's fetch in limbo — over-limit bodies must be drained, not
+ *  amputated, so the 413 can actually be delivered. */
+async function readBodyDrained(req: IncomingMessage, keep: number, hardCeiling: number): Promise<{ buf: Buffer; total: number }> {
+  const chunks: Buffer[] = [];
+  let kept = 0;
+  let total = 0;
+  for await (const chunk of req){
+    total += (chunk as Buffer).length;
+    if (total > hardCeiling) throw new Error('body far too large');
+    if (kept < keep){ chunks.push(chunk as Buffer); kept += (chunk as Buffer).length; }
+  }
+  return { buf: Buffer.concat(chunks), total };
+}
+
+async function readBody(req: IncomingMessage, limit = 1024 * 1024): Promise<string> {
+  return (await readBodyRaw(req, limit)).toString('utf8');
 }
 
 export async function startMatchServer(options: MatchServerOptions): Promise<MatchServer> {
@@ -118,6 +142,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
   const corsOrigin = options.corsOrigin ?? '*';
   const json = jsonWithCors(corsOrigin);
   const interpretCoach = createCoachInterpreter(options.coach ?? {});
+  const transcribe = createTranscriber(options.stt ?? {});
   const telemetry = options.telemetry ?? noopTelemetry;
   const wsOrigins = (options.wsOrigins ?? []).map(o => o.toLowerCase());
   const maxPerIp = options.maxConnectionsPerIp ?? 20;
@@ -259,36 +284,93 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         }
       }
 
-      // C2 — POST /matches/:id/coach/interpret (controller token required).
-      // Returns {patch?, coachText?, say} — the CLIENT sends the resulting
-      // command over its own authorized WebSocket; this endpoint never
-      // touches the match.
-      if (req.method === 'POST' && parts[0] === 'matches' && parts[2] === 'coach' && parts[3] === 'interpret'){
-        const matchId = parts[1]!;
-        if (!interpretCoach) return json(res, 501, { error: 'coach interpreter not configured' });
-        const auth = req.headers.authorization ?? '';
-        const payload = auth.startsWith('Bearer ') ? verifyToken(auth.slice(7), secret) : null;
-        if (!payload || payload.matchId !== matchId) return json(res, 401, { error: 'match token required' });
-        if (payload.role !== 'controller' || !payload.teamId)
-          return json(res, 403, { error: 'controller token required' });
-        const room = rooms.get(matchId);
-        if (!room) return json(res, 404, { error: 'no active match with that id' });
-        let text: unknown;
-        try { text = (JSON.parse(await readBody(req, 16 * 1024)) as { text?: unknown }).text; }
-        catch { return json(res, 400, { error: 'invalid JSON body' }); }
-        if (typeof text !== 'string' || !text.trim() || text.length > 500)
-          return json(res, 400, { error: 'text must be a non-empty string of at most 500 chars' });
+      // shared by /coach/interpret and /coach/voice: run the C2 interpreter
+      // with live match context for the CONTROLLER's team. The client sends
+      // the resulting command over its own authorized WebSocket; these
+      // endpoints never touch the match.
+      const interpretFor = async (room: MatchRoom, teamId: string, text: string) => {
+        if (!interpretCoach) return { coachText: text, say: null };
         const snap = room.snapshot();
-        const mine = snap.teams.findIndex(t => t.teamId === payload.teamId);
+        const mine = snap.teams.findIndex(t => t.teamId === teamId);
         const opp = snap.teams[1 - mine];
-        const startedAt = Date.now();
-        const result = await interpretCoach(text.trim(), {
-          teamName: room.manifest.teams[mine]?.name ?? payload.teamId,
+        return interpretCoach(text, {
+          teamName: room.manifest.teams[mine]?.name ?? teamId,
           scoreLine: `${snap.score[0]}-${snap.score[1]}`,
           minute: Math.min(90, Math.floor(parseClockMinutes(snap.clock)) + 1),
           currentTactics: (snap.teams[mine]?.tactics ?? {}) as Record<string, unknown>,
           opponent: { formation: opp?.tactics.formation, style: opp?.tactics.style, pressing: opp?.tactics.pressing },
         });
+      };
+      type ControllerGate =
+        | { error: [number, string]; room?: undefined; teamId?: undefined }
+        | { error?: undefined; room: MatchRoom; teamId: string };
+      const controllerFor = (matchId: string): ControllerGate => {
+        const auth = req.headers.authorization ?? '';
+        const payload = auth.startsWith('Bearer ') ? verifyToken(auth.slice(7), secret) : null;
+        if (!payload || payload.matchId !== matchId) return { error: [401, 'match token required'] };
+        if (payload.role !== 'controller' || !payload.teamId) return { error: [403, 'controller token required'] };
+        const room = rooms.get(matchId);
+        if (!room) return { error: [404, 'no active match with that id'] };
+        return { room, teamId: payload.teamId };
+      };
+
+      // M4 — POST /matches/:id/coach/voice: raw audio in (push-to-talk blob),
+      // hosted Whisper-class STT, then the SAME interpreter — one round trip
+      // for the whole voice→tactics budget. 501 without an STT key → the
+      // client falls back to browser speech recognition (C1).
+      if (req.method === 'POST' && parts[0] === 'matches' && parts[2] === 'coach' && parts[3] === 'voice'){
+        // every early rejection must DRAIN the request first — an unread
+        // audio body leaves the client's fetch hanging forever
+        const reject = (code: number, error: string) => { req.resume(); return json(res, code, { error }); };
+        if (!transcribe) return reject(501, 'voice transcription not configured');
+        const gate = controllerFor(parts[1]!);
+        if (gate.error) return reject(gate.error[0], gate.error[1]);
+        const mimeType = String(req.headers['content-type'] ?? 'audio/webm');
+        if (!mimeType.startsWith('audio/')) return reject(400, 'content-type must be audio/*');
+        let audio: Buffer;
+        try {
+          const body = await readBodyDrained(req, 2 * 1024 * 1024, 16 * 1024 * 1024);
+          if (body.total > 2 * 1024 * 1024) return json(res, 413, { error: 'audio too large (max 2MB \u2248 60s)' });
+          audio = body.buf;
+        } catch { return reject(413, 'audio too large (max 2MB \u2248 60s)'); }
+        if (audio.length < 200) return json(res, 400, { error: 'audio too short' });
+        const sttStart = Date.now();
+        let transcript: string;
+        try { transcript = await transcribe(audio, mimeType); }
+        catch (err){
+          telemetry.warn('stt_failed', { matchId: parts[1], error: (err as Error).message });
+          telemetry.metric('SttFailed', 1);
+          return json(res, 502, { error: 'transcription failed — try again or type it' });
+        }
+        telemetry.metric('SttMs', Date.now() - sttStart, 'Milliseconds');
+        if (!transcript || transcript.length > 500)
+          return json(res, 422, { error: 'nothing intelligible heard', transcript: '' });
+        const startedAt = Date.now();
+        const result = await interpretFor(gate.room, gate.teamId, transcript);
+        telemetry.log('coach_voice', {
+          matchId: parts[1], teamId: gate.teamId, audioBytes: audio.length,
+          transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs: Date.now() - startedAt,
+          outcome: result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
+        });
+        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
+        return json(res, 200, { transcript, ...result });
+      }
+
+      // C2 — POST /matches/:id/coach/interpret (typed text / browser-SR path)
+      if (req.method === 'POST' && parts[0] === 'matches' && parts[2] === 'coach' && parts[3] === 'interpret'){
+        const matchId = parts[1]!;
+        if (!interpretCoach) return json(res, 501, { error: 'coach interpreter not configured' });
+        const gate = controllerFor(matchId);
+        if (gate.error) return json(res, gate.error[0], { error: gate.error[1] });
+        const payload = { teamId: gate.teamId };
+        const room = gate.room;
+        let text: unknown;
+        try { text = (JSON.parse(await readBody(req, 16 * 1024)) as { text?: unknown }).text; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof text !== 'string' || !text.trim() || text.length > 500)
+          return json(res, 400, { error: 'text must be a non-empty string of at most 500 chars' });
+        const startedAt = Date.now();
+        const result = await interpretFor(room, payload.teamId, text.trim());
         const outcome = result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
         telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
         telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');

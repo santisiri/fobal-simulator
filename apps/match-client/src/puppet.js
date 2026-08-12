@@ -346,7 +346,7 @@ export class GoldenPuppet {
       const text = String(game.coachText || '').trim().slice(0, 280);
       game.closeCoach();
       if (!text) return;
-      void this.interpretAndSend(conn, text, commandId);
+      void this.interpretAndSend(conn, text);
     };
 
     // tactics panel: golden sliders mutate locally for instant feel; the
@@ -533,11 +533,56 @@ export class GoldenPuppet {
     this.playClip(clips[0]);
   }
 
+  /** M4 — the ack surface: every voice-originated command reports its
+   *  journey (listening → transcribing → thinking → sent → APPLIED) through
+   *  voiceHooks.onState so the coach SEES the team heard them. */
+  voiceState(state, detail){
+    this.voiceHooks?.onState?.(state, detail ?? '');
+  }
+
+  summarizeInterpretation(out, payload){
+    if (out.say) return out.say;
+    if (payload?.type === 'patch')
+      return Object.entries(payload.patch)
+        .map(([k, v]) => typeof v === 'number' ? `${k} ${v}` : String(v))
+        .join(' \u00b7 ').slice(0, 90);
+    return (payload?.text ?? '').slice(0, 90);
+  }
+
+  /** Shared exit for /coach/interpret and /coach/voice responses: golden
+   *  announcer + feed for the say line, one validated command over the WS,
+   *  and — when voice-originated — ack tracking until the server confirms. */
+  dispatchInterpretation(conn, out, { fromVoice = false } = {}){
+    const game = this.win.game;
+    let payload = null;
+    if (out.patch && Object.keys(out.patch).length) payload = { type: 'patch', patch: out.patch };
+    else if (out.coachText) payload = { type: 'coach_text', text: String(out.coachText).slice(0, 280) };
+    if (out.say){
+      // the assistant coach answers in the speaker's language — golden
+      // announcer + the same feed line the golden LLM coach writes
+      game.announce('COACH \u25b8 ' + out.say.slice(0, 90), 3.5);
+      game.commentate('raw', { text: 'COACH: ' + out.say.slice(0, 180) });
+    }
+    if (!payload){
+      if (fromVoice) this.voiceState('noop', out.say ?? 'heard \u2014 nothing tactical in that');
+      return;
+    }
+    const id = `voice-${Date.now()}`;
+    if (fromVoice){
+      this.pendingVoiceAck = { id, summary: this.summarizeInterpretation(out, payload) };
+      this.voiceState('sent', this.pendingVoiceAck.summary);
+    }
+    conn.sendCommand({ kind: 'tactical', commandId: id, teamId: conn.teamId, payload });
+    if (payload.type === 'coach_text' && !fromVoice) game.announce('COACH \u25b8 sent to the bench', 1.8);
+  }
+
   /** C2 — route coach text through the server's LLM interpreter, falling
    *  back to the plain coach_text command (golden parseCoach) on any miss. */
-  async interpretAndSend(conn, text, commandId){
-    const game = this.win.game;
-    let payload = { type: 'coach_text', text };
+  async interpretAndSend(conn, text){
+    const fromVoice = this._fromVoice === true;
+    this._fromVoice = false;
+    if (fromVoice) this.voiceState('thinking', text);
+    let out = { coachText: text };
     try {
       const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
       const res = await fetch(`${base}/matches/${conn.matchId}/coach/interpret`, {
@@ -546,24 +591,39 @@ export class GoldenPuppet {
         body: JSON.stringify({ text }),
         signal: AbortSignal.timeout(11_000),
       });
-      if (res.ok){
-        const out = await res.json();
-        if (out.patch && Object.keys(out.patch).length) payload = { type: 'patch', patch: out.patch };
-        else if (out.coachText) payload = { type: 'coach_text', text: out.coachText };
-        else payload = null;   // non-tactical speech — acknowledged, no command
-        if (out.say){
-          // the assistant coach answers in the speaker's language — golden
-          // announcer + the same feed line the golden LLM coach writes
-          game.announce('COACH ▸ ' + out.say.slice(0, 90), 3.5);
-          game.commentate('raw', { text: 'COACH: ' + out.say.slice(0, 180) });
-        }
+      if (res.ok) out = await res.json();
+    } catch { /* interpreter unreachable — coachText fallback stands */ }
+    this.dispatchInterpretation(conn, out, { fromVoice });
+  }
+
+  /** M4 — hosted STT: push-to-talk audio → /coach/voice (Whisper-class STT
+   *  + the C2 interpreter in ONE round trip). Returns false only on 501 so
+   *  the caller can flip to the browser-SR fallback. */
+  async voiceViaStt(conn, blob){
+    this.voiceState('transcribing');
+    try {
+      const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
+      const res = await fetch(`${base}/matches/${conn.matchId}/coach/voice`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${conn.token}`, 'content-type': blob.type || 'audio/webm' },
+        body: blob,
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (res.status === 501) return false;
+      if (!res.ok){
+        const e = await res.json().catch(() => ({}));
+        this.voiceState('failed', e.error ?? `voice failed (${res.status})`);
+        return true;
       }
-    } catch { /* interpreter unreachable — v0 path below */ }
-    if (payload){
-      conn.sendCommand({ kind: 'tactical', commandId: commandId('coach'),
-        teamId: conn.teamId, payload });
-      if (payload.type === 'coach_text') game.announce('COACH ▸ sent to the bench', 1.8);
+      const out = await res.json();
+      // the transcript IS the proof of hearing — into the golden feed
+      this.win.game.commentate('raw', { text: '\ud83c\udf99 ' + String(out.transcript ?? '').slice(0, 180) });
+      this.voiceState('thinking', out.transcript);
+      this.dispatchInterpretation(conn, out, { fromVoice: true });
+    } catch {
+      this.voiceState('failed', 'voice server unreachable \u2014 try again');
     }
+    return true;
   }
 
   /**
@@ -575,11 +635,70 @@ export class GoldenPuppet {
    * parseCoach. Browser-native speech recognition (v0): no keys, no infra;
    * the C2 LLM interpreter later upgrades parsing + language coverage.
    */
-  enableVoice(){
+  enableVoice(conn){
     const win = this.win, game = this.win.game;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR){ this.voiceSupported = false; return false; }
+    const hasRecorder = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+    if (!SR && !hasRecorder){ this.voiceSupported = false; return false; }
     this.voiceSupported = true;
+    // hosted STT first (all browsers, all languages); browser SR is the
+    // fallback when the server has no STT key (501) or the mic API is out
+    this.voiceMode = hasRecorder && conn ? 'stt' : 'sr';
+    if (conn){
+      // the ack chip turns green only when the SERVER confirms the command
+      const prevAck = conn.hooks.onAck;
+      conn.hooks.onAck = (m) => {
+        if (prevAck) prevAck(m);
+        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
+          this.voiceState('applied', this.pendingVoiceAck.summary);
+          this.pendingVoiceAck = null;
+        }
+      };
+      const prevRej = conn.hooks.onRejected;
+      conn.hooks.onRejected = (m) => {
+        if (prevRej) prevRej(m);
+        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
+          this.voiceState('failed', m.message ?? 'the bench rejected it');
+          this.pendingVoiceAck = null;
+        }
+      };
+      this.recorder = null;
+      const startStt = async () => {
+        if (this.recorder) return;
+        this.voiceState('listening');
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+            : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+          const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+          const chunks = [];
+          rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+          rec.onstop = () => {
+            for (const t of stream.getTracks()) t.stop();
+            this.recorder = null;
+            const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+            if (blob.size < 1200){ this.voiceState('idle'); return; }   // a tap, not talk
+            void this.voiceViaStt(conn, blob).then(handled => {
+              if (!handled){
+                this.voiceMode = SR ? 'sr' : 'off';
+                this.voiceState('failed', SR
+                  ? 'voice server not configured \u2014 switched to browser recognition, say it again'
+                  : 'voice server not configured');
+              }
+            });
+          };
+          rec.start();
+          this.recorder = rec;
+        } catch {
+          // mic permission denied for MediaRecorder — try the SR path
+          this.voiceMode = SR ? 'sr' : 'off';
+          this.voiceState('failed', 'microphone unavailable');
+        }
+      };
+      const stopStt = () => { this.recorder?.stop(); };
+      this._sttStart = startStt;
+      this._sttStop = stopStt;
+    }
     this.voiceLang = navigator.language || 'en-US';
     let rec = null;
     const start = () => {
@@ -615,8 +734,8 @@ export class GoldenPuppet {
       catch { rec = null; game.closeCoach(); }
     };
     const stop = () => { rec?.stop(); };   // onend delivers the final transcript
-    this.voiceStart = start;
-    this.voiceStop = stop;
+    this.voiceStart = () => { if (this.voiceMode === 'stt') this._sttStart(); else if (SR) start(); };
+    this.voiceStop = () => { if (this.voiceMode === 'stt') this._sttStop(); else if (SR) stop(); };
     // hold-to-talk on SPACE (the natural push-to-talk key) or X, inside the
     // golden page. Space is swallowed so the golden page never scrolls or
     // reacts; both are guarded so typing in the open console (or a golden
@@ -642,6 +761,7 @@ export class GoldenPuppet {
   /** The transcript's exit door — also the headless test seam: everything
    *  after the microphone is exactly the typed coach-console path. */
   submitVoiceTranscript(text){
+    this._fromVoice = true;
     const game = this.win.game;
     if (!game.coachOpen) game.openCoach();
     game.coachText = String(text ?? '').trim().slice(0, 280);
