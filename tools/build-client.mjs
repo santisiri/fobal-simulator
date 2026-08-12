@@ -95,7 +95,7 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
 //    are static and self-contained; relative paths resolve at the dist root.
 cpSync(join(root, 'apps/web/public/styles'), join(outDir, 'styles'), { recursive: true });
 cpSync(join(root, 'apps/web/public/js'), join(outDir, 'js'), { recursive: true });
-for (const page of ['onboarding.html']) {
+for (const page of ['onboarding.html', 'hub.html']) {
   writeFileSync(join(outDir, page), readFileSync(join(root, 'apps/web/public', page)));
 }
 

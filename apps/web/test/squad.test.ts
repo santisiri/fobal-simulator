@@ -7,6 +7,8 @@ import { describe, expect, test } from 'vitest';
 import { generateSquad, ratingFace, overall } from '../public/js/squad.js';
 // @ts-expect-error — plain ESM browser module, no types
 import { avatarSvg } from '../public/js/avatar.js';
+// @ts-expect-error — plain ESM browser module, no types
+import { clubOverall, crestInitials } from '../public/js/club.js';
 
 const kit = { primary: '#22c55e', secondary: '#0a0f1e' };
 
@@ -25,6 +27,14 @@ describe('starter squad generation', () => {
       expect(p.overall).toBeGreaterThan(30);
       expect(p.overall).toBeLessThan(100);
     }
+  });
+
+  test('a generated squad is JSON-serializable (the Hub persists it verbatim)', () => {
+    const club = { name: 'Fobal FC', kit, squad: generateSquad({ clubName: 'Fobal FC', kit }) };
+    const round = JSON.parse(JSON.stringify(club)); // dna must NOT be a BigInt
+    expect(round.squad.players).toHaveLength(11);
+    expect(typeof round.squad.players[0].dna).toBe('string');
+    expect(round.squad.players[0].dna).toMatch(/^0x[0-9a-f]+$/);
   });
 
   test('is deterministic from the club name (same club → same squad)', () => {
@@ -71,5 +81,17 @@ describe('on-chain avatar port', () => {
     const ofSvg = avatarSvg({ appearance: outfield.appearance, dna: BigInt(outfield.dna), position: 3, kit });
     expect(gkSvg).toContain('e0c04a'); // keeper amber
     expect(ofSvg.toLowerCase()).toContain('22c55e'); // club primary on the shirt
+  });
+});
+
+describe('club helpers', () => {
+  test('crest initials and squad overall derive from the club', () => {
+    expect(crestInitials('Fobal FC')).toBe('FF');
+    expect(crestInitials('Barcelona')).toBe('BA');
+    expect(crestInitials('')).toBe('FC');
+    const club = { name: 'Fobal FC', kit, squad: generateSquad({ clubName: 'Fobal FC', kit }) };
+    const ovr = clubOverall(club);
+    expect(ovr).toBeGreaterThan(40);
+    expect(ovr).toBeLessThan(90);
   });
 });

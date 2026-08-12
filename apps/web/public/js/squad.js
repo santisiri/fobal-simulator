@@ -91,9 +91,11 @@ export function generateSquad({ clubName, kit, tier = 0.5 }) {
     return `${FIRST[Math.floor(rnd() * FIRST.length)]} ${LAST[Math.floor(rnd() * LAST.length)]} ${usedNames.size}`;
   };
   const players = FORMATION_433.map((slot, i) => {
-    const dna = BigInt('0x' + [...`${clubName}:${i}:fobal`].reduce(
-      (h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, '0').repeat(8)).valueOf();
-    const appearance = Number(dna & 0xffffffn);
+    // dna is a '0x' hex STRING (JSON-serializable; BigInt(dna) parses it
+    // where the avatar renderer needs a bigint)
+    const dna = '0x' + [...`${clubName}:${i}:fobal`].reduce(
+      (h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, '0').repeat(8);
+    const appearance = Number(BigInt(dna) & 0xffffffn);
     const s = skillsFor(slot.pos, rnd, tier);
     const name = uniqueName();
     return {
