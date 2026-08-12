@@ -326,14 +326,13 @@
         <div class="ovr"><div class="v">${p.overall}</div><div class="l">OVR</div></div>
       </div>
       <div class="ratings">${rows}</div>
-      <div class="dna">DNA ${p.dna.toString(16).slice(0, 24)}…</div>`;
+      <div class="dna">DNA ${p.dna.replace(/^0x/, '').slice(0, 24)}…</div>`;
   }
 
-  // persist + enter (the Hub arrives in the next slice; store the club for it)
+  // persist + enter the club hub
   $('enterClub').addEventListener('click', () => {
     localStorage.setItem('fobal.club', JSON.stringify({ name: state.name, kit: state.kit, squad: state.squad, createdAt: Date.now() }));
-    $('enterClub').textContent = 'Club saved ✓ — Hub coming next';
-    $('enterClub').disabled = true;
+    location.href = 'hub.html';
   });
 </script>
 </body>
