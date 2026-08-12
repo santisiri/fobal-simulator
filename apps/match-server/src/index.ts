@@ -16,6 +16,8 @@ export type { ObjectStore } from './objectStore.js';
 export { createCoachInterpreter } from './coach.js';
 export type { CoachContext, CoachInterpretation, CoachInterpreter, CoachInterpreterOptions } from './coach.js';
 export { createTelemetry, noopTelemetry } from './telemetry.js';
+export { createTranscriber } from './stt.js';
+export type { SttOptions, Transcriber } from './stt.js';
 export type { Telemetry, TelemetryOptions, MetricUnit } from './telemetry.js';
 
 // CLI entry — configuration is environment-only (ECS injects the secrets
@@ -34,7 +36,10 @@ export type { Telemetry, TelemetryOptions, MetricUnit } from './telemetry.js';
 //   FOBAL_MAX_CONN_PER_IP concurrent sockets per client IP (default 20)
 //   FOBAL_MAX_CONN        total concurrent sockets (default 500)
 //   FOBAL_TRUST_PROXY     '1' → client IP from x-forwarded-for (behind ALB)
-//   FOBAL_MAX_ROOMS       concurrent room cap (default 40; docs/SCALE.md)
+//   FOBAL_MAX_ROOMS       concurrent room cap (default 25; docs/SCALE.md)
+//   FOBAL_STT_API_KEY     hosted STT key (M4 voice); unset → 501 fallback
+//   FOBAL_STT_URL         OpenAI-compatible transcriptions endpoint
+//   FOBAL_STT_MODEL       e.g. whisper-1 (OpenAI) / whisper-large-v3-turbo (Groq)
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startMatchServer } = await import('./hub.js');
@@ -81,6 +86,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     // C2: the LLM coach interpreter activates when a key is present
     // (staging: Secrets Manager → env); FOBAL_AI_MODEL overrides the model
     coach: { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.FOBAL_AI_MODEL },
+    stt: {
+      apiKey: process.env.FOBAL_STT_API_KEY,
+      url: process.env.FOBAL_STT_URL,
+      model: process.env.FOBAL_STT_MODEL,
+    },
     telemetry,
     wsOrigins: process.env.FOBAL_WS_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean),
     maxConnectionsPerIp: process.env.FOBAL_MAX_CONN_PER_IP ? Number(process.env.FOBAL_MAX_CONN_PER_IP) : undefined,
