@@ -305,3 +305,32 @@ Notes:
 - The imperative one-time resources (ECR repos, buckets, distributions,
   log groups, secrets) remain outside the pipeline per the standing rule
   above — the pipeline only updates compute and content.
+
+## Observability (M3): dashboard + alarms from the EMF metrics
+
+The B2 telemetry design pays off here: the server's metrics are EMF log
+lines, so the dashboard and alarms are pure CDK — no agents, no sidecars,
+no new task permissions. Everything is per-env (`fobal-<env>-…`).
+
+- **Dashboard** `fobal-<env>-match-server` (CloudWatch → Dashboards):
+  capacity row (RoomsActive vs the cap, ConnectionsOpen, RSS vs task
+  memory), command row (accepted/rejected, shed/reject breakdown, room
+  lifecycle), voice row (SttMs + CoachInterpretMs p50/p95 against the 3s
+  budget line, SttFailed), infra row (ALB 5xx/requests, ECS utilization).
+- **Alarms** (8): the five infra alarms that shipped with the stacks
+  (unhealthy hosts, ALB 5xx, high CPU/memory, task stopped) now NOTIFY,
+  plus three EMF alarms — rooms ≥80% of cap, ≥5 STT failures/5min, coach
+  interpret p95 >3s. EMF alarms treat missing data as NOT_BREACHING: an
+  idle server emits nothing, and silence must never page.
+- **Notifications**: SNS topic `fobal-<env>-alarms`; every alarm sends
+  both ALARM and OK. The email endpoint lives IN `envs.ts`
+  (`alarmEmail`) rather than a deploy context on purpose — a context
+  forgotten on one deploy would silently delete the subscription. After
+  the first deploy, AWS emails a **Confirm subscription** link to that
+  address — until it is clicked, alarms fire into the void. One
+  confirmation per topic (so one per environment).
+- IAM: `FobalCloudFormationExecution.json` gained dashboard
+  (`arn:aws:cloudwatch::<acct>:dashboard/fobal-*`) and SNS
+  (`arn:aws:sns:sa-east-1:<acct>:fobal-*`) statements — re-apply the
+  cfn-exec inline policy before deploying (standing rule after every
+  pull).
