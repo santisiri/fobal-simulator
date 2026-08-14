@@ -7,6 +7,9 @@ export type { SessionPayload } from './sessions.js';
 export { buildTeam, buildManifest } from './teams.js';
 export { createSesDeliverer } from './email.js';
 export type { SesDelivererOptions } from './email.js';
+export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
+export type { ChainReader, ChainReaderOptions, ChainPlayer } from './chain.js';
+export { challengeMessage, recoverPersonalSigner, ADDRESS_RE } from './wallet.js';
 
 // CLI entry — configuration is environment-only:
 //   PORT                    listen port (default 8475)
@@ -27,6 +30,9 @@ export type { SesDelivererOptions } from './email.js';
 //                           mirror; Fargate disks are ephemeral)
 //   FOBAL_LOBBY_BUCKET      S3 bucket for the s3 backend (the replay bucket)
 //   FOBAL_LOBBY_S3_PREFIX   object key prefix (default lobby/)
+//   FOBAL_RPC_URL           JSON-RPC endpoint for chain squads (D1); all
+//   FOBAL_CHAIN_PLAYER      three must be set to enable POST /squad/chain
+//   FOBAL_CHAIN_REGISTRY    (FobalPlayer / FobalTeamRegistry addresses)
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startLobbyServer } = await import('./hub.js');
@@ -69,11 +75,21 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     deliverCode = createSesDeliverer({ from });
     console.log(JSON.stringify({ msg: 'email_delivery', backend: 'ses', from }));
   }
+  const { createChainReader } = await import('./chain.js');
+  const chainReader = createChainReader({
+    rpcUrl: process.env.FOBAL_RPC_URL,
+    playerAddress: process.env.FOBAL_CHAIN_PLAYER,
+    registryAddress: process.env.FOBAL_CHAIN_REGISTRY,
+  });
+  if (chainReader)
+    console.log(JSON.stringify({ msg: 'chain_reader', rpc: process.env.FOBAL_RPC_URL }));
+
   const server = await startLobbyServer({
     port: Number(process.env.PORT ?? 8475),
     secret: process.env.FOBAL_LOBBY_SECRET,
     store,
     deliverCode,
+    chainReader,
     testLoginKey: process.env.FOBAL_TEST_LOGIN_KEY,
     matchServer: {
       url: process.env.FOBAL_MATCH_URL ?? 'http://localhost:8473',
