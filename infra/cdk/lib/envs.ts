@@ -30,6 +30,11 @@ export interface FobalEnvConfig {
   /** context keys for the listener certificate ARNs */
   certContextKey: string;
   wildcardCertContextKey: string;
+  /** SNS email endpoint for alarms. Deliberately IN CODE, not a deploy
+   *  context: a context forgotten on one deploy would silently delete the
+   *  subscription. The recipient must click Confirm subscription once per
+   *  topic; remove the field to run alarms actionless. */
+  alarmEmail?: string;
 }
 
 export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
@@ -49,6 +54,7 @@ export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
     taskMemoryMiB: 512,
     certContextKey: 'certificateArn',
     wildcardCertContextKey: 'wildcardCertificateArn',
+    alarmEmail: 'santisiri@gmail.com',
   },
   production: {
     prefix: 'fobal-prod',
@@ -69,5 +75,6 @@ export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
     maxRooms: '90',
     certContextKey: 'prodCertificateArn',
     wildcardCertContextKey: 'prodWildcardCertificateArn',
+    alarmEmail: 'santisiri@gmail.com',
   },
 };

@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Duration, Stack, StackProps, Tags } from 'aws-cdk-lib';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
@@ -12,6 +13,8 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import { FobalEnvConfig } from './envs.js';
 
@@ -604,39 +607,51 @@ export class FobalStack extends Stack {
       });
     }
 
-    new cloudwatch.Alarm(this, 'UnhealthyHostsAlarm', {
+    // ── Observability (M3): every alarm notifies the ops topic, and the
+    // dashboard is built from the EMF metrics the server already emits
+    // (telemetry.ts — metric lines riding the awslogs pipe, no SDK).
+    // EMF metrics are dimensionless by design, so widgets and alarms
+    // reference them by bare name in the env namespace.
+    const emf = (metricName: string, statistic: string, period = Duration.minutes(1)) =>
+      new cloudwatch.Metric({ namespace: envCfg.namespace, metricName, statistic, period });
+    // FOBAL_MAX_ROOMS unset → the server's own default cap (SCALE.md)
+    const maxRooms = Number(envCfg.maxRooms ?? '25');
+
+    const alarms: cloudwatch.Alarm[] = [];
+
+    alarms.push(new cloudwatch.Alarm(this, 'UnhealthyHostsAlarm', {
       alarmName: `${PREFIX}-match-server-unhealthy-hosts`,
       metric: targetGroup.metrics.unhealthyHostCount({ period: Duration.minutes(1) }),
       threshold: 1,
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-    });
+    }));
 
-    new cloudwatch.Alarm(this, 'Alb5xxAlarm', {
+    alarms.push(new cloudwatch.Alarm(this, 'Alb5xxAlarm', {
       alarmName: `${PREFIX}-match-server-5xx`,
       metric: loadBalancer.metrics.httpCodeElb(elbv2.HttpCodeElb.ELB_5XX_COUNT, { period: Duration.minutes(1) }),
       threshold: 5,
       evaluationPeriods: 5,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-    });
+    }));
 
-    new cloudwatch.Alarm(this, 'HighCpuAlarm', {
+    alarms.push(new cloudwatch.Alarm(this, 'HighCpuAlarm', {
       alarmName: `${PREFIX}-match-server-high-cpu`,
       metric: service.metricCpuUtilization({ period: Duration.minutes(5) }),
       threshold: 80,
       evaluationPeriods: 3,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-    });
+    }));
 
-    new cloudwatch.Alarm(this, 'HighMemoryAlarm', {
+    alarms.push(new cloudwatch.Alarm(this, 'HighMemoryAlarm', {
       alarmName: `${PREFIX}-match-server-high-memory`,
       metric: service.metricMemoryUtilization({ period: Duration.minutes(5) }),
       threshold: 80,
       evaluationPeriods: 3,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-    });
+    }));
 
-    new cloudwatch.Alarm(this, 'StoppedTaskAlarm', {
+    alarms.push(new cloudwatch.Alarm(this, 'StoppedTaskAlarm', {
       alarmName: `${PREFIX}-match-server-task-stopped`,
       metric: new cloudwatch.Metric({
         namespace: 'ECS/ContainerInsights',
@@ -651,7 +666,99 @@ export class FobalStack extends Stack {
       threshold: 1,
       evaluationPeriods: 3,
       comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
+    }));
+
+    // EMF alarms — treatMissingData NOT_BREACHING throughout: an idle
+    // server emits nothing, and silence must never page anyone.
+    alarms.push(new cloudwatch.Alarm(this, 'RoomsNearCapacityAlarm', {
+      alarmName: `${PREFIX}-match-server-rooms-near-capacity`,
+      metric: emf('RoomsActive', 'Maximum', Duration.minutes(5)),
+      threshold: Math.ceil(maxRooms * 0.8),
+      evaluationPeriods: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+
+    alarms.push(new cloudwatch.Alarm(this, 'SttFailuresAlarm', {
+      alarmName: `${PREFIX}-match-server-stt-failures`,
+      metric: emf('SttFailed', 'Sum', Duration.minutes(5)),
+      threshold: 5,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+
+    // the brief's voice budget: order spoken → team heard you in ≤3s
+    alarms.push(new cloudwatch.Alarm(this, 'CoachSlowAlarm', {
+      alarmName: `${PREFIX}-match-server-coach-slow`,
+      metric: emf('CoachInterpretMs', 'p95', Duration.minutes(5)),
+      threshold: 3000,
+      evaluationPeriods: 3,
+      datapointsToAlarm: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    }));
+
+    const alarmTopic = new sns.Topic(this, 'AlarmTopic', {
+      topicName: `${PREFIX}-alarms`,
     });
+    if (envCfg.alarmEmail) {
+      alarmTopic.addSubscription(new snsSubs.EmailSubscription(envCfg.alarmEmail));
+    }
+    for (const alarm of alarms) {
+      alarm.addAlarmAction(new cwActions.SnsAction(alarmTopic));
+      alarm.addOkAction(new cwActions.SnsAction(alarmTopic));
+    }
+
+    // The ops dashboard. Lobby-specific widgets are deliberately absent:
+    // the lobby rides the same ALB and image, so its failures surface in
+    // the ALB rows — and the lobby service only exists behind the
+    // wildcard-cert gate.
+    const graph = (title: string, left: cloudwatch.IMetric[], opts: Partial<cloudwatch.GraphWidgetProps> = {}) =>
+      new cloudwatch.GraphWidget({ title, left, width: 8, height: 6, ...opts });
+    const dashboard = new cloudwatch.Dashboard(this, 'OpsDashboard', {
+      dashboardName: `${PREFIX}-match-server`,
+    });
+    dashboard.addWidgets(
+      graph('Rooms active', [emf('RoomsActive', 'Maximum')], {
+        leftAnnotations: [{ value: maxRooms, label: `cap ${maxRooms}` }],
+      }),
+      graph('Connections open', [emf('ConnectionsOpen', 'Maximum')]),
+      graph('Server RSS (MB)', [emf('MemoryRssMb', 'Maximum')], {
+        leftAnnotations: [{ value: envCfg.taskMemoryMiB, label: 'task memory' }],
+      }),
+    );
+    dashboard.addWidgets(
+      graph('Commands', [emf('CommandAccepted', 'Sum'), emf('CommandRejected', 'Sum')]),
+      graph('Sheds & rejects', [
+        emf('HelloRejected', 'Sum'),
+        emf('OriginRejected', 'Sum'),
+        emf('ConnectionCapped', 'Sum'),
+        emf('RoomCapacityRejected', 'Sum'),
+      ]),
+      graph('Room lifecycle', [emf('RoomCreated', 'Sum'), emf('ResultWritten', 'Sum')]),
+    );
+    dashboard.addWidgets(
+      graph('Voice & coach latency (ms)', [
+        emf('SttMs', 'p50'),
+        emf('SttMs', 'p95'),
+        emf('CoachInterpretMs', 'p50'),
+        emf('CoachInterpretMs', 'p95'),
+      ], { leftAnnotations: [{ value: 3000, label: 'voice budget 3s' }] }),
+      graph('STT failures', [emf('SttFailed', 'Sum')]),
+      graph('Persistence', [emf('SnapshotPersisted', 'Sum'), emf('InternalStatePersisted', 'Sum')]),
+    );
+    dashboard.addWidgets(
+      graph('ALB 5xx', [
+        loadBalancer.metrics.httpCodeElb(elbv2.HttpCodeElb.ELB_5XX_COUNT, { period: Duration.minutes(1) }),
+        loadBalancer.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT, { period: Duration.minutes(1) }),
+      ]),
+      graph('ALB requests', [loadBalancer.metrics.requestCount({ period: Duration.minutes(1) })]),
+      graph('ECS utilization (%)', [service.metricCpuUtilization(), service.metricMemoryUtilization()]),
+    );
+
+    new cdk.CfnOutput(this, 'AlarmTopicArn', { value: alarmTopic.topicArn });
+    new cdk.CfnOutput(this, 'DashboardName', { value: `${PREFIX}-match-server` });
 
     new cdk.CfnOutput(this, 'RepositoryUri', { value: repository.repositoryUri });
     new cdk.CfnOutput(this, 'ReplayBucketName', { value: replayBucket.bucketName });
