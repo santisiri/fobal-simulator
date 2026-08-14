@@ -96,6 +96,9 @@
         <input id="code" size="12" placeholder="login code" autocomplete="one-time-code">
         <button id="verifyBtn" class="primary">ENTER LOBBY</button>
       </div>
+      <div class="row">
+        <button id="walletBtn">🦊 SIGN IN WITH WALLET</button>
+      </div>
       <div class="err" id="loginErr"></div>
       <div class="muted" id="loginNote"></div>
     </div>
@@ -135,6 +138,17 @@
           <span class="muted" id="squadNote"></span>
         </div>
       </div>
+    </div>
+
+    <div class="card hidden" id="chainCard">
+      <h2>ON-CHAIN TEAM</h2>
+      <div class="muted" id="chainState" style="margin-bottom:8px;"></div>
+      <div class="row">
+        <input id="chainTeamId" size="8" placeholder="team id" inputmode="numeric">
+        <button id="chainLinkBtn" class="primary">LINK NFT SQUAD</button>
+        <button id="chainUnlinkBtn" class="danger hidden">UNLINK</button>
+      </div>
+      <div class="muted" id="chainNote"></div>
     </div>
 
     <div class="card" id="challengesCard">
@@ -234,6 +248,42 @@
     } catch (err){ $('loginErr').textContent = String(err.message ?? err); }
   };
 
+  // ---- wallet login (D2) ------------------------------------------------
+  // Same session out the other end as an email login. The wallet signs a
+  // human-readable challenge (EIP-191 personal_sign) — no transaction, no
+  // gas, nothing on-chain. Message goes over the wire hex-encoded, the
+  // canonical personal_sign form.
+  $('walletBtn').onclick = async () => {
+    $('loginErr').textContent = '';
+    const url = $('lobbyUrl').value.replace(/\/+$/, '');
+    try {
+      if (!window.ethereum) throw new Error('no wallet extension detected in this browser');
+      const [address] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const chRes = await fetch(`${url}/auth/wallet`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      const ch = await chRes.json();
+      if (!chRes.ok) throw new Error(ch.error ?? chRes.status);
+      $('loginNote').textContent = 'sign the message in your wallet…';
+      const hexMessage = '0x' + [...new TextEncoder().encode(ch.message)]
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+      const signature = await window.ethereum.request({
+        method: 'personal_sign', params: [hexMessage, address],
+      });
+      const res = await fetch(`${url}/auth/wallet/verify`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ address, signature }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? res.status);
+      session = { url, token: out.token };
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      $('loginNote').textContent = '';
+      enterLobby();
+    } catch (err){ $('loginErr').textContent = String(err.message ?? err); }
+  };
+
   // ---- lobby ------------------------------------------------------------
   let pollTimer = null;
   let enteredMatchId = sessionStorage.getItem('fobal.lobby.entered');
@@ -248,6 +298,16 @@
   function render(state){
     $('who').textContent = `${state.me.handle} · ${state.me.teamName}`;
     $('teamName').innerHTML = `${esc(state.me.teamName)} &nbsp;${rec(state.me.record)}`;
+
+    // D1 — the on-chain team card, wallet accounts only. Linked state comes
+    // from the poll, so a link made on another device shows up here too.
+    $('chainCard').classList.toggle('hidden', !state.me.wallet);
+    if (state.me.wallet){
+      $('chainUnlinkBtn').classList.toggle('hidden', !state.me.chainTeamId);
+      $('chainState').textContent = state.me.chainTeamId
+        ? `linked: ${state.me.chainTeamId} — your NFTs take the field`
+        : 'link your registry team to play with your NFTs';
+    }
 
     const players = state.players
       .sort((a, b) => (b.online - a.online) || a.handle.localeCompare(b.handle))
@@ -376,6 +436,27 @@
     const out = await res.json();
     if (!res.ok) $('lobbyErr').textContent = out.error;
     else poll();
+  };
+
+  // D1 — link/unlink the on-chain team (server reads the chain, validates
+  // through the protocol schema, and stores the squad; errors carry the
+  // chain's real reason — wrong owner, sold player, GK-less roster)
+  $('chainLinkBtn').onclick = async () => {
+    $('chainNote').textContent = 'reading the chain…';
+    try {
+      const teamId = Number($('chainTeamId').value.trim());
+      if (!Number.isInteger(teamId) || teamId <= 0) throw new Error('enter your registry team id (a number)');
+      const res = await api('/squad/chain', { method: 'POST', body: { teamId } });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? res.status);
+      $('chainNote').textContent = `${out.team.name} — ${out.team.players.length} players take the field`;
+      poll();
+    } catch (err){ $('chainNote').textContent = String(err.message ?? err); }
+  };
+  $('chainUnlinkBtn').onclick = async () => {
+    await api('/squad/chain', { method: 'DELETE' });
+    $('chainNote').textContent = 'unlinked — back to the generated squad';
+    poll();
   };
 
   const ago = iso => {

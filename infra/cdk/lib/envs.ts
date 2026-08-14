@@ -35,6 +35,13 @@ export interface FobalEnvConfig {
    *  subscription. The recipient must click Confirm subscription once per
    *  topic; remove the field to run alarms actionless. */
   alarmEmail?: string;
+  /** M5: chain config for the lobby's D1 reader (FOBAL_RPC_URL /
+   *  FOBAL_CHAIN_PLAYER / FOBAL_CHAIN_REGISTRY). IN CODE for the same
+   *  reason as alarmEmail — a forgotten context would silently unlink every
+   *  player's NFT squad on the next deploy. Fill in when the Base Sepolia
+   *  deploy lands (addresses from contracts/deployments/<chainId>.json);
+   *  undefined ships the lobby dark (/squad/chain answers 501). */
+  chain?: { rpcUrl: string; playerAddress: string; registryAddress: string };
 }
 
 export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
