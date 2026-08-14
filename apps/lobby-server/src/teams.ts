@@ -37,6 +37,15 @@ function player(account: Account, i: number, role: PlayerSnapshot['role']): Play
 }
 
 export function buildTeam(account: Account, { customized = true } = {}): TeamSnapshot {
+  // D1: a linked chain squad replaces the generated one wholesale — the
+  // NFTs ARE the team. Kit colors remain a cosmetic overlay (customizing
+  // them buffs nothing); names/ratings/roles come from the chain alone.
+  if (customized && account.chainTeam){
+    const team = structuredClone(account.chainTeam);
+    const colors = account.squad?.colors;
+    if (colors && (colors.primary || colors.secondary)) team.colors = colors;
+    return team;
+  }
   const players = [
     ...ROLES_XI.map((role, i) => player(account, i, role)),
     ...ROLES_BENCH.map((role, i) => player(account, 11 + i, role)),

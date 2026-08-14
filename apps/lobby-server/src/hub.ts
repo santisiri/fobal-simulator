@@ -29,6 +29,8 @@ import { signSession, verifySession } from './sessions.js';
 import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
 import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
+import { ChainReader, ChainReadError } from './chain.js';
+import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
 export interface LobbyServerOptions {
   port?: number;                    // 0 → ephemeral
@@ -66,6 +68,10 @@ export interface LobbyServerOptions {
   /** challenge-spam guard (M2): max challenges an account may CREATE per
    *  rolling window (default 8 per 10min) */
   challengeLimit?: { count: number; windowMs: number };
+  /** D1: chain registry reader (createChainReader). Absent → POST
+   *  /squad/chain answers 501. Wallet AUTH needs no configuration at all —
+   *  signature recovery is offline. */
+  chainReader?: ChainReader | null;
 }
 
 export interface LobbyServer {
@@ -111,6 +117,7 @@ const sanitizeHandle = (localPart: string): string =>
   localPart.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16) || 'coach';
 
 const HEX_COLOR = /^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$/;
+const WALLET_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const cleanName = (s: string): string => s.replace(/[\u0000-\u001f\u007f]/g, '').trim();
 
 export async function startLobbyServer(options: LobbyServerOptions): Promise<LobbyServer> {
@@ -128,6 +135,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const publicMatchUrl = (options.matchServer.publicUrl ?? matchUrl).replace(/\/+$/, '');
 
   const loginCodes = new Map<string, LoginCode>();
+  // D2: one-shot wallet challenges keyed by lowercase address
+  const walletChallenges = new Map<string, { nonce: string; message: string; expiresAt: number; lastRequestAt: number }>();
   const presence = new Map<string, number>();
   const challenges = new Map<string, Challenge>();
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
@@ -205,7 +214,12 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   }
 
   const publicAccount = (a: Account) =>
-    ({ accountId: a.accountId, handle: a.handle, teamName: a.teamName });
+    ({
+      accountId: a.accountId, handle: a.handle, teamName: a.teamName,
+      // both are public information by nature (the chain is public)
+      ...(a.wallet ? { wallet: a.wallet } : {}),
+      ...(a.chainTeam ? { chainTeamId: a.chainTeam.teamId } : {}),
+    });
 
   function joinInfo(record: MatchRecord, accountId: string){
     const mine = record.players[accountId]!;
@@ -339,6 +353,62 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
       }
 
+      // D2 — wallet auth, step 1: hand out a one-shot challenge to sign.
+      // Needs no configuration: recovery is offline, no chain involved.
+      if (req.method === 'POST' && url.pathname === '/auth/wallet'){
+        let address: unknown;
+        try { address = (JSON.parse(await readBody(req)) as { address?: unknown }).address; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof address !== 'string' || !ADDRESS_RE.test(address))
+          return json(res, 400, { error: 'a 0x wallet address is required' });
+        const key = address.toLowerCase();
+        const existing = walletChallenges.get(key);
+        if (existing && Date.now() - existing.lastRequestAt < authInterval)
+          return json(res, 429, { error: 'challenge already issued — wait a few seconds' });
+        const nonce = randomBytes(16).toString('hex');
+        const message = challengeMessage(key, nonce, new Date().toISOString());
+        walletChallenges.set(key, {
+          nonce, message,
+          expiresAt: Date.now() + WALLET_CHALLENGE_TTL_MS,
+          lastRequestAt: Date.now(),
+        });
+        return json(res, 200, { message });
+      }
+
+      // D2 — wallet auth, step 2: verify the signature, mint the same
+      // session an email login gets. Accounts are keyed by address; the
+      // email field carries the address (wallets have no inbox).
+      if (req.method === 'POST' && url.pathname === '/auth/wallet/verify'){
+        let body: { address?: unknown; signature?: unknown };
+        try { body = JSON.parse(await readBody(req)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof body.address !== 'string' || !ADDRESS_RE.test(body.address)
+          || typeof body.signature !== 'string')
+          return json(res, 400, { error: 'address and signature are required' });
+        const key = body.address.toLowerCase();
+        const challenge = walletChallenges.get(key);
+        if (!challenge || challenge.expiresAt < Date.now())
+          return json(res, 401, { error: 'no live challenge for this address — request one first' });
+        const signer = recoverPersonalSigner(challenge.message, body.signature);
+        if (signer !== key)
+          return json(res, 401, { error: 'signature does not match the wallet' });
+        walletChallenges.delete(key);          // single use
+        let account = store.getAccountByWallet(key);
+        if (!account){
+          const accountId = `acc-${randomBytes(4).toString('hex')}`;
+          const handle = `w${key.slice(2, 8)}`;
+          account = {
+            accountId, email: key, wallet: key, handle,
+            teamKey: `${handle}-${accountId.slice(4)}`,
+            teamName: `${handle.toUpperCase()} FC`.slice(0, 32),
+            createdAt: new Date().toISOString(),
+          };
+          store.saveAccount(account);
+        }
+        presence.set(account.accountId, Date.now());
+        return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
+      }
+
       // everything below requires a session
       const me = authed(req);
       if (!me) return json(res, 401, { error: 'session token required' });
@@ -449,6 +519,36 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
             shirtNumber: p.shirtNumber,
           })),
         });
+      }
+
+      // D1 — link the wallet's on-chain team: read the registry at one
+      // pinned block, validate through the protocol schema, store the
+      // resulting squad. From here on every manifest uses the NFTs.
+      if (req.method === 'POST' && url.pathname === '/squad/chain'){
+        if (!me.wallet)
+          return json(res, 403, { error: 'chain squads need a wallet login (POST /auth/wallet)' });
+        if (!options.chainReader)
+          return json(res, 501, { error: 'chain reads are not configured on this lobby' });
+        let teamId: unknown;
+        try { teamId = (JSON.parse(await readBody(req)) as { teamId?: unknown }).teamId; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof teamId !== 'number' || !Number.isInteger(teamId) || teamId <= 0)
+          return json(res, 400, { error: 'teamId must be a positive integer' });
+        try {
+          const team = await options.chainReader.readTeam(me.wallet, teamId);
+          store.saveAccount({ ...me, chainTeam: team });
+          return json(res, 200, { team });
+        } catch (err) {
+          if (err instanceof ChainReadError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'chain read failed — try again shortly' });
+        }
+      }
+
+      // unlink: back to the generated squad
+      if (req.method === 'DELETE' && url.pathname === '/squad/chain'){
+        const { chainTeam: _dropped, ...rest } = me;
+        store.saveAccount(rest);
+        return json(res, 200, { ok: true });
       }
 
       if (req.method === 'POST' && url.pathname === '/account/team'){

@@ -9,6 +9,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObjectStore } from '@fobal/match-server';
+import type { TeamSnapshot } from '@fobal/protocol';
 
 /** Player-identity overrides on top of the generated squad. Ratings and
  *  roles are NOT here on purpose — self-buffing is not a feature. */
@@ -29,6 +30,12 @@ export interface Account {
   teamName: string;
   createdAt: string;
   squad?: SquadCustomization;
+  /** D2: lowercase 0x address for wallet-authenticated accounts (email
+   *  holds the same string for these — wallets have no inbox) */
+  wallet?: string;
+  /** D1: the protocol-validated squad read from the chain registry; when
+   *  present it REPLACES the generated squad in every manifest */
+  chainTeam?: TeamSnapshot;
 }
 
 /** Cached POINTER to the signed result — the match server remains the sole
@@ -69,6 +76,7 @@ export interface LobbyStoreOptions {
 export class LobbyStore {
   private accounts = new Map<string, Account>();
   private byEmail = new Map<string, string>();
+  private byWallet = new Map<string, string>();
   private matches: MatchRecord[] = [];
   private root?: string;
   private objects?: ObjectStore;
@@ -86,6 +94,7 @@ export class LobbyStore {
       for (const account of this.readJson<Account[]>('accounts.json') ?? []){
         this.accounts.set(account.accountId, account);
         this.byEmail.set(account.email, account.accountId);
+        if (account.wallet) this.byWallet.set(account.wallet, account.accountId);
       }
       this.matches = this.readJson<MatchRecord[]>('matches.json') ?? [];
     }
@@ -99,9 +108,11 @@ export class LobbyStore {
     if (accounts !== null){
       this.accounts.clear();
       this.byEmail.clear();
+      this.byWallet.clear();
       for (const account of JSON.parse(accounts) as Account[]){
         this.accounts.set(account.accountId, account);
         this.byEmail.set(account.email, account.accountId);
+        if (account.wallet) this.byWallet.set(account.wallet, account.accountId);
       }
     }
     const matches = await this.objects.get(`${this.prefix}matches.json`);
@@ -130,12 +141,17 @@ export class LobbyStore {
     const id = this.byEmail.get(email);
     return id ? this.accounts.get(id) ?? null : null;
   }
+  getAccountByWallet(wallet: string): Account | null {
+    const id = this.byWallet.get(wallet.toLowerCase());
+    return id ? this.accounts.get(id) ?? null : null;
+  }
   listAccounts(): Account[] { return [...this.accounts.values()]; }
   get accountCount(): number { return this.accounts.size; }
 
   saveAccount(account: Account): void {
     this.accounts.set(account.accountId, account);
     this.byEmail.set(account.email, account.accountId);
+    if (account.wallet) this.byWallet.set(account.wallet, account.accountId);
     this.persistAccounts();
   }
 
