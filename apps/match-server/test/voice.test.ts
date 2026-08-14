@@ -54,7 +54,7 @@ describe('voice endpoint', () => {
   });
 
   test('happy path: transcript + interpretation in ONE response; SttMs metered', async () => {
-    const fakeSttFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const fakeSttFetch = (async (_url: unknown, init?: RequestInit) => {
       // the provider receives multipart with our audio file + model
       const form = init?.body as FormData;
       expect(form.get('model')).toBe('whisper-1');
@@ -111,7 +111,7 @@ describe('voice endpoint', () => {
     let captured: FormData | null = null;
     const t = createTranscriber({
       apiKey: 'k', model: 'whisper-large-v3-turbo', url: 'https://api.groq.com/openai/v1/audio/transcriptions',
-      fetchImpl: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      fetchImpl: (async (_url: unknown, init?: RequestInit) => {
         captured = init?.body as FormData;
         return new Response(JSON.stringify({ text: 'ok' }));
       }) as typeof fetch,

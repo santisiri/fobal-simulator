@@ -1,0 +1,69 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeCdkBootstrapRoles",
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::368426158592:role/cdk-fobalstag-*"
+    },
+    {
+      "Sid": "EcrAuthToken",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrPushMatchServerImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:CompleteLayerUpload",
+        "ecr:DescribeImages",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:UploadLayerPart"
+      ],
+      "Resource": [
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-staging-match-server",
+        "arn:aws:ecr:sa-east-1:368426158592:repository/fobal-prod-match-server"
+      ]
+    },
+    {
+      "Sid": "ClientBucketList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-client-368426158592",
+        "arn:aws:s3:::fobal-prod-client-368426158592"
+      ]
+    },
+    {
+      "Sid": "ClientObjectSync",
+      "Effect": "Allow",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::fobal-staging-client-368426158592/*",
+        "arn:aws:s3:::fobal-prod-client-368426158592/*"
+      ]
+    },
+    {
+      "Sid": "ClientCdnInvalidation",
+      "Effect": "Allow",
+      "Action": [
+        "cloudfront:CreateInvalidation",
+        "cloudfront:GetInvalidation"
+      ],
+      "Resource": [
+        "arn:aws:cloudfront::368426158592:distribution/E35URO4KFESJYU",
+        "arn:aws:cloudfront::368426158592:distribution/E283U0RXHYWGS9"
+      ]
+    }
+  ]
+}
