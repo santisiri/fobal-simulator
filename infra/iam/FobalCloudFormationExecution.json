@@ -163,6 +163,34 @@
       "Resource": "*"
     },
     {
+      "Sid": "CloudWatchFobalDashboards",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DeleteDashboards",
+        "cloudwatch:GetDashboard",
+        "cloudwatch:ListDashboards",
+        "cloudwatch:PutDashboard"
+      ],
+      "Resource": "arn:aws:cloudwatch::368426158592:dashboard/fobal-*"
+    },
+    {
+      "Sid": "SnsFobalAlarmTopics",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListTagsForResource",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:TagResource",
+        "sns:Unsubscribe",
+        "sns:UntagResource"
+      ],
+      "Resource": "arn:aws:sns:sa-east-1:368426158592:fobal-*"
+    },
+    {
       "Sid": "CdkBootstrapVersionCheck",
       "Effect": "Allow",
       "Action": [
