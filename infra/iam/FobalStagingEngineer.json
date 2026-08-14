@@ -266,6 +266,25 @@
       }
     },
     {
+      "Sid": "DashboardsRead",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:GetDashboard",
+        "cloudwatch:ListDashboards"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SnsFobalAlarmTopicsRead",
+      "Effect": "Allow",
+      "Action": [
+        "sns:GetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:sns:sa-east-1:368426158592:fobal-*"
+    },
+    {
       "Sid": "SecretsFobalStaging",
       "Effect": "Allow",
       "Action": [
