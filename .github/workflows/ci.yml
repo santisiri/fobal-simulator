@@ -1,0 +1,62 @@
+# CI — the merge gate. Everything here runs CREDENTIAL-LESS: tests,
+# typechecks, the client build's rewrite assertions, and both CDK synth
+# paths (bare synth = the deploy-neutral rule; full contexts = the gated
+# resources). Anything that touches AWS lives in deploy.yml behind OIDC.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # characterization (golden parity) first, then the vitest suites —
+      # same order as local `npm test`
+      - run: npm test
+      - name: client build — every golden rewrite must assert exactly once
+        run: |
+          node tools/build-client.mjs \
+            --lobby-url https://lobby-staging.fobal.ai \
+            --match-ws  wss://matches-staging.fobal.ai
+
+  infra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: infra/cdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/cdk/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: synth with no contexts — merges must stay deploy-neutral
+        run: npm run cdk -- synth --all --quiet
+      - name: synth with every context gate open
+        run: |
+          npm run cdk -- synth --all --quiet \
+            -c certificateArn=arn:aws:acm:sa-east-1:368426158592:certificate/00000000-0000-0000-0000-000000000000 \
+            -c wildcardCertificateArn=arn:aws:acm:sa-east-1:368426158592:certificate/00000000-0000-0000-0000-000000000000 \
+            -c prodCertificateArn=arn:aws:acm:sa-east-1:368426158592:certificate/00000000-0000-0000-0000-000000000000 \
+            -c prodWildcardCertificateArn=arn:aws:acm:sa-east-1:368426158592:certificate/00000000-0000-0000-0000-000000000000 \
+            -c aiSecrets=1 \
+            -c imageTag=ci

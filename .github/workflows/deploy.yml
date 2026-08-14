@@ -1,0 +1,198 @@
+# Deploy — OIDC only, no static keys anywhere (the constitution's trust
+# rule). Two triggers:
+#
+#   push to main       → publish: build the image ONCE, push the same
+#                        digest to both ECR repos tagged with the short
+#                        SHA, then `cdk diff` both stacks. Informational —
+#                        nothing mutates.
+#   workflow_dispatch  → deploy: the MANUAL gate. Pick staging or
+#                        production; the job runs under a GitHub
+#                        environment of the same name, so required
+#                        reviewers can be enforced in repo Settings →
+#                        Environments. cdk deploy + client build/sync/
+#                        invalidation + health smoke.
+#
+# AWS access: role Fobal-GitHubDeploy (infra/iam/FobalGitHubDeploy.json,
+# trust in FobalGitHubDeployTrust.json, FobalAgentBoundary attached). The
+# role can push images, assume the cdk-fobalstag-* bootstrap roles, sync
+# the two client buckets, and invalidate the two distributions — nothing
+# else.
+#
+# Repo variables (Settings → Secrets and variables → Actions → Variables):
+#   FOBAL_STAGING_CERT_ARN    matches-staging.fobal.ai cert (sa-east-1)
+#   FOBAL_WILDCARD_CERT_ARN   *.fobal.ai wildcard (sa-east-1) — used for
+#                             the staging lobby listener AND both prod
+#                             cert contexts
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: environment to deploy
+        type: choice
+        required: true
+        options: [staging, production]
+      image-tag:
+        description: >-
+          short-SHA image tag already in ECR (default: this commit; if the
+          tag is missing it is built from this checkout)
+        type: string
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: sa-east-1
+  AWS_ACCOUNT: "368426158592"
+  ECR_REGISTRY: 368426158592.dkr.ecr.sa-east-1.amazonaws.com
+
+jobs:
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: publish-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::368426158592:role/Fobal-GitHubDeploy
+          aws-region: sa-east-1
+      - name: build the match-server image (repo-root context — the image
+          must carry the golden index.html)
+        run: |
+          TAG=${GITHUB_SHA::7}
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          docker build --platform linux/amd64 \
+            -f apps/match-server/Dockerfile -t fobal-match-server:"$TAG" .
+      - name: push the same digest to both environments' repositories
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          for repo in fobal-staging-match-server fobal-prod-match-server; do
+            docker tag fobal-match-server:"$TAG" "$ECR_REGISTRY/$repo:$TAG"
+            docker push "$ECR_REGISTRY/$repo:$TAG"
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/cdk/package-lock.json
+      - run: npm ci
+        working-directory: infra/cdk
+      - name: cdk diff both stacks (informational)
+        if: vars.FOBAL_WILDCARD_CERT_ARN != '' && vars.FOBAL_STAGING_CERT_ARN != ''
+        working-directory: infra/cdk
+        run: |
+          npm run cdk -- diff fobal-staging-match-server \
+            -c certificateArn='${{ vars.FOBAL_STAGING_CERT_ARN }}' \
+            -c wildcardCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
+            -c aiSecrets=1 -c imageTag="$TAG"
+          npm run cdk -- diff fobal-prod-match-server \
+            -c prodCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
+            -c prodWildcardCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
+            -c aiSecrets=1 -c imageTag="$TAG"
+      - name: diff skipped — cert repo variables not set
+        if: vars.FOBAL_WILDCARD_CERT_ARN == '' || vars.FOBAL_STAGING_CERT_ARN == ''
+        run: >-
+          echo "::warning::set FOBAL_STAGING_CERT_ARN and
+          FOBAL_WILDCARD_CERT_ARN repo variables to enable cdk diff"
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # THE manual gate: deploying requires dispatching this workflow, and the
+    # environment below can additionally demand reviewer approval
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::368426158592:role/Fobal-GitHubDeploy
+          aws-region: sa-east-1
+      - name: resolve environment constants
+        run: |
+          set -euo pipefail
+          WILDCARD='${{ vars.FOBAL_WILDCARD_CERT_ARN }}'
+          STAGING_CERT='${{ vars.FOBAL_STAGING_CERT_ARN }}'
+          [ -n "$WILDCARD" ] || { echo "::error::repo variable FOBAL_WILDCARD_CERT_ARN is not set"; exit 1; }
+          TAG='${{ inputs.image-tag }}'
+          [ -n "$TAG" ] || TAG=${GITHUB_SHA::7}
+          case '${{ inputs.environment }}' in
+            staging)
+              [ -n "$STAGING_CERT" ] || { echo "::error::repo variable FOBAL_STAGING_CERT_ARN is not set"; exit 1; }
+              STACK=fobal-staging-match-server
+              REPO=fobal-staging-match-server
+              CONTEXTS="-c certificateArn=$STAGING_CERT -c wildcardCertificateArn=$WILDCARD"
+              LOBBY_URL=https://lobby-staging.fobal.ai
+              MATCH_WS=wss://matches-staging.fobal.ai
+              MATCHES_URL=https://matches-staging.fobal.ai
+              PLAY_URL=https://play-staging.fobal.ai
+              CLIENT_BUCKET=fobal-staging-client-368426158592
+              DISTRIBUTION=E35URO4KFESJYU
+              ;;
+            production)
+              STACK=fobal-prod-match-server
+              REPO=fobal-prod-match-server
+              CONTEXTS="-c prodCertificateArn=$WILDCARD -c prodWildcardCertificateArn=$WILDCARD"
+              LOBBY_URL=https://lobby.fobal.ai
+              MATCH_WS=wss://matches.fobal.ai
+              MATCHES_URL=https://matches.fobal.ai
+              PLAY_URL=https://play.fobal.ai
+              CLIENT_BUCKET=fobal-prod-client-368426158592
+              DISTRIBUTION=E283U0RXHYWGS9
+              ;;
+          esac
+          for v in TAG STACK REPO CONTEXTS LOBBY_URL MATCH_WS MATCHES_URL PLAY_URL CLIENT_BUCKET DISTRIBUTION; do
+            echo "$v=${!v}" >> "$GITHUB_ENV"
+          done
+      - name: ensure the image tag exists in ECR (build from this checkout if not)
+        run: |
+          if aws ecr describe-images --repository-name "$REPO" \
+               --image-ids imageTag="$TAG" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "image $REPO:$TAG already published"
+          else
+            echo "image $REPO:$TAG missing — building from this checkout"
+            docker build --platform linux/amd64 \
+              -f apps/match-server/Dockerfile -t "$ECR_REGISTRY/$REPO:$TAG" .
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            docker push "$ECR_REGISTRY/$REPO:$TAG"
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: infra/cdk/package-lock.json
+      - run: npm ci
+        working-directory: infra/cdk
+      - name: cdk deploy
+        working-directory: infra/cdk
+        run: |
+          npm run cdk -- deploy "$STACK" --require-approval never \
+            $CONTEXTS -c aiSecrets=1 -c imageTag="$TAG"
+      - name: build + publish the client
+        run: |
+          node tools/build-client.mjs --lobby-url "$LOBBY_URL" --match-ws "$MATCH_WS"
+          aws s3 sync dist/client "s3://$CLIENT_BUCKET/" --delete
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION" --paths '/*'
+      - name: smoke — every public surface answers
+        run: |
+          set -euo pipefail
+          for url in "$MATCHES_URL/health" "$LOBBY_URL/health" "$PLAY_URL/"; do
+            code=$(curl -fsS --retry 5 --retry-delay 5 --retry-all-errors \
+              -o /dev/null -w '%{http_code}' "$url")
+            echo "$url -> $code"
+          done

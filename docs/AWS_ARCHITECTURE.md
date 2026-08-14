@@ -242,3 +242,66 @@ staging template was verified BYTE-IDENTICAL across the refactor):
   Environment/Scope tag values ['staging','production']/['fobal-staging',
   'fobal-prod']. The boundary sits at ~6,001 of 6,144 non-ws chars — the
   NEXT boundary change must slim something first.
+
+## CI/CD (M3): GitHub Actions with OIDC — no static keys
+
+Two workflows, one principle: **no long-lived AWS credentials exist
+anywhere in GitHub.** Every AWS call authenticates through GitHub's OIDC
+provider assuming `Fobal-GitHubDeploy`, and the role can do exactly four
+things: push match-server images, assume the `cdk-fobalstag-*` bootstrap
+roles, sync the two client buckets, and invalidate the two distributions.
+
+- `.github/workflows/ci.yml` — the merge gate, credential-less:
+  typecheck + full test suite (characterization first), the client build's
+  rewrite assertions, CDK typecheck, and BOTH synth paths (no contexts =
+  the deploy-neutral rule stays enforced; all context gates open with
+  placeholder ARNs = the gated resources still synthesize).
+- `.github/workflows/deploy.yml` —
+  - on **merge to main**: build the image once, push the same digest to
+    both ECR repos tagged `<short-sha>`, `cdk diff` both stacks
+    (informational; nothing mutates).
+  - on **manual dispatch** (the deploy gate): choose staging or
+    production; the job binds to the GitHub *environment* of that name —
+    add required reviewers under repo Settings → Environments to make the
+    gate two-person. Steps: ensure the image tag exists (build from the
+    dispatched checkout if not) → `cdk deploy` → client build + `s3 sync`
+    + CloudFront invalidation → health smoke on matches/lobby/play.
+
+**Role setup (one-time, human console — IAM provider/role creation is
+deliberately NOT in the agent's or the pipeline's permissions):**
+
+1. IAM → Identity providers → Add provider → OpenID Connect →
+   URL `https://token.actions.githubusercontent.com`, audience
+   `sts.amazonaws.com`. (Skip if the provider already exists — one per
+   account.)
+2. IAM → Roles → Create role → Web identity → that provider, audience
+   `sts.amazonaws.com` → name it `Fobal-GitHubDeploy`, set permissions
+   boundary `FobalAgentBoundary` (Fobal-* principals carry the boundary,
+   standing rule).
+3. Open the role → Trust relationships → Edit → paste
+   `infra/iam/FobalGitHubDeployTrust.json` (locks the role to
+   `santisiri/fobal-simulator`: the `main` branch for publish, the
+   `staging`/`production` environments for deploys).
+4. Add permissions → Create inline policy → JSON → paste
+   `infra/iam/FobalGitHubDeploy.json`, name it `FobalGitHubDeployCurrent`.
+
+**Repo variables (one-time, `gh variable set` or repo Settings):**
+`FOBAL_STAGING_CERT_ARN` (the matches-staging.fobal.ai listener cert,
+sa-east-1) and `FOBAL_WILDCARD_CERT_ARN` (the `*.fobal.ai` sa-east-1
+wildcard — also serves as both prod cert contexts). ARNs are not secret;
+they live in variables, not secrets, so diffs can print them.
+
+Notes:
+- The CDK bootstrap roles trust the account root principal, so granting
+  the deploy role `sts:AssumeRole` on `cdk-fobalstag-*` is sufficient —
+  no bootstrap re-run needed.
+- Image tags are the 7-char short SHA (same convention the agent used by
+  hand). The deploy job accepts an explicit `image-tag` input to roll back
+  to any previously published image.
+- Acceptance suites (`staging-acceptance.mjs`, `lobby-acceptance.mjs
+  --full`) are NOT in the pipeline: they need the create-key/test-login-key
+  secrets, which stay out of GitHub by design. Run them via the agent
+  after a deploy, as always.
+- The imperative one-time resources (ECR repos, buckets, distributions,
+  log groups, secrets) remain outside the pipeline per the standing rule
+  above — the pipeline only updates compute and content.
