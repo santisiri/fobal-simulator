@@ -62,6 +62,15 @@ export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
     certContextKey: 'certificateArn',
     wildcardCertContextKey: 'wildcardCertificateArn',
     alarmEmail: 'santisiri@gmail.com',
+    // M5 LIVE: Base Sepolia (chainId 84532), deployed 2026-08-14 via
+    // docs/BASE_SEPOLIA_DEPLOY.md. Addresses are public; the RPC is the
+    // public endpoint on purpose — a keyed URL is a secret and would live
+    // in Secrets Manager, not here.
+    chain: {
+      rpcUrl: 'https://sepolia.base.org',
+      playerAddress: '0x52F5828dA509D6043c2619F048687BEdfA4789d4',
+      registryAddress: '0x22d6518ee6f80d9D772f56D52b0EA9E08A9aad90',
+    },
   },
   production: {
     prefix: 'fobal-prod',
