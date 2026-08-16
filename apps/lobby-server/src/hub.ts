@@ -448,15 +448,27 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (req.method === 'GET' && url.pathname === '/squad'){
         const base = buildTeam(me, { customized: false });
         const final = buildTeam(me);
+        // overall = mean of the 12 lane-equivalent ratings (accel rides
+        // pace and is excluded) — the same aggregate the on-chain power
+        // budget bounds, so generated and NFT squads read on one scale
+        const overallOf = (r: (typeof final.players)[number]['ratings']): number =>
+          Math.round((r.pace + r.shooting + r.passing + r.dribbling + r.tackling
+            + r.strength + r.stamina + r.vision + r.positioning + r.aggression
+            + r.composure + r.gk) / 12);
         return json(res, 200, {
           teamName: me.teamName,
           colors: me.squad?.colors ?? null,
+          source: me.chainTeam ? 'chain' : 'generated',
           players: final.players.map((p, i) => ({
             playerId: p.playerId,
             name: p.name,
-            defaultName: base.players[i]!.name,
+            defaultName: base.players[i]?.name ?? p.name,
             role: p.role,
             shirtNumber: p.shirtNumber,
+            ratings: p.ratings,
+            overall: overallOf(p.ratings),
+            // present only for NFT squads — playerIds are `nft-<tokenId>`
+            ...(p.playerId.startsWith('nft-') ? { tokenId: p.playerId.slice(4) } : {}),
           })),
         });
       }

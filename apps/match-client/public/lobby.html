@@ -10,6 +10,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="../src/ui/ui.css">
 <style>
   /* Tokens = apps/web/public/styles/fobal.css (the canonical fobal.ai
      brand). Inlined so the lobby stands alone in dev; keep in sync. */
@@ -201,14 +202,12 @@
           <span class="muted">Kit</span>
           <input type="color" id="kitPrimary" value="#d8342c" title="Primary — shirt and socks">
           <input type="color" id="kitSecondary" value="#f2ece0" title="Secondary — shorts and trim">
-          <span class="muted">shirt · shorts</span>
-        </div>
-        <div id="squadList" style="margin:10px 0;"></div>
-        <div class="row">
-          <button id="squadSave" class="primary sm">SAVE SQUAD</button>
+          <button id="squadSave" class="primary sm">SAVE KIT</button>
           <button id="squadClose" class="sm ghost">CLOSE</button>
           <span class="muted" id="squadNote"></span>
         </div>
+        <div id="squadMount"></div>
+        <p class="muted" style="margin:6px 0 0;">Tap a player for the full card — ratings, renaming, and on-chain identity.</p>
       </div>
     </div>
 
@@ -222,6 +221,7 @@
         <button id="mintBtn" class="purple hidden">⛓ MINT MY TEAM</button>
       </div>
       <div class="muted" id="chainNote"></div>
+      <div id="txPanel" class="hidden"></div>
     </div>
 
     <div class="card" id="challengesCard">
@@ -243,6 +243,9 @@
 </main>
 
 <script type="module">
+  import { createSquadView } from '../src/ui/squadView.js';
+  import { createTxFlow, txStateLine } from '../src/ui/tx.js';
+  import { normalizeWalletError } from '../src/ui/errors.js';
   const $ = id => document.getElementById(id);
   const SESSION_KEY = 'fobal.lobby.session';
   // team names are free text typed by OTHER players — never let them into
@@ -488,42 +491,42 @@
     } catch (err){ $('lobbyErr').textContent = String(err.message ?? err); }
   });
 
-  // ---- squad editor (M1: names + kit; ratings are not editable) ---------
-  let squadDefaults = {};
+  // ---- squad experience (product-UI workstream) -------------------------
+  // The pitch view, player cards, and the detail drawer live in
+  // src/ui/squadView.js; this page only wires visibility and the kit save.
+  const squadView = createSquadView($('squadMount'), {
+    api,
+    onSquadSaved: () => refreshCrest(),
+  });
   $('squadBtn').onclick = async () => {
     const panel = $('squadPanel');
-    if (!panel.classList.contains('hidden')){ panel.classList.add('hidden'); return; }
-    const res = await api('/squad');
-    if (!res.ok) return;
-    const squad = await res.json();
-    squadDefaults = Object.fromEntries(squad.players.map(p => [p.playerId, p.defaultName]));
-    if (squad.colors?.primary) $('kitPrimary').value = squad.colors.primary;
-    if (squad.colors?.secondary) $('kitSecondary').value = squad.colors.secondary;
-    $('squadList').innerHTML = squad.players.map(p => `
-      <div class="squadRow">
-        <span class="rl">#${p.shirtNumber}</span><span class="rl">${esc(p.role)}</span>
-        <input class="pname" data-pid="${p.playerId}" value="${esc(p.name)}" maxlength="24">
-        <button class="sm ghost" data-preset="${p.playerId}" title="Reset to default">↺</button>
-      </div>`).join('');
-    for (const btn of document.querySelectorAll('[data-preset]'))
-      btn.onclick = () => {
-        const input = document.querySelector(`.pname[data-pid="${btn.dataset.preset}"]`);
-        input.value = squadDefaults[btn.dataset.preset] ?? input.value;
-      };
-    $('squadNote').textContent = '';
+    if (!panel.classList.contains('hidden')){
+      panel.classList.add('hidden');
+      squadView.closeDetail();
+      return;
+    }
     panel.classList.remove('hidden');
+    $('squadNote').textContent = '';
+    squadView.skeleton();
+    const res = await api('/squad');
+    if (res.ok){
+      const squad = await res.json();
+      if (squad.colors?.primary) $('kitPrimary').value = squad.colors.primary;
+      if (squad.colors?.secondary) $('kitSecondary').value = squad.colors.secondary;
+    }
+    await squadView.load();
   };
-  $('squadClose').onclick = () => $('squadPanel').classList.add('hidden');
+  $('squadClose').onclick = () => { $('squadPanel').classList.add('hidden'); squadView.closeDetail(); };
   $('squadSave').onclick = async () => {
-    const players = [...document.querySelectorAll('#squadList .pname')]
-      .map(el => ({ playerId: el.dataset.pid, name: el.value }));
     const res = await api('/squad', { method: 'POST', body: {
       colors: { primary: $('kitPrimary').value, secondary: $('kitSecondary').value },
-      players,
     } });
     const out = await res.json().catch(() => ({}));
     $('squadNote').textContent = res.ok ? 'Saved — your next match wears it.' : (out.error ?? 'save failed');
-    if (res.ok) paintCrest({ primary: $('kitPrimary').value, secondary: $('kitSecondary').value });
+    if (res.ok){
+      paintCrest({ primary: $('kitPrimary').value, secondary: $('kitSecondary').value });
+      await squadView.load();
+    }
   };
 
   $('renameBtn').onclick = async () => {
@@ -572,10 +575,45 @@
     if (!ids.length) throw new Error('confirmed, but the receipt has no matching event — try again to resume');
     return parse.many ? ids : ids[ids.length - 1];
   };
+  // ---- transaction flow UI (product-UI workstream) ----------------------
+  // One vocabulary for every on-chain action; the mint's three transactions
+  // render as legs. A button is never left looking frozen: the flow panel
+  // narrates preparing → wallet → submitted → confirming → indexing → done.
+  const EXPLORER = window.FOBAL_CONFIG?.explorerBase ?? 'https://sepolia.basescan.org';
+  const mintFlow = createTxFlow({ action: 'Mint my team', onChange: renderTx });
+  function renderTx(snap){
+    const panel = $('txPanel');
+    if (snap.state === 'idle'){ panel.classList.add('hidden'); panel.replaceChildren(); return; }
+    panel.classList.remove('hidden');
+    panel.className = `txflow${snap.state === 'success' ? ' ok' : ''}`;
+    const busy = !['success', 'failure'].includes(snap.state);
+    const hashRow = snap.txHash
+      ? `<div class="txHash">tx <a href="${EXPLORER}/tx/${esc(snap.txHash)}" target="_blank" rel="noopener">${esc(snap.txHash.slice(0, 10))}…${esc(snap.txHash.slice(-6))}</a></div>`
+      : '';
+    const legs = [0, 1, 2].map(i =>
+      `<i class="${i < snap.legsDone ? 'done' : (i === snap.legsDone && busy ? 'now' : '')}"></i>`).join('');
+    const failure = snap.state === 'failure' && snap.error
+      ? `<div class="txErr">${esc(snap.error.message)}</div>
+         <details><summary>details</summary>${esc(snap.error.detail ?? '')}</details>
+         ${snap.error.retryable ? '<button class="sm txRetry" id="txRetryBtn">TRY AGAIN</button>' : ''}`
+      : '';
+    panel.innerHTML = `
+      <div class="txAction">${esc(snap.action)}</div>
+      <div class="txLine">${snap.state === 'success' ? '✓' : snap.state === 'failure' ? '✗' : '<span class="spin"></span>'}
+        <span>${snap.state === 'failure' ? 'stopped — nothing was lost' : esc(txStateLine(snap))}</span></div>
+      <div class="legs">${legs}</div>
+      ${hashRow}${failure}`;
+    const retry = document.getElementById('txRetryBtn');
+    if (retry) retry.onclick = () => $('mintBtn').click();   // resumes from saved progress
+  }
+
   $('mintBtn').onclick = async () => {
-    const note = $('chainNote');
+    const btn = $('mintBtn');
+    btn.disabled = true;
+    mintFlow.reset();
+    mintFlow.preparing('permit');
     try {
-      if (!window.ethereum) throw new Error('no wallet extension detected');
+      if (!window.ethereum) throw { message: 'wallet disconnected — no extension detected' };
       const squadRes = await api('/squad');
       if (!squadRes.ok) throw new Error('could not load your squad');
       const squad = await squadRes.json();
@@ -594,7 +632,9 @@
         };
       });
       const teamName = squad.teamName;
+      const LEGS = { 'create-team': 'create team', 'mint-squad': 'mint 11 players', 'declare-roster': 'declare roster' };
       for (let step = 0; step < 5; step++){
+        mintFlow.preparing(mintFlow.snapshot.leg);
         const planRes = await api('/mint/prepare', { method: 'POST', body: { teamName, seeds, progress } });
         const plan = await planRes.json();
         if (!planRes.ok){
@@ -607,30 +647,38 @@
           throw new Error(plan.error ?? `mint prepare failed (${planRes.status})`);
         }
         if (plan.done){
-          note.textContent = `minted! linking team ${plan.teamId}…`;
+          mintFlow.indexing();
           $('chainTeamId').value = String(plan.teamId);
           const link = await api('/squad/chain', { method: 'POST', body: { teamId: plan.teamId } });
           const out = await link.json();
           if (!link.ok) throw new Error(out.error ?? 'link failed');
           localStorage.removeItem(progressKey);
-          note.textContent = `${out.team.name} — your NFTs take the field`;
+          mintFlow.success();
+          $('chainNote').textContent = `${out.team.name} — your NFTs take the field.`;
+          setTimeout(() => mintFlow.reset(), 6000);
           poll();
           return;
         }
-        note.textContent = `${plan.tx.description} — confirm in your wallet…`;
+        mintFlow.wallet(LEGS[plan.tx.step] ?? plan.tx.step);
         const txHash = await window.ethereum.request({
           method: 'eth_sendTransaction',
           params: [{ from, to: plan.tx.to, data: plan.tx.data }],
         });
-        note.textContent = `${plan.tx.step}: waiting for confirmation…`;
+        mintFlow.submitted(txHash);
+        mintFlow.confirming();
         const receipt = await waitReceipt(txHash);
         if (plan.tx.step === 'create-team') progress.teamId = idsFromReceipt(receipt, plan.tx.parse);
         else if (plan.tx.step === 'mint-squad') progress.tokenIds = idsFromReceipt(receipt, plan.tx.parse);
         else if (plan.tx.step === 'declare-roster') progress.declared = true;
         localStorage.setItem(progressKey, JSON.stringify(progress));
+        mintFlow.legDone();
       }
       throw new Error('mint did not complete — try again to resume');
-    } catch (err){ note.textContent = String(err.message ?? err); }
+    } catch (err){
+      mintFlow.failure(normalizeWalletError(err));
+    } finally {
+      btn.disabled = false;
+    }
   };
 
   // D1 — link/unlink the on-chain team (server reads the chain, validates

@@ -24,7 +24,9 @@ const get = (url: string, token: string) =>
 interface SquadView {
   teamName: string;
   colors: { primary?: string; secondary?: string } | null;
-  players: Array<{ playerId: string; name: string; defaultName: string; role: string; shirtNumber: number }>;
+  source?: string;
+  players: Array<{ playerId: string; name: string; defaultName: string; role: string; shirtNumber: number;
+    ratings?: Record<string, number>; overall?: number; tokenId?: string }>;
 }
 
 async function boot(){
@@ -54,6 +56,14 @@ describe('squad editor', () => {
       expect(squad.players[0]).toMatchObject({ role: 'GK', shirtNumber: 1 });
       expect(squad.players[0]!.name).toBe(squad.players[0]!.defaultName);
       expect(new Set(squad.players.map(p => p.playerId)).size).toBe(16);
+      // product-UI contract: cards render from this payload alone
+      expect(squad.source).toBe('generated');
+      for (const p of squad.players){
+        expect(p.overall).toBeGreaterThanOrEqual(30);
+        expect(p.overall).toBeLessThanOrEqual(95);
+        expect(Object.keys(p.ratings ?? {})).toHaveLength(13);
+        expect(p.tokenId).toBeUndefined();      // generated squads are not NFTs
+      }
     } finally { await close(); }
   });
 
