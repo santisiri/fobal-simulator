@@ -1,5 +1,7 @@
 export { MatchEngine } from './engine.js';
-export type { SubmitOutcome } from './engine.js';
+export type { SubmitOutcome, CapturedState } from './engine.js';
+export { InstructionBook, biasedSlot } from './tactics.js';
+export type { InstructionRecord } from './tactics.js';
 export { ratingToAttribute, attributeToRating, ratingsToAttributes } from './normalize.js';
 export { IdMap } from './ids.js';
 export { bootGoldenCore, officialHash, goldenSource } from './goldenRuntime.js';

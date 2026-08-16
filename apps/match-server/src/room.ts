@@ -117,6 +117,9 @@ export class MatchRoom {
   result(): MatchResult | null { return this.finalized ?? this.store.loadResult(this.matchId); }
   /** Read-only protocol snapshot (HTTP surfaces, e.g. the coach interpreter's context). */
   snapshot(): StateSnapshot { return this.engine.snapshot(); }
+  /** Workstream G observability delegates (GET /matches/:id/tactics). */
+  tacticsReport(): ReturnType<MatchEngine['tacticsReport']> { return this.engine.tacticsReport(); }
+  appliedCommandLog(): AcceptedCommand[] { return this.store.loadCommands(this.matchId); }
 
   // ---- clients -----------------------------------------------------------
 
