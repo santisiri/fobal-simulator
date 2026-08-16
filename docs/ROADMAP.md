@@ -169,6 +169,16 @@ result signature verifies against the published server key.
 
 ---
 
+## Workstream G — AI Gameplay / Voice Command Architecture
+
+The product north star is live AI-directed football: two managers, owned
+NFT squads, real-time direction by natural language and voice. Phases C
+and D built the pipeline and the ownership layer; workstream G widens the
+command language from team-level to player-level ("mark their number
+nine", "Ferreyra, overlap on the left") behind the same determinism
+boundary. Charter, component map, command taxonomy, latency budgets, and
+the G1–G5 sequence live in docs/NEXT_ITERATION_ARCHITECTURE.md.
+
 ## Cross-cutting backlog (slot between phases as capacity allows)
 
 - **Observability PR** (deliberately deferred from the extraction
