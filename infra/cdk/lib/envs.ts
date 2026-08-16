@@ -40,8 +40,18 @@ export interface FobalEnvConfig {
    *  reason as alarmEmail — a forgotten context would silently unlink every
    *  player's NFT squad on the next deploy. Fill in when the Base Sepolia
    *  deploy lands (addresses from contracts/deployments/<chainId>.json);
-   *  undefined ships the lobby dark (/squad/chain answers 501). */
-  chain?: { rpcUrl: string; playerAddress: string; registryAddress: string };
+   *  undefined ships the lobby dark (/squad/chain answers 501).
+   *  generatorAddress enables the in-app mint (M5): the lobby signs the
+   *  SquadMint permit server-side with the generator-signer key (Secrets
+   *  Manager, context-gated) and returns prepared txs the player's own
+   *  wallet sends. Omit it to ship reader-only (/mint/prepare answers 501). */
+  chain?: {
+    rpcUrl: string;
+    chainId: number;
+    playerAddress: string;
+    registryAddress: string;
+    generatorAddress?: string;
+  };
 }
 
 export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
@@ -68,8 +78,12 @@ export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
     // in Secrets Manager, not here.
     chain: {
       rpcUrl: 'https://sepolia.base.org',
+      chainId: 84532,
       playerAddress: '0x52F5828dA509D6043c2619F048687BEdfA4789d4',
       registryAddress: '0x22d6518ee6f80d9D772f56D52b0EA9E08A9aad90',
+      // recovered from the chain itself: the MINTER_ROLE grant on the
+      // player contract at block 45488725 names the generator
+      generatorAddress: '0xC3b29a5417b2bb64AE1DC9A5539261a16f2Cf178',
     },
   },
   production: {

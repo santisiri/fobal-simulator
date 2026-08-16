@@ -219,6 +219,7 @@
         <input id="chainTeamId" placeholder="team id" inputmode="numeric" style="width:110px;">
         <button id="chainLinkBtn" class="purple">LINK NFT SQUAD</button>
         <button id="chainUnlinkBtn" class="danger ghost hidden">UNLINK</button>
+        <button id="mintBtn" class="purple hidden">⛓ MINT MY TEAM</button>
       </div>
       <div class="muted" id="chainNote"></div>
     </div>
@@ -392,6 +393,7 @@
     $('chainCard').classList.toggle('hidden', !state.me.wallet);
     if (state.me.wallet){
       $('chainUnlinkBtn').classList.toggle('hidden', !state.me.chainTeamId);
+      $('mintBtn').classList.toggle('hidden', !!state.me.chainTeamId);
       $('chainState').textContent = state.me.chainTeamId
         ? `Linked: ${state.me.chainTeamId} — your NFTs take the field.`
         : 'Link your registry team and your NFTs take the field.';
@@ -531,6 +533,104 @@
     const out = await res.json();
     if (!res.ok) $('lobbyErr').textContent = out.error;
     else poll();
+  };
+
+  // M5 — MINT MY TEAM: the lobby signs the permit, YOUR wallet sends the
+  // prepared transactions (create team → mint 11 NFTs → declare roster) and
+  // owns everything. Progress (teamId, tokenIds) is read out of the receipts
+  // this page already holds — the server tells us which log topics to match
+  // — and persisted per wallet, so a cancelled or crashed run resumes.
+  const ROLE_POS = { GK: 0, CB: 1, LB: 1, RB: 1, CM: 2, LM: 2, RM: 2, LW: 3, RW: 3, ST: 3 };
+  const packFlatSkills = (isGk) => {
+    let packed = 0n;
+    for (let lane = 0; lane < 12; lane++)
+      packed |= BigInt(lane === 11 ? (isGk ? 85 : 10) : 55) << BigInt(lane * 8);
+    return packed.toString();
+  };
+  const randomDna = () => {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return '0x' + [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+  const waitReceipt = async (txHash) => {
+    for (let i = 0; i < 60; i++){
+      const r = await window.ethereum.request({ method: 'eth_getTransactionReceipt', params: [txHash] });
+      if (r) {
+        if (r.status !== '0x1') throw new Error('transaction reverted on-chain');
+        return r;
+      }
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    throw new Error('transaction not confirmed after 2 minutes — check your wallet');
+  };
+  // pull the id(s) the next step needs from the receipt's logs
+  const idsFromReceipt = (receipt, parse) => {
+    const ids = (receipt.logs ?? [])
+      .filter(l => l.topics?.[0] === parse.topic0
+        && (!parse.requireTopic1 || l.topics[1] === parse.requireTopic1))
+      .map(l => BigInt(l.topics[parse.idTopic]).toString());
+    if (!ids.length) throw new Error('confirmed, but the receipt has no matching event — try again to resume');
+    return parse.many ? ids : ids[ids.length - 1];
+  };
+  $('mintBtn').onclick = async () => {
+    const note = $('chainNote');
+    try {
+      if (!window.ethereum) throw new Error('no wallet extension detected');
+      const squadRes = await api('/squad');
+      if (!squadRes.ok) throw new Error('could not load your squad');
+      const squad = await squadRes.json();
+      const [from] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const progressKey = `fobal.mint.${from.toLowerCase()}`;
+      let progress = {};
+      try { progress = JSON.parse(localStorage.getItem(progressKey)) ?? {}; } catch {}
+      // mint the XI the user built: their names, fair flat ratings, fresh dna
+      const seeds = squad.players.slice(0, 11).map(p => {
+        const dna = randomDna();
+        return {
+          name: p.name, dna,
+          skills: packFlatSkills(p.role === 'GK'),
+          appearance: (BigInt(dna) & 0xffffffffn).toString(),
+          generation: 1, country: 32, position: ROLE_POS[p.role] ?? 2,
+        };
+      });
+      const teamName = squad.teamName;
+      for (let step = 0; step < 5; step++){
+        const planRes = await api('/mint/prepare', { method: 'POST', body: { teamName, seeds, progress } });
+        const plan = await planRes.json();
+        if (!planRes.ok){
+          // stale progress (team gone, wrong wallet) — wipe it and start over
+          if (planRes.status === 403 && Object.keys(progress).length){
+            localStorage.removeItem(progressKey);
+            progress = {};
+            continue;
+          }
+          throw new Error(plan.error ?? `mint prepare failed (${planRes.status})`);
+        }
+        if (plan.done){
+          note.textContent = `minted! linking team ${plan.teamId}…`;
+          $('chainTeamId').value = String(plan.teamId);
+          const link = await api('/squad/chain', { method: 'POST', body: { teamId: plan.teamId } });
+          const out = await link.json();
+          if (!link.ok) throw new Error(out.error ?? 'link failed');
+          localStorage.removeItem(progressKey);
+          note.textContent = `${out.team.name} — your NFTs take the field`;
+          poll();
+          return;
+        }
+        note.textContent = `${plan.tx.description} — confirm in your wallet…`;
+        const txHash = await window.ethereum.request({
+          method: 'eth_sendTransaction',
+          params: [{ from, to: plan.tx.to, data: plan.tx.data }],
+        });
+        note.textContent = `${plan.tx.step}: waiting for confirmation…`;
+        const receipt = await waitReceipt(txHash);
+        if (plan.tx.step === 'create-team') progress.teamId = idsFromReceipt(receipt, plan.tx.parse);
+        else if (plan.tx.step === 'mint-squad') progress.tokenIds = idsFromReceipt(receipt, plan.tx.parse);
+        else if (plan.tx.step === 'declare-roster') progress.declared = true;
+        localStorage.setItem(progressKey, JSON.stringify(progress));
+      }
+      throw new Error('mint did not complete — try again to resume');
+    } catch (err){ note.textContent = String(err.message ?? err); }
   };
 
   // D1 — link/unlink the on-chain team (server reads the chain, validates
