@@ -23,13 +23,15 @@
 // spectator token it already holds (and uses them to auto-free players at
 // full time, so nobody has to click LEAVE).
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { TeamSnapshot } from '@fobal/protocol';
 import { signSession, verifySession } from './sessions.js';
-import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
+import { Account, Invitation, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
+import { EmailProvider } from './email.js';
 import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
 import { ChainReader, ChainReadError } from './chain.js';
+import { IdentityResolver } from './identity.js';
 import { MintError, MintProgress, MintService, PlayerSeedInput } from './mint.js';
 import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
@@ -76,6 +78,25 @@ export interface LobbyServerOptions {
   /** M5: the mint step machine (createMintService). Absent → POST
    *  /mint/prepare answers 501. Requires the generator signer key. */
   mintService?: MintService | null;
+  /** email invitations: the outbound-mail seam (createSesProvider /
+   *  createResendProvider). Absent → POST /invites answers 501. */
+  emailProvider?: EmailProvider | null;
+  /** public base for invitation links (e.g. https://play-staging.fobal.ai);
+   *  the emailed link is <base>/invite.html?t=<token> */
+  inviteBaseUrl?: string;
+  /** invite-spam guard: max invites an account may SEND per rolling window
+   *  (default 5 per hour; ATTEMPTS count, not successes) */
+  inviteLimit?: { count: number; windowMs: number };
+  /** invitation lifetime (default 7 days) */
+  inviteTtlMs?: number;
+  /** Resend webhook signing secret (whsec_…). Absent → POST /webhooks/email
+   *  answers 501. SERVER-SIDE ONLY. */
+  emailWebhookSecret?: string;
+  /** Wallet identity (createIdentityResolver): verified ENS names for
+   *  wallet accounts, decorating every public account surface. Absent →
+   *  clients see shortened addresses. Never blocks a request: identity
+   *  rides the NEXT poll after the async resolve lands. */
+  identity?: IdentityResolver | null;
 }
 
 export interface LobbyServer {
@@ -86,7 +107,7 @@ export interface LobbyServer {
   close(): Promise<void>;
 }
 
-interface Challenge { id: string; from: string; to: string; createdAt: number; rematchOf?: string; }
+interface Challenge { id: string; from: string; to: string; createdAt: number; deliveredAt?: number; rematchOf?: string; }
 interface LoginCode { code: string; expiresAt: number; lastRequestAt: number; }
 
 const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
@@ -141,14 +162,98 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const loginCodes = new Map<string, LoginCode>();
   // D2: one-shot wallet challenges keyed by lowercase address
   const walletChallenges = new Map<string, { nonce: string; message: string; expiresAt: number; lastRequestAt: number }>();
-  const presence = new Map<string, number>();
+  // presence: lastSeen drives the TTL (ghost users age out, nothing to
+  // clean up); joinedAt is the current lobby VISIT — returning after a TTL
+  // gap starts a new visit, so "joined 2m ago" never lies after a lunch break
+  const presence = new Map<string, { lastSeen: number; joinedAt: number }>();
   const challenges = new Map<string, Challenge>();
+  // idempotency memory: a settled challenge id keeps answering with its
+  // outcome for a grace window, so a double-click, a retried request, or a
+  // reconnect replay converges instead of erroring or double-creating
+  const settledChallenges = new Map<string, { outcome: 'accepted' | 'declined'; matchId?: string; at: number }>();
+  const SETTLED_TTL_MS = 5 * 60 * 1000;
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
   const challengeLimit = options.challengeLimit ?? { count: 8, windowMs: 10 * 60 * 1000 };
   const challengeTimes = new Map<string, number[]>();  // accountId → creation times
 
+  // ---- email invitations ------------------------------------------------
+  const inviteLimit = options.inviteLimit ?? { count: 5, windowMs: 60 * 60 * 1000 };
+  const inviteTtl = options.inviteTtlMs ?? 7 * 24 * 60 * 60 * 1000;
+  const inviteTimes = new Map<string, number[]>();     // accountId → send attempts
+  const inviteBase = (options.inviteBaseUrl ?? 'http://localhost:8492').replace(/\/+$/, '');
+  const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+  const INVITE_STATUS_RANK: Record<Invitation['status'], number> =
+    { created: 0, sent: 1, delivered: 2, opened: 3, accepted: 4, expired: 9, failed: 9 };
+  /** the status ladder only climbs; terminal states never regress an accept */
+  function advanceInviteStatus(invite: Invitation, to: Invitation['status']): void {
+    if (invite.status === 'accepted' || invite.status === 'expired') return;
+    if (to === 'failed' || INVITE_STATUS_RANK[to] > INVITE_STATUS_RANK[invite.status]){
+      invite.status = to;
+      invite.lastEventAt = new Date().toISOString();
+      store.saveInvite(invite);
+    }
+  }
+  function expireIfDue(invite: Invitation): void {
+    if (invite.status !== 'accepted' && invite.status !== 'expired'
+      && Date.parse(invite.expiresAt) < Date.now()){
+      invite.status = 'expired';
+      store.saveInvite(invite);
+    }
+  }
+  const inviteView = (v: Invitation) => ({
+    invitationId: v.invitationId,
+    recipientEmail: v.recipientEmail,
+    status: v.status,
+    createdAt: v.createdAt,
+    expiresAt: v.expiresAt,
+  });
+  /** svix signature scheme (Resend webhooks): base64-HMAC-SHA256 of
+   *  "<id>.<timestamp>.<payload>" with the base64-decoded whsec_ key;
+   *  the header carries space-separated "v1,<sig>" candidates. */
+  function verifySvix(payload: string, headers: IncomingMessage['headers'], secret: string): boolean {
+    const id = headers['svix-id'];
+    const timestamp = headers['svix-timestamp'];
+    const signatures = headers['svix-signature'];
+    if (typeof id !== 'string' || typeof timestamp !== 'string' || typeof signatures !== 'string') return false;
+    if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 5 * 60) return false;   // replay window
+    const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+    const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${payload}`).digest();
+    return signatures.split(' ').some(part => {
+      const sig = part.split(',')[1];
+      if (!sig) return false;
+      let given: Buffer;
+      try { given = Buffer.from(sig, 'base64'); } catch { return false; }
+      return given.length === expected.length && timingSafeEqual(given, expected);
+    });
+  }
+  const touchPresence = (accountId: string): void => {
+    const now = Date.now();
+    const p = presence.get(accountId);
+    presence.set(accountId, {
+      lastSeen: now,
+      joinedAt: p && p.lastSeen > now - presenceTtl ? p.joinedAt : now,
+    });
+  };
+
   const online = (accountId: string): boolean =>
-    (presence.get(accountId) ?? 0) > Date.now() - presenceTtl;
+    (presence.get(accountId)?.lastSeen ?? 0) > Date.now() - presenceTtl;
+
+  /** How long an accepted match counts as "preparing" (both clients are
+   *  navigating/connecting) before it reads as fully in play. */
+  const PREPARING_MS = 45_000;
+
+  /** The lobby presence state machine, derived — no writes, no sweeps:
+   *  a live match wins (a playing coach's lobby tab may be closed), then
+   *  TTL silence means disconnected, then a live challenge, else available. */
+  function statusOf(accountId: string): 'available' | 'challenged' | 'preparing_match' | 'in_match' | 'disconnected' {
+    const match = activeMatchFor(accountId);
+    if (match)
+      return Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing_match' : 'in_match';
+    if (!online(accountId)) return 'disconnected';
+    for (const c of challenges.values())
+      if (c.from === accountId || c.to === accountId) return 'challenged';
+    return 'available';
+  }
 
   /** a match with a known result is over — players are free, no LEAVE needed */
   function activeMatchFor(accountId: string): MatchRecord | null {
@@ -206,6 +311,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   function sweepChallenges(): void {
     const cutoff = Date.now() - challengeTtl;
     for (const [id, c] of challenges) if (c.createdAt < cutoff) challenges.delete(id);
+    const settledCutoff = Date.now() - SETTLED_TTL_MS;
+    for (const [id, s] of settledChallenges) if (s.at < settledCutoff) settledChallenges.delete(id);
   }
 
   function authed(req: IncomingMessage): Account | null {
@@ -213,15 +320,33 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     if (!auth.startsWith('Bearer ')) return null;
     const payload = verifySession(auth.slice(7), secret);
     const account = payload ? store.getAccount(payload.accountId) : null;
-    if (account) presence.set(account.accountId, Date.now());
+    if (account) touchPresence(account.accountId);
     return account;
   }
+
+  // ENS is presentation, not authorization: identity decorates the account
+  // for DISPLAY; every ownership/security decision stays on the address.
+  // peek() is synchronous (the poll must never wait on mainnet); the
+  // fire-and-forget resolve() warms the cache so the name arrives on a
+  // later poll. resolve() never rejects by contract.
+  const identityFor = (wallet: string) => {
+    if (!options.identity) return {};
+    void options.identity.resolve(wallet);
+    const id = options.identity.peek(wallet);
+    return id ? {
+      identity: {
+        displayName: id.displayName, verified: id.verified, source: id.source,
+        ...(id.ensName ? { ensName: id.ensName } : {}),
+        ...(id.ensAvatar ? { ensAvatar: id.ensAvatar } : {}),
+      },
+    } : {};
+  };
 
   const publicAccount = (a: Account) =>
     ({
       accountId: a.accountId, handle: a.handle, teamName: a.teamName,
       // both are public information by nature (the chain is public)
-      ...(a.wallet ? { wallet: a.wallet } : {}),
+      ...(a.wallet ? { wallet: a.wallet, ...identityFor(a.wallet) } : {}),
       ...(a.chainTeam ? { chainTeamId: a.chainTeam.teamId } : {}),
     });
 
@@ -245,7 +370,47 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       from: from ? publicAccount(from) : { accountId: c.from, handle: '?', teamName: '?' },
       to: to ? publicAccount(to) : { accountId: c.to, handle: '?', teamName: '?' },
       createdAt: new Date(c.createdAt).toISOString(),
+      // lifecycle: created → delivered (the target's poll picked it up) →
+      // accepted / declined / expired. The terminal states live in
+      // settledChallenges / the expiry sweep; a live view carries the rest.
+      status: c.deliveredAt !== undefined ? 'delivered' as const : 'created' as const,
+      ...(c.deliveredAt !== undefined ? { deliveredAt: new Date(c.deliveredAt).toISOString() } : {}),
+      expiresAt: new Date(c.createdAt + challengeTtl).toISOString(),
       rematch: c.rematchOf !== undefined,
+    };
+  }
+
+  /** Presentation aggregate for opponent scouting: mean of the XI's rating
+   *  means, 0-100. Derived from the same buildTeam that will build the
+   *  manifest — what you scout is what you face. */
+  function teamOverall(account: Account): number {
+    const players = buildTeam(account).players.slice(0, 11);
+    const sum = players.reduce((acc, p) => {
+      const r = Object.values(p.ratings);
+      return acc + r.reduce((a, b) => a + b, 0) / r.length;
+    }, 0);
+    return Math.round(sum / players.length);
+  }
+
+  /** The normalized lobby identity (workstream charter): stable fields the
+   *  UI can rely on regardless of auth method. displayName is the handle
+   *  until the ENS workstream provides names — same field, richer source. */
+  function participantView(a: Account){
+    const team = buildTeam(a);
+    return {
+      ...publicAccount(a),
+      walletAddress: a.wallet ?? null,
+      displayName: a.handle,
+      squadId: team.teamId,
+      squadName: a.teamName,
+      teamOverall: teamOverall(a),
+      status: statusOf(a.accountId),
+      joinedAt: presence.get(a.accountId)
+        ? new Date(presence.get(a.accountId)!.joinedAt).toISOString() : null,
+      record: recordTally(a.accountId),
+      // back-compat booleans (pre-charter clients read these)
+      online: online(a.accountId),
+      inMatch: activeMatchFor(a.accountId) !== null,
     };
   }
 
@@ -256,22 +421,28 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     const current = activeMatchFor(me.accountId);
     if (current) await ensureResult(current);
     const mine = [...challenges.values()];
+    // delivery stamp: the moment the TARGET's poll first carries a
+    // challenge, it is delivered — the challenger's view flips from
+    // 'created' to 'delivered' ("seen") on their next poll
+    for (const c of mine)
+      if (c.to === me.accountId && c.deliveredAt === undefined) c.deliveredAt = Date.now();
     const match = activeMatchFor(me.accountId);
     return {
-      me: { ...publicAccount(me), email: me.email, record: recordTally(me.accountId) },
+      me: {
+        ...participantView(me),
+        email: me.email,
+      },
       players: store.listAccounts()
         .filter(a => a.accountId !== me.accountId)
-        .map(a => ({
-          ...publicAccount(a),
-          online: online(a.accountId),
-          inMatch: activeMatchFor(a.accountId) !== null,
-          record: recordTally(a.accountId),
-        })),
+        .map(participantView),
       challenges: {
         incoming: mine.filter(c => c.to === me.accountId).map(challengeView),
         outgoing: mine.filter(c => c.from === me.accountId).map(challengeView),
       },
-      match: match ? joinInfo(match, me.accountId) : null,
+      match: match ? {
+        ...joinInfo(match, me.accountId),
+        status: Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing' : 'live',
+      } : null,
     };
   }
 
@@ -297,6 +468,21 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           online: store.listAccounts().filter(a => online(a.accountId)).length,
           uptimeSeconds: Math.round(process.uptime()),
         });
+      }
+
+      // The frontend's getPlayer(tokenId) — one normalized structure from
+      // ONE eth_call (docs/PLAYER_DATA_MODEL.md). Public on purpose: it
+      // serves chain state, which is public by nature, and needs no session.
+      const playerMatch = req.method === 'GET' && url.pathname.match(/^\/players\/(\d{1,20})$/);
+      if (playerMatch){
+        if (!options.chainReader)
+          return json(res, 501, { error: 'chain reads are not configured on this lobby' });
+        try {
+          return json(res, 200, { player: await options.chainReader.readPlayer(BigInt(playerMatch[1]!)) });
+        } catch (err) {
+          if (err instanceof ChainReadError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'chain read failed — try again shortly' });
+        }
       }
 
       if (req.method === 'POST' && url.pathname === '/auth/request'){
@@ -353,7 +539,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           };
           store.saveAccount(account);
         }
-        presence.set(account.accountId, Date.now());
+        touchPresence(account.accountId);
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
       }
 
@@ -409,13 +595,169 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           };
           store.saveAccount(account);
         }
-        presence.set(account.accountId, Date.now());
+        touchPresence(account.accountId);
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
+      }
+
+      // ---- email invitations: PUBLIC surface -----------------------------
+      // GET /invites/:token — the landing page's context call. No session:
+      // the recipient hasn't signed in yet. Serves only what the email
+      // already told them (who, which club, until when) — never tokens,
+      // emails, or ids beyond the inviter's public identity.
+      const inviteViewMatch = req.method === 'GET' && url.pathname.match(/^\/invites\/([A-Za-z0-9_-]{20,})$/);
+      if (inviteViewMatch){
+        const invite = store.inviteByTokenHash(hashToken(inviteViewMatch[1]!));
+        if (!invite) return json(res, 404, { error: 'this invitation does not exist' });
+        expireIfDue(invite);
+        if (invite.status === 'expired')
+          return json(res, 410, { error: 'this invitation has expired — ask your friend for a new one' });
+        if (invite.status === 'accepted')
+          return json(res, 409, { error: 'this invitation was already used' });
+        const inviter = store.getAccount(invite.inviterAccountId);
+        return json(res, 200, {
+          inviter: inviter ? publicAccount(inviter) : { handle: '?', teamName: '?' },
+          ...(invite.message ? { message: invite.message } : {}),
+          expiresAt: invite.expiresAt,
+          status: invite.status,
+        });
+      }
+
+      // POST /webhooks/email — Resend delivery events (svix-signed).
+      // Idempotent by design: the status ladder only climbs, so replays and
+      // out-of-order deliveries are harmless. Always 2xx on a verified
+      // payload — a webhook endpoint that errors gets hammered by retries.
+      if (req.method === 'POST' && url.pathname === '/webhooks/email'){
+        if (!options.emailWebhookSecret)
+          return json(res, 501, { error: 'email webhooks are not configured' });
+        const payload = await readBody(req, 64 * 1024);
+        if (!verifySvix(payload, req.headers, options.emailWebhookSecret))
+          return json(res, 401, { error: 'bad webhook signature' });
+        let event: { type?: string; data?: { email_id?: string } };
+        try { event = JSON.parse(payload) as typeof event; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        const messageId = event.data?.email_id;
+        const invite = messageId ? store.inviteByProviderMessageId(messageId) : null;
+        if (invite){
+          const next: Record<string, Invitation['status']> = {
+            'email.delivered': 'delivered',
+            'email.opened': 'opened',
+            'email.clicked': 'opened',
+            'email.bounced': 'failed',
+            'email.complained': 'failed',
+          };
+          const to = next[event.type ?? ''];
+          if (to) advanceInviteStatus(invite, to);
+        }
+        return json(res, 204, {});
       }
 
       // everything below requires a session
       const me = authed(req);
       if (!me) return json(res, 401, { error: 'session token required' });
+
+      // ---- email invitations: send / list / accept -----------------------
+      // POST /invites {email, message?} — invite a friend to a match.
+      if (req.method === 'POST' && url.pathname === '/invites'){
+        if (!options.emailProvider)
+          return json(res, 501, { error: 'email invitations are not configured on this lobby' });
+        let body: { email?: unknown; message?: unknown };
+        try { body = JSON.parse(await readBody(req)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof body.email !== 'string' || !EMAIL_RE.test(body.email) || body.email.length > 254)
+          return json(res, 400, { error: 'a valid email is required' });
+        const recipient = body.email.toLowerCase();
+        if (recipient === me.email.toLowerCase())
+          return json(res, 400, { error: "that's your own address — challenge someone else" });
+        let message: string | undefined;
+        if (body.message !== undefined){
+          if (typeof body.message !== 'string') return json(res, 400, { error: 'message must be a string' });
+          message = cleanName(body.message).slice(0, 200) || undefined;
+        }
+        // spam guard: ATTEMPTS count against the rolling window
+        const times = (inviteTimes.get(me.accountId) ?? []).filter(t => t > Date.now() - inviteLimit.windowMs);
+        if (times.length >= inviteLimit.count)
+          return json(res, 429, { error: 'invite limit reached — try again in a while' });
+        times.push(Date.now());
+        inviteTimes.set(me.accountId, times);
+        // duplicate suppression: one live invite per (inviter, address)
+        const existing = store.liveInviteFor(me.accountId, recipient);
+        if (existing)
+          return json(res, 409, { error: 'you already have a live invitation to that address', invitation: inviteView(existing) });
+
+        const token = randomBytes(24).toString('base64url');
+        const invite: Invitation = {
+          invitationId: `inv-${randomBytes(6).toString('hex')}`,
+          tokenHash: hashToken(token),
+          inviterAccountId: me.accountId,
+          recipientEmail: recipient,
+          ...(message ? { message } : {}),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + inviteTtl).toISOString(),
+          status: 'created',
+        };
+        store.saveInvite(invite);
+        const inviteUrl = `${inviteBase}/invite.html?t=${token}`;
+        try {
+          const out = await options.emailProvider.sendMatchInvitation({
+            to: recipient,
+            inviterName: me.handle,
+            inviterTeam: me.teamName,
+            ...(message ? { message } : {}),
+            inviteUrl,
+            expiresAt: invite.expiresAt,
+          });
+          invite.status = 'sent';
+          if (out.messageId) invite.providerMessageId = out.messageId;
+          store.saveInvite(invite);
+        } catch {
+          // failed sends stay on the books (inviter sees FAILED) but do not
+          // block a retry — liveInviteFor ignores 'failed'
+          invite.status = 'failed';
+          store.saveInvite(invite);
+          return json(res, 502, { error: 'could not send the invitation — try again shortly' });
+        }
+        // the inviter may also copy the link and share it themselves
+        return json(res, 201, { invitation: inviteView(invite), inviteUrl });
+      }
+
+      // GET /invites — my sent invitations, newest first
+      if (req.method === 'GET' && url.pathname === '/invites'){
+        for (const v of store.invitesFrom(me.accountId)) expireIfDue(v);
+        return json(res, 200, { invitations: store.invitesFrom(me.accountId).slice(0, 20).map(inviteView) });
+      }
+
+      // POST /invites/:token/accept — the recipient, signed in (with email
+      // or wallet, squad minted or generated — any account works), claims
+      // the invite. The reward is game-native: a challenge to the inviter.
+      const inviteAcceptMatch = req.method === 'POST' && url.pathname.match(/^\/invites\/([A-Za-z0-9_-]{20,})\/accept$/);
+      if (inviteAcceptMatch){
+        const invite = store.inviteByTokenHash(hashToken(inviteAcceptMatch[1]!));
+        if (!invite) return json(res, 404, { error: 'this invitation does not exist' });
+        expireIfDue(invite);
+        if (invite.status === 'expired')
+          return json(res, 410, { error: 'this invitation has expired — ask your friend for a new one' });
+        if (invite.status === 'accepted')
+          return json(res, 409, { error: 'this invitation was already used' });
+        if (invite.inviterAccountId === me.accountId)
+          return json(res, 400, { error: 'this is your own invitation — send it to a friend' });
+        const inviter = store.getAccount(invite.inviterAccountId);
+        if (!inviter) return json(res, 410, { error: 'the inviting account no longer exists' });
+        invite.status = 'accepted';
+        invite.acceptedBy = me.accountId;
+        invite.lastEventAt = new Date().toISOString();
+        store.saveInvite(invite);
+        // the challenge goes FROM the accepter TO the inviter, so the
+        // inviter simply accepts it whenever they are next in the lobby
+        const challenge: Challenge = {
+          id: `ch-${randomBytes(4).toString('hex')}`,
+          from: me.accountId,
+          to: inviter.accountId,
+          createdAt: Date.now(),
+        };
+        challenges.set(challenge.id, challenge);
+        touchPresence(me.accountId);
+        return json(res, 200, { inviter: publicAccount(inviter), challenge: { id: challenge.id } });
+      }
 
       if (req.method === 'GET' && url.pathname === '/lobby')
         return json(res, 200, await lobbyState(me));
@@ -448,15 +790,27 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (req.method === 'GET' && url.pathname === '/squad'){
         const base = buildTeam(me, { customized: false });
         const final = buildTeam(me);
+        // overall = mean of the 12 lane-equivalent ratings (accel rides
+        // pace and is excluded) — the same aggregate the on-chain power
+        // budget bounds, so generated and NFT squads read on one scale
+        const overallOf = (r: (typeof final.players)[number]['ratings']): number =>
+          Math.round((r.pace + r.shooting + r.passing + r.dribbling + r.tackling
+            + r.strength + r.stamina + r.vision + r.positioning + r.aggression
+            + r.composure + r.gk) / 12);
         return json(res, 200, {
           teamName: me.teamName,
           colors: me.squad?.colors ?? null,
+          source: me.chainTeam ? 'chain' : 'generated',
           players: final.players.map((p, i) => ({
             playerId: p.playerId,
             name: p.name,
-            defaultName: base.players[i]!.name,
+            defaultName: base.players[i]?.name ?? p.name,
             role: p.role,
             shirtNumber: p.shirtNumber,
+            ratings: p.ratings,
+            overall: overallOf(p.ratings),
+            // present only for NFT squads — playerIds are `nft-<tokenId>`
+            ...(p.playerId.startsWith('nft-') ? { tokenId: p.playerId.slice(4) } : {}),
           })),
         });
       }
@@ -612,9 +966,15 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         if (!online(to)) return json(res, 409, { error: `${target.handle} is offline` });
         if (activeMatchFor(me.accountId) || activeMatchFor(to))
           return json(res, 409, { error: 'one of you is already in a match' });
-        for (const c of challenges.values())
-          if ((c.from === me.accountId && c.to === to) || (c.from === to && c.to === me.accountId))
-            return json(res, 409, { error: 'a challenge between you is already pending' });
+        for (const c of challenges.values()){
+          // idempotent re-issue: challenging the same player again returns
+          // the SAME pending challenge (double-click, retry, second tab —
+          // they all converge on one id instead of stacking or erroring)
+          if (c.from === me.accountId && c.to === to)
+            return json(res, 200, { challenge: challengeView(c) });
+          if (c.from === to && c.to === me.accountId)
+            return json(res, 409, { error: `${target.handle} already challenged YOU — accept it instead` });
+        }
         // challenge-spam guard: creations per account per rolling window —
         // declining and re-challenging in good faith never gets near it
         const times = (challengeTimes.get(me.accountId) ?? []).filter(t => t > Date.now() - challengeLimit.windowMs);
@@ -642,12 +1002,25 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (req.method === 'POST' && parts[0] === 'challenges' && parts.length === 3){
         sweepChallenges();
         const challenge = challenges.get(parts[1]!);
-        if (!challenge) return json(res, 404, { error: 'unknown or expired challenge' });
+        if (!challenge){
+          // idempotency memory: a just-settled id answers with its outcome —
+          // a double-click on ACCEPT returns the SAME match instead of 404,
+          // and a retried DECLINE stays a no-op
+          const settled = settledChallenges.get(parts[1]!);
+          if (settled?.outcome === 'accepted' && parts[2] === 'accept'){
+            const record = settled.matchId ? store.matchesFor(me.accountId).find(m => m.matchId === settled.matchId) : undefined;
+            if (record) return json(res, 200, { match: joinInfo(record, me.accountId) });
+          }
+          if (settled?.outcome === 'declined' && parts[2] === 'decline')
+            return json(res, 200, { ok: true });
+          return json(res, 404, { error: 'unknown or expired challenge' });
+        }
 
         if (parts[2] === 'decline'){
           if (challenge.to !== me.accountId && challenge.from !== me.accountId)
             return json(res, 403, { error: 'not your challenge' });
           challenges.delete(challenge.id);
+          settledChallenges.set(challenge.id, { outcome: 'declined', at: Date.now() });
           return json(res, 200, { ok: true });
         }
 
@@ -681,6 +1054,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           }
 
           challenges.delete(challenge.id);
+          settledChallenges.set(challenge.id, { outcome: 'accepted', matchId: created.matchId, at: Date.now() });
           const [homeTeam, awayTeam] = manifest.teams;
           const record: MatchRecord = {
             matchId: created.matchId,

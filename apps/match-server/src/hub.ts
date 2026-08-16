@@ -269,6 +269,30 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
           return result ? json(res, 200, result) : json(res, 404, { error: 'match not finished' });
         }
+        // workstream G observability: the live tactical truth — team
+        // tactics, active player instructions, and the provenance of the
+        // last tactical/instruction commands from the log. Dev-tool grade,
+        // token-gated like every match GET; no low-level AI internals.
+        if (parts[2] === 'tactics'){
+          const room = rooms.get(matchId);
+          if (!room) return json(res, 404, { error: 'match is not live' });
+          const provenance = room.appliedCommandLog()
+            .filter(c => c.command.kind === 'tactical' || c.command.kind === 'player_instruction')
+            .slice(-20)
+            .map(c => ({
+              seq: c.seq,
+              kind: c.command.kind,
+              commandId: c.command.commandId,
+              teamId: c.command.teamId,
+              effectiveTick: c.effectiveTick,
+              receivedAtTick: c.receivedAtTick,
+            }));
+          return json(res, 200, {
+            tick: room.currentTick,
+            ...room.tacticsReport(),
+            recentCommands: provenance,
+          });
+        }
         if (parts[2] === 'replay'){
           const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
           if (!result) return json(res, 404, { error: 'match not finished' });
@@ -289,12 +313,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       // with live match context for the CONTROLLER's team. The client sends
       // the resulting command over its own authorized WebSocket; these
       // endpoints never touch the match.
-      interface InterpretedResponse {
-        patch?: unknown; coachText?: string; say: string | null;
-        orders?: Array<{ intent: string; scope: string; ack: string; wire: unknown }>;
-        rejected?: Array<{ intent: string; reason: string }>;
-      }
-      const interpretFor = async (room: MatchRoom, teamId: string, text: string): Promise<InterpretedResponse> => {
+      const interpretFor = async (room: MatchRoom, teamId: string, text: string) => {
         if (!interpretCoach) return { coachText: text, say: null };
         const snap = room.snapshot();
         const mine = snap.teams.findIndex(t => t.teamId === teamId);
@@ -314,10 +333,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         // wire-ready payloads and short acks; it still sends every command
         // over its OWN authorized WebSocket — these endpoints never touch
         // the match, and the room validates everything again on arrival.
-        if (!result.orders?.length){
-          const { orders: _none, ...plain } = result;
-          return plain;
-        }
+        if (!result.orders?.length) return result;
         const ctx = { own: ownTeam, opponent: oppTeam, teamId };
         const compiled: Array<{ intent: string; scope: string; ack: string; wire: unknown }> = [];
         const rejected: Array<{ intent: string; reason: string }> = [];
@@ -379,18 +395,13 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           return json(res, 422, { error: 'nothing intelligible heard', transcript: '' });
         const startedAt = Date.now();
         const result = await interpretFor(gate.room, gate.teamId, transcript);
-        const interpretMs = Date.now() - startedAt;
         telemetry.log('coach_voice', {
           matchId: parts[1], teamId: gate.teamId, audioBytes: audio.length,
-          transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs,
-          orders: result.orders?.length ?? 0, rejected: result.rejected?.length ?? 0,
-          outcome: result.orders?.length ? 'orders' : result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
+          transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs: Date.now() - startedAt,
+          outcome: result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
         });
-        telemetry.metric('CoachInterpretMs', interpretMs, 'Milliseconds');
-        return json(res, 200, {
-          transcript, ...result,
-          latency: { sttMs: startedAt - sttStart, interpretMs },
-        });
+        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
+        return json(res, 200, { transcript, ...result });
       }
 
       // C2 — POST /matches/:id/coach/interpret (typed text / browser-SR path)
@@ -408,15 +419,10 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           return json(res, 400, { error: 'text must be a non-empty string of at most 500 chars' });
         const startedAt = Date.now();
         const result = await interpretFor(room, payload.teamId, text.trim());
-        const interpretMs = Date.now() - startedAt;
-        const outcome = result.orders?.length ? 'orders'
-          : result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
-        telemetry.log('coach_interpreted', {
-          matchId, teamId: payload.teamId, outcome, ms: interpretMs,
-          orders: result.orders?.length ?? 0, rejected: result.rejected?.length ?? 0,
-        });
-        telemetry.metric('CoachInterpretMs', interpretMs, 'Milliseconds');
-        return json(res, 200, { ...result, latency: { interpretMs } });
+        const outcome = result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
+        telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
+        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
+        return json(res, 200, result);
       }
 
       // M1.2 replay theater: the full match as a recorded frame stream. The

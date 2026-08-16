@@ -36,10 +36,15 @@ relative to current tactics.
 (compiles to the engine's man-marking assignment: `markTarget` +
 `scheme:'man'`). `stay_wide` `cut_inside` `overlap` `underlap`
 `hold_position` `make_forward_runs` `come_short` `press_player`
-`shoot_more` `dribble_more` are reserved: they validate, resolve their
-target (so a typo'd name is a NAME error, not a fake "unsupported"), and
-reject honestly — *"Ferreyra: not on the pitch yet"*. G3 binds them
-through the engine's choreography seams without touching this layer.
+`shoot_more` `dribble_more` are reserved AT THE COMPILE
+TABLE: they validate, resolve their target (so a typo'd name is a NAME
+error, not a fake "unsupported"), and reject honestly — *"Ferreyra: not
+on the pitch yet"*. The ENGINE side of G3 has landed separately
+(`packages/engine/src/tactics.ts` + the protocol `PlayerInstruction`
+command — spatial instructions with tick-based TTLs, one active per
+player; see `docs/TACTICAL_EXECUTION.md`): the remaining bridge is
+teaching the compile table to lower these intents onto that command,
+which flips them from reserved to live without touching the interpreter.
 
 **MATCH (2 intents — both bind)**: `change_formation` (442|433|352),
 `substitution` (compiles to the existing wire substitution; the engine
@@ -167,8 +172,10 @@ pipeline.
 
 ## Known limitations (honest list)
 
-- 10 of 11 player intents are reserved pending G3 engine bindings; only
-  marking reaches the pitch today.
+- 10 of 11 player intents are reserved at the compile table; the engine's
+  PlayerInstruction layer exists (docs/TACTICAL_EXECUTION.md) but the
+  taxonomy→PlayerInstruction bridge is not yet written — only marking
+  reaches the pitch through the spoken path today.
 - One `markTarget` per team (the engine's model) — "mark their nine AND
   their seven" keeps the last.
 - Ambiguity between two players sharing a surname produces a degenerate

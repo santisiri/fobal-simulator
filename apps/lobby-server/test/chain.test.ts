@@ -193,6 +193,51 @@ describe('chain reader (D1)', () => {
       .rejects.toThrow(/not a valid match squad/);
   });
 
+  test('readPlayer: one call → the full normalized profile (Feature 4)', async () => {
+    const chain = baseChain();
+    chain.players.set(7n, {
+      owner: ALICE, name: 'Mateo Ferreyra', position: 3,
+      skills: skills({ 0: 90, 1: 80, 6: 70, 11: 4 }),
+    });
+    const p = await readerFor(chain).readPlayer(7n);
+    expect(p).toMatchObject({
+      tokenId: '7', name: 'Mateo Ferreyra', owner: ALICE, lockedBy: null,
+      position: 3, role: 'ST', generation: 1, level: 1, xp: 0,
+    });
+    expect(p.career).toEqual({ matchesPlayed: 0, wins: 0, draws: 0, losses: 0, goals: 0, assists: 0, cleanSheets: 0 });
+    expect(p.ratings.pace).toBe(90);
+    expect(p.ratings.shooting).toBe(80);
+    expect(p.overall).toBe(Math.round((90 + 80 + 70 + 4) / 12));
+    await expect(readerFor(chain).readPlayer(999n))
+      .rejects.toSatisfy((e: unknown) => e instanceof ChainReadError && e.status === 404);
+  });
+
+  test('GET /players/:tokenId serves the profile publicly; 501 dark, 404 unknown', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { startMatchServer } = await import('@fobal/match-server');
+    const { startLobbyServer } = await import('../src/index.js');
+    const chain = baseChain();
+    chain.players.set(7n, { owner: ALICE, name: 'Luca Moretti', position: 2, skills: flat55 });
+    const match = await startMatchServer({ port: 0, storeRoot: mkdtempSync(join(tmpdir(), 'pn-')), createKey: 'ck', autoDrive: false });
+    const lobby = await startLobbyServer({
+      port: 0, matchServer: { url: `http://127.0.0.1:${match.port}`, createKey: 'ck' },
+      chainReader: readerFor(chain),
+    });
+    const dark = await startLobbyServer({
+      port: 0, matchServer: { url: `http://127.0.0.1:${match.port}`, createKey: 'ck' },
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${lobby.port}/players/7`);
+      expect(res.status).toBe(200);
+      const { player } = await res.json() as { player: { name: string; role: string; overall: number } };
+      expect(player).toMatchObject({ name: 'Luca Moretti', role: 'CM', overall: 55 });
+      expect((await fetch(`http://127.0.0.1:${lobby.port}/players/999`)).status).toBe(404);
+      expect((await fetch(`http://127.0.0.1:${dark.port}/players/7`)).status).toBe(501);
+    } finally { await lobby.close(); await dark.close(); await match.close(); }
+  });
+
   test('unconfigured → null (the 501 path); a dead rpc → ChainReadError 502', async () => {
     expect(createChainReader({})).toBeNull();
     const reader = createChainReader({

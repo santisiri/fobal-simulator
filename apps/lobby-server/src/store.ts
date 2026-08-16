@@ -62,6 +62,32 @@ export interface MatchRecord {
 
 const MAX_MATCH_RECORDS = 200;
 
+/** An email match invitation. The LINK TOKEN itself is never stored — only
+ *  its sha-256, so a leaked store never leaks live invitation links. Status
+ *  is a one-way ladder (created → sent → delivered → opened → accepted);
+ *  'failed' and 'expired' are terminal unless the invite was already
+ *  accepted. Game correctness never depends on delivery tracking — the
+ *  ladder is telemetry for the inviter's UI, nothing more. */
+export interface Invitation {
+  invitationId: string;
+  /** sha-256 hex of the secure link token */
+  tokenHash: string;
+  inviterAccountId: string;
+  recipientEmail: string;
+  /** optional note, sanitized + length-capped at the endpoint */
+  message?: string;
+  createdAt: string;
+  expiresAt: string;
+  status: 'created' | 'sent' | 'delivered' | 'opened' | 'accepted' | 'expired' | 'failed';
+  /** accountId of whoever accepted (set once) */
+  acceptedBy?: string;
+  /** provider message id — the webhook correlation key */
+  providerMessageId?: string;
+  lastEventAt?: string;
+}
+
+const MAX_INVITATIONS = 500;
+
 export interface LobbyStoreOptions {
   /** local directory (dev); omitted → memory + optional object store */
   root?: string;
@@ -77,6 +103,7 @@ export class LobbyStore {
   private accounts = new Map<string, Account>();
   private byEmail = new Map<string, string>();
   private byWallet = new Map<string, string>();
+  private invites: Invitation[] = [];
   private matches: MatchRecord[] = [];
   private root?: string;
   private objects?: ObjectStore;
@@ -97,6 +124,7 @@ export class LobbyStore {
         if (account.wallet) this.byWallet.set(account.wallet, account.accountId);
       }
       this.matches = this.readJson<MatchRecord[]>('matches.json') ?? [];
+      this.invites = this.readJson<Invitation[]>('invites.json') ?? [];
     }
   }
 
@@ -117,6 +145,8 @@ export class LobbyStore {
     }
     const matches = await this.objects.get(`${this.prefix}matches.json`);
     if (matches !== null) this.matches = JSON.parse(matches) as MatchRecord[];
+    const invites = await this.objects.get(`${this.prefix}invites.json`);
+    if (invites !== null) this.invites = JSON.parse(invites) as Invitation[];
   }
 
   private readJson<T>(file: string): T | null {
@@ -135,6 +165,7 @@ export class LobbyStore {
 
   private persistAccounts(): void { this.writeJson('accounts.json', [...this.accounts.values()]); }
   private persistMatches(): void { this.writeJson('matches.json', this.matches); }
+  private persistInvites(): void { this.writeJson('invites.json', this.invites); }
 
   getAccount(accountId: string): Account | null { return this.accounts.get(accountId) ?? null; }
   getAccountByEmail(email: string): Account | null {
@@ -167,5 +198,32 @@ export class LobbyStore {
   /** newest-first match records an account participates in */
   matchesFor(accountId: string): MatchRecord[] {
     return [...this.matches].reverse().filter(m => m.players[accountId] !== undefined);
+  }
+
+  saveInvite(invite: Invitation): void {
+    const i = this.invites.findIndex(v => v.invitationId === invite.invitationId);
+    if (i >= 0) this.invites[i] = invite;
+    else this.invites.push(invite);
+    if (this.invites.length > MAX_INVITATIONS)
+      this.invites.splice(0, this.invites.length - MAX_INVITATIONS);
+    this.persistInvites();
+  }
+  inviteByTokenHash(tokenHash: string): Invitation | null {
+    return this.invites.find(v => v.tokenHash === tokenHash) ?? null;
+  }
+  inviteByProviderMessageId(messageId: string): Invitation | null {
+    return this.invites.find(v => v.providerMessageId === messageId) ?? null;
+  }
+  /** newest-first invites an account has sent */
+  invitesFrom(accountId: string): Invitation[] {
+    return [...this.invites].reverse().filter(v => v.inviterAccountId === accountId);
+  }
+  /** a live (pending, unexpired) invite from this account to this address */
+  liveInviteFor(inviterAccountId: string, recipientEmail: string, now = Date.now()): Invitation | null {
+    return this.invites.find(v =>
+      v.inviterAccountId === inviterAccountId
+      && v.recipientEmail === recipientEmail
+      && ['created', 'sent', 'delivered', 'opened'].includes(v.status)
+      && Date.parse(v.expiresAt) > now) ?? null;
   }
 }

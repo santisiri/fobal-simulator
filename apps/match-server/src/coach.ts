@@ -182,7 +182,7 @@ export function createCoachInterpreter(options: CoachInterpreterOptions = {}): C
 
       if (!patch && orders.length === 0)
         // nothing structured survived: hand the raw text to the golden
-        // parseCoach fallback ONLY if the model produced a failed read
+        // parseCoach fallback ONLY if the model produced no read at all
         return out.patch || out.orders?.length
           ? { coachText: text, say: out.say ?? null }
           : { say: out.say ?? null };

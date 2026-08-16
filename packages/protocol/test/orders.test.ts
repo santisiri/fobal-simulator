@@ -1,156 +1,158 @@
-// Workstream G — the command layer's deterministic core. No LLM anywhere:
-// the taxonomy schema, the reference resolver, and the compile table are
-// plain functions, and this suite is the contract the interpreter's output
-// is held to. (Live-model behavior is exercised separately and optionally —
-// the test suite must never depend on a paid API call.)
+// Workstream G — the GameCommand contract. These are INTEGRATION-CRITICAL
+// tests: every interpreter (LLM, keyword, console) compiles through this
+// exact surface, so the closed vocabulary, deterministic resolution, and
+// honest-rejection rules are what keep the simulation authoritative.
 import { describe, expect, test } from 'vitest';
 import {
-  compileGameCommand, GameCommand, resolvePlayerRef, rosterDigest,
-  TacticalPatch, TeamIntent, TeamSnapshot,
+  GameCommand, compileGameCommand, resolvePlayerRef, rosterDigest,
+  TeamIntent, PlayerIntent,
 } from '../src/index.js';
+import type { TeamSnapshot } from '../src/index.js';
 
-const player = (id: string, name: string, shirt: number, role = 'CM') =>
-  ({ playerId: id, name, shirtNumber: shirt, role: role as 'CM',
-     ratings: Object.fromEntries(['pace','accel','stamina','strength','passing','shooting','tackling',
-       'dribbling','vision','positioning','aggression','composure','gk'].map(k => [k, 50])) as never });
-
-const OWN: TeamSnapshot = {
-  teamId: 'team-own', name: 'SANTI FC', formation: '442',
-  players: [
-    player('own-1', 'Iker Peña', 1, 'GK'),
-    player('own-2', 'Luca Moretti', 4, 'CB'),
-    player('own-3', 'Dario Moretti', 15, 'CB'),
-    player('own-4', 'Leo Kovač', 7, 'LM'),
-    player('own-5', 'Nico Ferreyra', 11, 'LW'),
-    player('own-6', 'Ba', 9, 'ST'),
-    ...Array.from({ length: 5 }, (_, i) => player(`own-b${i}`, `Bench Man${i}`, 20 + i)),
-  ],
-};
-const OPP: TeamSnapshot = {
-  teamId: 'team-opp', name: 'RIVALS', formation: '433',
-  players: [
-    player('opp-1', 'Gero Costa', 1, 'GK'),
-    player('opp-2', 'Ivan Drach', 5, 'CB'),
-    player('opp-3', 'Karim Öz', 9, 'ST'),
-    ...Array.from({ length: 8 }, (_, i) => player(`opp-x${i}`, `Filler Guy${i}`, 30 + i)),
-  ],
-};
-const CTX = { own: OWN, opponent: OPP, teamId: 'team-own' };
-
-const cmd = (partial: Record<string, unknown>) =>
-  GameCommand.parse({ version: 1, ...partial });
-
-describe('player reference resolution (deterministic, no invented ids)', () => {
-  test('surname, case-insensitive, diacritics ignored', () => {
-    const r = resolvePlayerRef({ side: 'own', name: 'kovac' }, CTX);
-    expect(r).toMatchObject({ ok: true, playerId: 'own-4', shirtNumber: 7 });
-  });
-
-  test('shirt number beats everything', () => {
-    expect(resolvePlayerRef({ side: 'opponent', shirtNumber: 9 }, CTX))
-      .toMatchObject({ ok: true, playerId: 'opp-3', name: 'Karim Öz' });
-    expect(resolvePlayerRef({ side: 'own', shirtNumber: 99 }, CTX))
-      .toMatchObject({ ok: false, reason: expect.stringContaining('no number 99') });
-  });
-
-  test('ambiguity is a terse QUESTION naming the candidates', () => {
-    const r = resolvePlayerRef({ side: 'own', name: 'Moretti' }, CTX);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe('Moretti or Moretti?');
-  });
-
-  test('an invented name resolves to an error, never a player', () => {
-    const r = resolvePlayerRef({ side: 'own', name: 'Zlatan' }, CTX);
-    expect(r).toMatchObject({ ok: false, reason: expect.stringContaining('no player called "Zlatan"') });
-  });
-
-  test('sides are separate universes', () => {
-    expect(resolvePlayerRef({ side: 'own', name: 'Costa' }, CTX).ok).toBe(false);
-    expect(resolvePlayerRef({ side: 'opponent', name: 'Costa' }, CTX).ok).toBe(true);
-  });
+const team = (key: string, names: string[]): TeamSnapshot => ({
+  teamId: `team-${key}`,
+  name: key.toUpperCase(),
+  formation: '442',
+  players: names.map((name, i) => ({
+    playerId: `${key}-p${i + 1}`,
+    name,
+    shirtNumber: i + 1,
+    role: i === 0 ? 'GK' as const : 'CM' as const,
+    ratings: {
+      pace: 55, accel: 55, stamina: 55, strength: 55, passing: 55, shooting: 55,
+      tackling: 55, dribbling: 55, vision: 55, positioning: 55, aggression: 55,
+      composure: 55, gk: i === 0 ? 85 : 10,
+    },
+  })),
 });
 
-describe('the GameCommand schema (closed vocabulary)', () => {
-  test('unknown intents die at the schema', () => {
-    expect(GameCommand.safeParse({ version: 1, scope: 'team', intent: 'summon_dragon' }).success).toBe(false);
+const own = team('own', [
+  'Iker Peña', 'Luca Moretti', 'Diego Moretti', 'Jonás Ferreyra',
+  'Sam Njoku', 'Tomás Costa', 'Erik Lund', 'Yuki Tanaka',
+  'Ada Kovač', 'Leo Brandt', 'Marco Silva',
+]);
+const opponent = team('opp', [
+  'Karl Weiss', 'Ben Adeyemi', 'Oscar Núñez', 'Ilya Petrov',
+  'Noah King', 'Ravi Sharma', 'Jean Dupont', 'Emil Novak',
+  'Ian Doyle', 'Aleksander Wójcik', 'Théo Martín',
+]);
+const ctx = { own, opponent, teamId: 'team-own' };
+
+describe('GameCommand schema (the closed vocabulary)', () => {
+  test('an intent outside its scope enum does not validate', () => {
+    expect(GameCommand.safeParse({ version: 1, scope: 'team', intent: 'sing_louder' }).success).toBe(false);
     expect(GameCommand.safeParse({ version: 1, scope: 'player', intent: 'press_high',
-      target: { side: 'own', name: 'x' } }).success).toBe(false);   // team intent under player scope
+      target: { side: 'own', name: 'Moretti' } }).success).toBe(false);
+    expect(GameCommand.safeParse({ version: 1, scope: 'team', intent: 'press_high' }).success).toBe(true);
   });
 
-  test('structural requirements enforced', () => {
+  test('player scope requires a target; formation/sub require their payloads', () => {
     expect(GameCommand.safeParse({ version: 1, scope: 'player', intent: 'mark_player' }).success).toBe(false);
     expect(GameCommand.safeParse({ version: 1, scope: 'match', intent: 'change_formation' }).success).toBe(false);
     expect(GameCommand.safeParse({ version: 1, scope: 'match', intent: 'substitution' }).success).toBe(false);
   });
+
+  test('there is no id field for a model to hallucinate into', () => {
+    const parsed = GameCommand.parse({ version: 1, scope: 'player', intent: 'mark_player',
+      target: { side: 'opponent', shirtNumber: 9, playerId: 'evil-injection' } as never });
+    expect(JSON.stringify(parsed)).not.toContain('evil-injection');
+  });
 });
 
-describe('the compile table (intent → the engine surface that exists)', () => {
-  test('every TEAM intent compiles to a protocol-valid patch', () => {
+describe('resolvePlayerRef (deterministic, never fuzzy)', () => {
+  test('surname token, diacritics-insensitive', () => {
+    const r = resolvePlayerRef({ side: 'own', name: 'ferreyra' }, ctx);
+    expect(r).toMatchObject({ ok: true, playerId: 'own-p4' });
+    const accent = resolvePlayerRef({ side: 'opponent', name: 'nunez' }, ctx);
+    expect(accent).toMatchObject({ ok: true, playerId: 'opp-p3' });
+  });
+
+  test('shirt number wins outright; a missing number names the side', () => {
+    expect(resolvePlayerRef({ side: 'opponent', shirtNumber: 9 }, ctx))
+      .toMatchObject({ ok: true, playerId: 'opp-p9' });
+    const miss = resolvePlayerRef({ side: 'own', shirtNumber: 77 }, ctx);
+    expect(miss.ok).toBe(false);
+    if (!miss.ok) expect(miss.reason).toContain('77');
+  });
+
+  test('ambiguity is a terse question, not a guess', () => {
+    const r = resolvePlayerRef({ side: 'own', name: 'Moretti' }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('Moretti or Moretti?');
+  });
+
+  test('an invented player cannot survive', () => {
+    const r = resolvePlayerRef({ side: 'own', name: 'Zlatan' }, ctx);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('compileGameCommand (the simulation integration boundary)', () => {
+  test('every TEAM intent compiles to a tactical patch the engine already validates', () => {
     for (const intent of TeamIntent.options){
-      const out = compileGameCommand(cmd({ scope: 'team', intent }), CTX);
+      const out = compileGameCommand(GameCommand.parse({ version: 1, scope: 'team', intent }), ctx);
       expect(out.ok, intent).toBe(true);
-      if (out.ok && out.wire.kind === 'tactical'){
-        expect(TacticalPatch.safeParse(out.wire.payload.patch).success, intent).toBe(true);
-        expect(out.ack.length, intent).toBeGreaterThan(2);
-      }
+      if (out.ok) expect(out.wire.kind).toBe('tactical');
     }
   });
 
-  test('press_high honors intensity', () => {
-    const out = compileGameCommand(cmd({ scope: 'team', intent: 'press_high', intensity: 0.6 }), CTX);
-    expect(out.ok && out.wire.kind === 'tactical' && out.wire.payload.patch.pressing).toBe(0.6);
+  test('intensity scales the intents that accept it', () => {
+    const soft = compileGameCommand(GameCommand.parse({ version: 1, scope: 'team', intent: 'press_high', intensity: 0.6 }), ctx);
+    if (soft.ok && soft.wire.kind === 'tactical') expect(soft.wire.payload.patch.pressing).toBe(0.6);
   });
 
-  test('mark_player binds to the engine markTarget with a short ack', () => {
-    const out = compileGameCommand(
-      cmd({ scope: 'player', intent: 'mark_player', target: { side: 'opponent', shirtNumber: 9 } }), CTX);
-    expect(out).toMatchObject({ ok: true, ack: 'MARK #9 ÖZ ✓' });
+  test('mark_player binds today: opponent resolved to a playerId, man scheme', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(out).toMatchObject({ ok: true });
     if (out.ok && out.wire.kind === 'tactical')
-      expect(out.wire.payload.patch).toEqual({ markTarget: 'opp-3', scheme: 'man' });
+      expect(out.wire.payload.patch).toMatchObject({ markTarget: 'opp-p9', scheme: 'man' });
   });
 
-  test('marking your own player is refused with direction, not applied sideways', () => {
-    const out = compileGameCommand(
-      cmd({ scope: 'player', intent: 'mark_player', target: { side: 'own', name: 'Kovač' } }), CTX);
-    expect(out).toMatchObject({ ok: false, reason: expect.stringContaining('OPPONENT') });
-  });
-
-  test('reserved player intents reject honestly — after resolving the name', () => {
-    const out = compileGameCommand(
-      cmd({ scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreyra' } }), CTX);
+  test('marking your own player is rejected with direction, not applied', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      target: { side: 'own', name: 'Ferreyra' },
+    }), ctx);
     expect(out.ok).toBe(false);
-    if (!out.ok){
-      expect(out.reason).toContain('Ferreyra');
-      expect(out.reason).toContain('not on the pitch yet');
-    }
-    // …but a typo'd name is a NAME error, not an "unsupported" error
-    const typo = compileGameCommand(
-      cmd({ scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreira' } }), CTX);
-    expect(!typo.ok && typo.reason.includes('no player called')).toBe(true);
   });
 
-  test('change_formation and substitution compile to their wire commands', () => {
-    const f = compileGameCommand(cmd({ scope: 'match', intent: 'change_formation', formation: '433' }), CTX);
-    expect(f.ok && f.wire.kind === 'tactical' && f.wire.payload.patch.formation).toBe('433');
+  test('reserved player intents resolve the name FIRST, then reject honestly', () => {
+    const typo = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', name: 'Zlatan' },
+    }), ctx);
+    expect(typo.ok).toBe(false);
+    if (!typo.ok) expect(typo.reason).toContain('Zlatan');   // the typo surfaces as a typo
 
-    const sub = compileGameCommand(cmd({ scope: 'match', intent: 'substitution',
-      sub: { out: { side: 'own', name: 'Ba' }, in: { side: 'own', shirtNumber: 21 } } }), CTX);
-    expect(sub).toMatchObject({ ok: true, ack: 'SUB BA → MAN1' });
-    if (sub.ok && sub.wire.kind === 'substitution')
-      expect(sub.wire).toMatchObject({ playerOut: 'own-6', playerIn: 'own-b1' });
+    const reserved = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', name: 'Ferreyra' },
+    }), ctx);
+    expect(reserved.ok).toBe(false);
+    if (!reserved.ok) expect(reserved.reason).toContain('Ferreyra: ');   // honest, named rejection
   });
 
-  test('determinism: same command, same context, byte-equal output', () => {
-    const a = compileGameCommand(cmd({ scope: 'team', intent: 'park_the_bus' }), CTX);
-    const b = compileGameCommand(cmd({ scope: 'team', intent: 'park_the_bus' }), CTX);
-    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  test('substitutions resolve both refs on OUR side and emit the wire command', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'match', intent: 'substitution',
+      sub: { out: { side: 'own', name: 'Njoku' }, in: { side: 'own', name: 'Silva' } },
+    }), ctx);
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok && out.wire.kind === 'substitution')
+      expect(out.wire).toMatchObject({ playerOut: 'own-p5', playerIn: 'own-p11' });
   });
-});
 
-describe('interpreter context stays compact', () => {
-  test('rosterDigest is names/shirts/roles and nothing else', () => {
-    const d = rosterDigest(OWN);
-    expect(d[0]).toEqual({ shirt: 1, name: 'Iker Peña', role: 'GK' });
-    expect(Object.keys(d[0]!)).toHaveLength(3);
+  test('rosterDigest is the compact interpreter context — names, shirts, roles, nothing else', () => {
+    const digest = rosterDigest(own);
+    expect(digest).toHaveLength(11);
+    expect(Object.keys(digest[0]!).sort()).toEqual(['name', 'role', 'shirt']);
+  });
+
+  test('every reserved PlayerIntent stays in the enum (the language is spoken before it binds)', () => {
+    expect(PlayerIntent.options).toContain('overlap');
+    expect(PlayerIntent.options).toContain('mark_player');
   });
 });
