@@ -14,7 +14,8 @@ import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
-  MatchManifest, parseClientMessage, PROTOCOL_VERSION, ReplayFile, ServerMessage,
+  compileGameCommand, MatchManifest, parseClientMessage, PROTOCOL_VERSION, ReplayFile,
+  rosterDigest, ServerMessage,
 } from '@fobal/protocol';
 import { MatchRoom, RoomClient } from './room.js';
 import { MatchStore } from './store.js';
@@ -293,13 +294,36 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         const snap = room.snapshot();
         const mine = snap.teams.findIndex(t => t.teamId === teamId);
         const opp = snap.teams[1 - mine];
-        return interpretCoach(text, {
-          teamName: room.manifest.teams[mine]?.name ?? teamId,
+        const ownTeam = room.manifest.teams[mine]!;
+        const oppTeam = room.manifest.teams[1 - mine]!;
+        const result = await interpretCoach(text, {
+          teamName: ownTeam.name ?? teamId,
           scoreLine: `${snap.score[0]}-${snap.score[1]}`,
           minute: Math.min(90, Math.floor(parseClockMinutes(snap.clock)) + 1),
           currentTactics: (snap.teams[mine]?.tactics ?? {}) as Record<string, unknown>,
           opponent: { formation: opp?.tactics.formation, style: opp?.tactics.style, pressing: opp?.tactics.pressing },
+          roster: { own: rosterDigest(ownTeam), opponent: rosterDigest(oppTeam) },
         });
+        // workstream G: resolve + compile taxonomy orders against the
+        // manifest, deterministically, server-side. The client receives
+        // wire-ready payloads and short acks; it still sends every command
+        // over its OWN authorized WebSocket — these endpoints never touch
+        // the match, and the room validates everything again on arrival.
+        if (!result.orders?.length) return result;
+        const ctx = { own: ownTeam, opponent: oppTeam, teamId };
+        const compiled: Array<{ intent: string; scope: string; ack: string; wire: unknown }> = [];
+        const rejected: Array<{ intent: string; reason: string }> = [];
+        for (const order of result.orders){
+          const out = compileGameCommand(order, ctx);
+          if (out.ok) compiled.push({ intent: order.intent, scope: order.scope, ack: out.ack, wire: out.wire });
+          else rejected.push({ intent: order.intent, reason: out.reason });
+        }
+        const { orders: _raw, ...rest } = result;
+        return {
+          ...rest,
+          ...(compiled.length ? { orders: compiled } : {}),
+          ...(rejected.length ? { rejected } : {}),
+        };
       };
       type ControllerGate =
         | { error: [number, string]; room?: undefined; teamId?: undefined }

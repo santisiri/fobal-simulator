@@ -86,7 +86,7 @@ export interface LobbyServer {
   close(): Promise<void>;
 }
 
-interface Challenge { id: string; from: string; to: string; createdAt: number; rematchOf?: string; }
+interface Challenge { id: string; from: string; to: string; createdAt: number; deliveredAt?: number; rematchOf?: string; }
 interface LoginCode { code: string; expiresAt: number; lastRequestAt: number; }
 
 const LOGIN_CODE_TTL_MS = 15 * 60 * 1000;
@@ -141,14 +141,49 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const loginCodes = new Map<string, LoginCode>();
   // D2: one-shot wallet challenges keyed by lowercase address
   const walletChallenges = new Map<string, { nonce: string; message: string; expiresAt: number; lastRequestAt: number }>();
-  const presence = new Map<string, number>();
+  // presence: lastSeen drives the TTL (ghost users age out, nothing to
+  // clean up); joinedAt is the current lobby VISIT — returning after a TTL
+  // gap starts a new visit, so "joined 2m ago" never lies after a lunch break
+  const presence = new Map<string, { lastSeen: number; joinedAt: number }>();
   const challenges = new Map<string, Challenge>();
+  // idempotency memory: a settled challenge id keeps answering with its
+  // outcome for a grace window, so a double-click, a retried request, or a
+  // reconnect replay converges instead of erroring or double-creating
+  const settledChallenges = new Map<string, { outcome: 'accepted' | 'declined'; matchId?: string; at: number }>();
+  const SETTLED_TTL_MS = 5 * 60 * 1000;
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
   const challengeLimit = options.challengeLimit ?? { count: 8, windowMs: 10 * 60 * 1000 };
   const challengeTimes = new Map<string, number[]>();  // accountId → creation times
 
+  const touchPresence = (accountId: string): void => {
+    const now = Date.now();
+    const p = presence.get(accountId);
+    presence.set(accountId, {
+      lastSeen: now,
+      joinedAt: p && p.lastSeen > now - presenceTtl ? p.joinedAt : now,
+    });
+  };
+
   const online = (accountId: string): boolean =>
-    (presence.get(accountId) ?? 0) > Date.now() - presenceTtl;
+    (presence.get(accountId)?.lastSeen ?? 0) > Date.now() - presenceTtl;
+
+  /** How long an accepted match counts as "preparing" (both clients are
+   *  navigating/connecting) before it reads as fully in play. */
+  const PREPARING_MS = 45_000;
+
+  /** The lobby presence state machine, derived — no writes, no sweeps:
+   *  match (fresh → preparing_match, else in_match) beats challenged beats
+   *  available; silence past the TTL is disconnected regardless of nothing
+   *  else, EXCEPT a live match (a playing coach's lobby tab is closed). */
+  function statusOf(accountId: string): 'available' | 'challenged' | 'preparing_match' | 'in_match' | 'disconnected' {
+    const match = activeMatchFor(accountId);
+    if (match)
+      return Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing_match' : 'in_match';
+    if (!online(accountId)) return 'disconnected';
+    for (const c of challenges.values())
+      if (c.from === accountId || c.to === accountId) return 'challenged';
+    return 'available';
+  }
 
   /** a match with a known result is over — players are free, no LEAVE needed */
   function activeMatchFor(accountId: string): MatchRecord | null {
@@ -206,6 +241,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   function sweepChallenges(): void {
     const cutoff = Date.now() - challengeTtl;
     for (const [id, c] of challenges) if (c.createdAt < cutoff) challenges.delete(id);
+    const settledCutoff = Date.now() - SETTLED_TTL_MS;
+    for (const [id, s] of settledChallenges) if (s.at < settledCutoff) settledChallenges.delete(id);
   }
 
   function authed(req: IncomingMessage): Account | null {
@@ -213,7 +250,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     if (!auth.startsWith('Bearer ')) return null;
     const payload = verifySession(auth.slice(7), secret);
     const account = payload ? store.getAccount(payload.accountId) : null;
-    if (account) presence.set(account.accountId, Date.now());
+    if (account) touchPresence(account.accountId);
     return account;
   }
 
@@ -245,7 +282,47 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       from: from ? publicAccount(from) : { accountId: c.from, handle: '?', teamName: '?' },
       to: to ? publicAccount(to) : { accountId: c.to, handle: '?', teamName: '?' },
       createdAt: new Date(c.createdAt).toISOString(),
+      // lifecycle: created → delivered (the target's poll picked it up) →
+      // accepted / declined / expired. The terminal states live in
+      // settledChallenges / the expiry sweep; a live view carries the rest.
+      status: c.deliveredAt !== undefined ? 'delivered' as const : 'created' as const,
+      ...(c.deliveredAt !== undefined ? { deliveredAt: new Date(c.deliveredAt).toISOString() } : {}),
+      expiresAt: new Date(c.createdAt + challengeTtl).toISOString(),
       rematch: c.rematchOf !== undefined,
+    };
+  }
+
+  /** Presentation aggregate for opponent scouting: mean of the XI's rating
+   *  means, 0-100. Derived from the same buildTeam that will build the
+   *  manifest — what you scout is what you face. */
+  function teamOverall(account: Account): number {
+    const players = buildTeam(account).players.slice(0, 11);
+    const sum = players.reduce((acc, p) => {
+      const r = Object.values(p.ratings);
+      return acc + r.reduce((a, b) => a + b, 0) / r.length;
+    }, 0);
+    return Math.round(sum / players.length);
+  }
+
+  /** The normalized lobby identity (workstream charter): stable fields the
+   *  UI can rely on regardless of auth method. displayName is the handle
+   *  until the ENS workstream provides names — same field, richer source. */
+  function participantView(a: Account){
+    const team = buildTeam(a);
+    return {
+      ...publicAccount(a),
+      walletAddress: a.wallet ?? null,
+      displayName: a.handle,
+      squadId: team.teamId,
+      squadName: a.teamName,
+      teamOverall: teamOverall(a),
+      status: statusOf(a.accountId),
+      joinedAt: presence.get(a.accountId)
+        ? new Date(presence.get(a.accountId)!.joinedAt).toISOString() : null,
+      record: recordTally(a.accountId),
+      // back-compat booleans (pre-charter clients read these)
+      online: online(a.accountId),
+      inMatch: activeMatchFor(a.accountId) !== null,
     };
   }
 
@@ -256,22 +333,28 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     const current = activeMatchFor(me.accountId);
     if (current) await ensureResult(current);
     const mine = [...challenges.values()];
+    // delivery stamp: the moment the TARGET's poll first carries a
+    // challenge, it is delivered — the challenger's view flips from
+    // 'created' to 'delivered' ("seen") on their next poll
+    for (const c of mine)
+      if (c.to === me.accountId && c.deliveredAt === undefined) c.deliveredAt = Date.now();
     const match = activeMatchFor(me.accountId);
     return {
-      me: { ...publicAccount(me), email: me.email, record: recordTally(me.accountId) },
+      me: {
+        ...participantView(me),
+        email: me.email,
+      },
       players: store.listAccounts()
         .filter(a => a.accountId !== me.accountId)
-        .map(a => ({
-          ...publicAccount(a),
-          online: online(a.accountId),
-          inMatch: activeMatchFor(a.accountId) !== null,
-          record: recordTally(a.accountId),
-        })),
+        .map(participantView),
       challenges: {
         incoming: mine.filter(c => c.to === me.accountId).map(challengeView),
         outgoing: mine.filter(c => c.from === me.accountId).map(challengeView),
       },
-      match: match ? joinInfo(match, me.accountId) : null,
+      match: match ? {
+        ...joinInfo(match, me.accountId),
+        status: Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing' : 'live',
+      } : null,
     };
   }
 
@@ -297,6 +380,21 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           online: store.listAccounts().filter(a => online(a.accountId)).length,
           uptimeSeconds: Math.round(process.uptime()),
         });
+      }
+
+      // The frontend's getPlayer(tokenId) — one normalized structure from
+      // ONE eth_call (docs/PLAYER_DATA_MODEL.md). Public on purpose: it
+      // serves chain state, which is public by nature, and needs no session.
+      const playerMatch = req.method === 'GET' && url.pathname.match(/^\/players\/(\d{1,20})$/);
+      if (playerMatch){
+        if (!options.chainReader)
+          return json(res, 501, { error: 'chain reads are not configured on this lobby' });
+        try {
+          return json(res, 200, { player: await options.chainReader.readPlayer(BigInt(playerMatch[1]!)) });
+        } catch (err) {
+          if (err instanceof ChainReadError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'chain read failed — try again shortly' });
+        }
       }
 
       if (req.method === 'POST' && url.pathname === '/auth/request'){
@@ -353,7 +451,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           };
           store.saveAccount(account);
         }
-        presence.set(account.accountId, Date.now());
+        touchPresence(account.accountId);
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
       }
 
@@ -409,7 +507,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           };
           store.saveAccount(account);
         }
-        presence.set(account.accountId, Date.now());
+        touchPresence(account.accountId);
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
       }
 
@@ -612,9 +710,15 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         if (!online(to)) return json(res, 409, { error: `${target.handle} is offline` });
         if (activeMatchFor(me.accountId) || activeMatchFor(to))
           return json(res, 409, { error: 'one of you is already in a match' });
-        for (const c of challenges.values())
-          if ((c.from === me.accountId && c.to === to) || (c.from === to && c.to === me.accountId))
-            return json(res, 409, { error: 'a challenge between you is already pending' });
+        for (const c of challenges.values()){
+          // idempotent re-issue: challenging the same player again returns
+          // the SAME pending challenge (double-click, retry, second tab —
+          // they all converge on one id instead of stacking or erroring)
+          if (c.from === me.accountId && c.to === to)
+            return json(res, 200, { challenge: challengeView(c) });
+          if (c.from === to && c.to === me.accountId)
+            return json(res, 409, { error: `${target.handle} already challenged YOU — accept it instead` });
+        }
         // challenge-spam guard: creations per account per rolling window —
         // declining and re-challenging in good faith never gets near it
         const times = (challengeTimes.get(me.accountId) ?? []).filter(t => t > Date.now() - challengeLimit.windowMs);
@@ -642,12 +746,25 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (req.method === 'POST' && parts[0] === 'challenges' && parts.length === 3){
         sweepChallenges();
         const challenge = challenges.get(parts[1]!);
-        if (!challenge) return json(res, 404, { error: 'unknown or expired challenge' });
+        if (!challenge){
+          // idempotency memory: a just-settled id answers with its outcome —
+          // a double-click on ACCEPT returns the SAME match instead of 404,
+          // and a retried DECLINE stays a no-op
+          const settled = settledChallenges.get(parts[1]!);
+          if (settled?.outcome === 'accepted' && parts[2] === 'accept'){
+            const record = settled.matchId ? store.matchesFor(me.accountId).find(m => m.matchId === settled.matchId) : undefined;
+            if (record) return json(res, 200, { match: joinInfo(record, me.accountId) });
+          }
+          if (settled?.outcome === 'declined' && parts[2] === 'decline')
+            return json(res, 200, { ok: true });
+          return json(res, 404, { error: 'unknown or expired challenge' });
+        }
 
         if (parts[2] === 'decline'){
           if (challenge.to !== me.accountId && challenge.from !== me.accountId)
             return json(res, 403, { error: 'not your challenge' });
           challenges.delete(challenge.id);
+          settledChallenges.set(challenge.id, { outcome: 'declined', at: Date.now() });
           return json(res, 200, { ok: true });
         }
 
@@ -681,6 +798,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           }
 
           challenges.delete(challenge.id);
+          settledChallenges.set(challenge.id, { outcome: 'accepted', matchId: created.matchId, at: Date.now() });
           const [homeTeam, awayTeam] = manifest.teams;
           const record: MatchRecord = {
             matchId: created.matchId,
