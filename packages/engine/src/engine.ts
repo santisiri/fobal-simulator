@@ -16,6 +16,7 @@ import { bootGoldenCore, GoldenHandle, officialHash } from './goldenRuntime.js';
 import { imposeManifest, translateTactics } from './adapter.js';
 import { IdMap } from './ids.js';
 import { EventTap, formatClock } from './events.js';
+import { InstructionBook, InstructionRecord } from './tactics.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,6 +29,11 @@ export interface CapturedState {
   eventSeq: number;
   goals?: unknown[];
   events?: unknown[];
+  /** workstream G: active player-instruction records. Slot geometry itself
+   *  rides the vm snapshot; without these the expiry clocks and reporting
+   *  would be lost on resume and a resumed match would diverge from its
+   *  replay (an expired run would never end). */
+  instructions?: InstructionRecord[];
 }
 
 interface GoalRecord { tick: number; clock: string; teamIdx: 0 | 1; playerId: string | null }
@@ -45,6 +51,7 @@ export class MatchEngine {
   private lastScore: [number, number] = [0, 0];
   private lastState: string;
   private deltaCache = new Map<string, { x: number; y: number; facing: number; action: string; stamina: number; onPitch: boolean }>();
+  private book = new InstructionBook();
 
   private constructor(handle: GoldenHandle, ids: IdMap, manifest: MatchManifest | null){
     this.handle = handle;
@@ -132,6 +139,33 @@ export class MatchEngine {
       if (!this.ids.hasExternal(command.payload.patch.markTarget))
         return { accepted: false, reason: 'unknown markTarget player' };
     }
+    if (command.kind === 'player_instruction'){
+      // canonical ids only; names never reach this layer
+      if (!this.ids.hasExternal(command.playerId))
+        return { accepted: false, reason: `unknown player ${command.playerId}` };
+      const team = this.handle.game.teams[teamIdx];
+      const player = team.players.find((p: any) => p.pid === this.ids.pid(command.playerId));
+      if (!player)
+        return { accepted: false, reason: `${command.playerId} is not on the pitch for ${command.teamId}` };
+      if (player.isGK && command.instruction !== 'clear')
+        return { accepted: false, reason: 'the goalkeeper keeps his post — instructions apply to outfielders' };
+      if (command.instruction === 'mark_opponent'){
+        // golden's marking branch only engages midfielders and defenders —
+        // an ineligible marker would claim the assignment and dead-lock it
+        if (!(player.role === 'CM' || player.line === 'DEF'))
+          return { accepted: false, reason: 'only midfielders and defenders can man-mark (v1 engine constraint)' };
+        if (!command.targetPlayerId)
+          return { accepted: false, reason: 'mark_opponent needs a targetPlayerId' };
+        if (!this.ids.hasExternal(command.targetPlayerId))
+          return { accepted: false, reason: `unknown mark target ${command.targetPlayerId}` };
+        const opp = this.handle.game.teams[teamIdx === 0 ? 1 : 0];
+        const target = opp.players.find((p: any) => p.pid === this.ids.pid(command.targetPlayerId!));
+        if (!target)
+          return { accepted: false, reason: `${command.targetPlayerId} is not on the opposing XI` };
+      } else if (command.targetPlayerId){
+        return { accepted: false, reason: `${command.instruction} takes no targetPlayerId` };
+      }
+    }
     return { accepted: true };
   }
 
@@ -143,6 +177,14 @@ export class MatchEngine {
       this.applyNow(cmd);
       this.appliedCommands.push(cmd);
     }
+    // instruction expiries land on the tick boundary, after due commands,
+    // before the step — deterministic order, replay-identical
+    const { clearMark } = this.book.sweep(game, this.ids, game.simTick);
+    for (const teamIdx of clearMark)
+      // a lapsed assignment, not a new tactical decision: the one sanctioned
+      // direct write (same class as goalReplay.cfg.enabled = false) — going
+      // through TacticalEngine here would spam feed events on every expiry
+      game.teams[teamIdx].tactics.markTarget = null;
     game.step();
     this.observeTransitions();
   }
@@ -169,14 +211,31 @@ export class MatchEngine {
       try {
         if (command.payload.type === 'patch'){
           TacticalEngine.apply(game, team, translateTactics(command.payload.patch, this.ids), 'command');
+          // a new formation rebuilds every station — spatial instructions
+          // written against the old shape are meaningless now
+          if (command.payload.patch.formation) this.book.onFormationChange(teamIdx);
         } else {
           const parseCoach = this.handle.evalIn('parseCoach');
           const { script, msgs } = parseCoach(command.payload.text, team);
           if (msgs.length) TacticalEngine.apply(game, team, script, msgs.join(' · '));
           else this.tap.emitSynthetic('other', { commandId: command.commandId, coachText: 'not understood' });
+          if (script?.formation) this.book.onFormationChange(teamIdx);
         }
       } finally {
         this.tap.clearTacticAttribution();
+      }
+    } else if (command.kind === 'player_instruction'){
+      const { setMark } = this.book.apply(game, teamIdx, this.ids, command, game.simTick);
+      if (setMark !== undefined){
+        // marking rides the golden team-level machinery through the one
+        // legal funnel, with proper event attribution
+        const TacticalEngine = this.handle.evalIn('TacticalEngine');
+        this.tap.attributeNextTactic(command.teamId);
+        try {
+          TacticalEngine.apply(game, team, { markTarget: setMark }, 'instruction');
+        } finally {
+          this.tap.clearTacticAttribution();
+        }
       }
     } else if (command.kind === 'substitution'){
       const out = this.findByPid(team, this.ids.pid(command.playerOut));
@@ -272,6 +331,22 @@ export class MatchEngine {
         possessionSeconds: t.possT, fouls: t.fouls,
       },
       subsUsed: t.subsUsed,
+      // workstream G: active player instructions — controllers and
+      // spectators render the SAME tactical truth from the snapshot
+      instructions: this.book.report(idx),
+    };
+  }
+
+  /** Workstream G observability: both teams' full tactical truth — team
+   *  tactics plus active player instructions — for debug tooling. Command
+   *  provenance (source, timestamps) lives in the applied-command log the
+   *  server already holds. */
+  tacticsReport(): { teams: Array<{ teamId: string; tactics: TacticalState; instructions: ReturnType<InstructionBook['report']> }> } {
+    return {
+      teams: ([0, 1] as const).map(idx => {
+        const rt = this.teamRuntime(idx);
+        return { teamId: rt.teamId, tactics: rt.tactics, instructions: this.book.report(idx) };
+      }),
     };
   }
 
@@ -382,6 +457,7 @@ export class MatchEngine {
       // resumed match signs a result missing pre-crash goals and cards
       goals: JSON.parse(JSON.stringify(this.goals)),
       events: JSON.parse(JSON.stringify(this.tap.events)),
+      instructions: this.book.capture(),
     };
   }
 
@@ -404,6 +480,19 @@ export class MatchEngine {
     this.deltaCache.clear();
     this.goals = (captured.goals ?? []) as GoalRecord[];
     this.tap.restore(captured.eventSeq, (captured.events ?? []) as MatchEvent[]);
+    // slot geometry came back inside the vm snapshot; the book brings back
+    // the expiry clocks, base stations and reporting
+    this.book.restore(captured.instructions ?? []);
+    // re-elect the instructed marker (team._marker is a live object ref the
+    // vm snapshot cannot carry) — without this a resumed match would let
+    // golden pick a different shadow and diverge from its own replay
+    for (const r of captured.instructions ?? []){
+      if (r.kind === 'mark_opponent'){
+        const team = this.handle.game.teams[r.teamIdx];
+        const p = team.players.find((q: any) => q.pid === this.ids.pid(r.playerId));
+        if (p) team._marker = p;
+      }
+    }
   }
 
   /** Reproduce a match from its manifest + ordered command log. */

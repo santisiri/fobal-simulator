@@ -156,7 +156,51 @@ export const SubstitutionCommand = z.object({
 });
 export type SubstitutionCommand = z.infer<typeof SubstitutionCommand>;
 
-export const Command = z.discriminatedUnion('kind', [TacticalCommand, SubstitutionCommand]);
+// ---------------------------------------------------------------------------
+// PlayerInstruction — workstream G: a tactical instruction addressed to ONE
+// player, by canonical id (names are presentation; ids are authority). The
+// taxonomy is a CLOSED enum on purpose: any interpreter, any model, any
+// language in the microphone — this small surface comes out, or nothing
+// does. Instructions set INTENT (spatial priorities, assignments); the
+// simulation's player AI and the player's attributes decide execution.
+//
+// Temporal semantics (deterministic, tick-based — no wall clocks):
+//   - ONE active instruction per player; a new one REPLACES the old
+//     (no contradictory accumulation by construction).
+//   - ttlTicks makes an instruction expire (short-lived runs); omitted →
+//     persists until replaced or cleared.
+//   - 'clear' returns the player to his formation station.
+//   - a formation change clears every spatial instruction on that team
+//     (new shape, new stations).
+// ---------------------------------------------------------------------------
+export const PlayerInstructionKind = z.enum([
+  'stay_wide',      // shift the player's station toward his nearer touchline
+  'stay_central',   // shift it toward the pitch's central corridor
+  'push_forward',   // advance the station toward the opposition goal
+  'drop_back',      // retreat it toward his own goal
+  'overlap',        // forward + wide — the classic outside run (often ttl'd)
+  'hold_position',  // return to and keep the exact formation station
+  'mark_opponent',  // defensive assignment on targetPlayerId (their player)
+  'clear',          // remove the active instruction
+]);
+export type PlayerInstructionKind = z.infer<typeof PlayerInstructionKind>;
+
+export const PlayerInstructionCommand = z.object({
+  kind: z.literal('player_instruction'),
+  commandId: ExternalId,
+  teamId: TeamId,
+  /** canonical id of the instructed player — must be on teamId's XI */
+  playerId: PlayerId,
+  instruction: PlayerInstructionKind,
+  /** mark_opponent only: the opponent to shadow */
+  targetPlayerId: PlayerId.optional(),
+  /** expiry in ticks from application (30 ticks = ~0.5s sim; cap = a half) */
+  ttlTicks: z.number().int().min(30).max(18000).optional(),
+});
+export type PlayerInstructionCommand = z.infer<typeof PlayerInstructionCommand>;
+
+export const Command = z.discriminatedUnion('kind',
+  [TacticalCommand, SubstitutionCommand, PlayerInstructionCommand]);
 export type Command = z.infer<typeof Command>;
 
 /** A command the server accepted: sequenced and scheduled. */
@@ -207,6 +251,17 @@ export const PlayerRuntime = z.object({
 });
 export type PlayerRuntime = z.infer<typeof PlayerRuntime>;
 
+/** An active per-player instruction as the world sees it — rides the team
+ *  snapshot so controllers AND spectators render the same tactical truth. */
+export const ActiveInstruction = z.object({
+  playerId: PlayerId,
+  instruction: PlayerInstructionKind,
+  targetPlayerId: PlayerId.nullable(),
+  sinceTick: Tick,
+  expiresAtTick: Tick.nullable(),
+});
+export type ActiveInstruction = z.infer<typeof ActiveInstruction>;
+
 export const TeamRuntime = z.object({
   teamId: TeamId,
   tactics: TacticalState,
@@ -219,6 +274,8 @@ export const TeamRuntime = z.object({
     fouls: z.number().int().min(0),
   }),
   subsUsed: z.number().int().min(0),
+  /** workstream G: active player instructions (absent = none/old server) */
+  instructions: z.array(ActiveInstruction).optional(),
 });
 export type TeamRuntime = z.infer<typeof TeamRuntime>;
 

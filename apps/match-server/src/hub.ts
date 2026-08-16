@@ -268,6 +268,30 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
           return result ? json(res, 200, result) : json(res, 404, { error: 'match not finished' });
         }
+        // workstream G observability: the live tactical truth — team
+        // tactics, active player instructions, and the provenance of the
+        // last tactical/instruction commands from the log. Dev-tool grade,
+        // token-gated like every match GET; no low-level AI internals.
+        if (parts[2] === 'tactics'){
+          const room = rooms.get(matchId);
+          if (!room) return json(res, 404, { error: 'match is not live' });
+          const provenance = room.appliedCommandLog()
+            .filter(c => c.command.kind === 'tactical' || c.command.kind === 'player_instruction')
+            .slice(-20)
+            .map(c => ({
+              seq: c.seq,
+              kind: c.command.kind,
+              commandId: c.command.commandId,
+              teamId: c.command.teamId,
+              effectiveTick: c.effectiveTick,
+              receivedAtTick: c.receivedAtTick,
+            }));
+          return json(res, 200, {
+            tick: room.currentTick,
+            ...room.tacticsReport(),
+            recentCommands: provenance,
+          });
+        }
         if (parts[2] === 'replay'){
           const result = rooms.get(matchId)?.result() ?? store.loadResult(matchId);
           if (!result) return json(res, 404, { error: 'match not finished' });
