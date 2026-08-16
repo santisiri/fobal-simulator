@@ -14,7 +14,8 @@ import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http
 import { randomBytes } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
-  MatchManifest, parseClientMessage, PROTOCOL_VERSION, ReplayFile, ServerMessage,
+  compileGameCommand, MatchManifest, parseClientMessage, PROTOCOL_VERSION, ReplayFile,
+  rosterDigest, ServerMessage,
 } from '@fobal/protocol';
 import { MatchRoom, RoomClient } from './room.js';
 import { MatchStore } from './store.js';
@@ -288,18 +289,49 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
       // with live match context for the CONTROLLER's team. The client sends
       // the resulting command over its own authorized WebSocket; these
       // endpoints never touch the match.
-      const interpretFor = async (room: MatchRoom, teamId: string, text: string) => {
+      interface InterpretedResponse {
+        patch?: unknown; coachText?: string; say: string | null;
+        orders?: Array<{ intent: string; scope: string; ack: string; wire: unknown }>;
+        rejected?: Array<{ intent: string; reason: string }>;
+      }
+      const interpretFor = async (room: MatchRoom, teamId: string, text: string): Promise<InterpretedResponse> => {
         if (!interpretCoach) return { coachText: text, say: null };
         const snap = room.snapshot();
         const mine = snap.teams.findIndex(t => t.teamId === teamId);
         const opp = snap.teams[1 - mine];
-        return interpretCoach(text, {
-          teamName: room.manifest.teams[mine]?.name ?? teamId,
+        const ownTeam = room.manifest.teams[mine]!;
+        const oppTeam = room.manifest.teams[1 - mine]!;
+        const result = await interpretCoach(text, {
+          teamName: ownTeam.name ?? teamId,
           scoreLine: `${snap.score[0]}-${snap.score[1]}`,
           minute: Math.min(90, Math.floor(parseClockMinutes(snap.clock)) + 1),
           currentTactics: (snap.teams[mine]?.tactics ?? {}) as Record<string, unknown>,
           opponent: { formation: opp?.tactics.formation, style: opp?.tactics.style, pressing: opp?.tactics.pressing },
+          roster: { own: rosterDigest(ownTeam), opponent: rosterDigest(oppTeam) },
         });
+        // workstream G: resolve + compile taxonomy orders against the
+        // manifest, deterministically, server-side. The client receives
+        // wire-ready payloads and short acks; it still sends every command
+        // over its OWN authorized WebSocket — these endpoints never touch
+        // the match, and the room validates everything again on arrival.
+        if (!result.orders?.length){
+          const { orders: _none, ...plain } = result;
+          return plain;
+        }
+        const ctx = { own: ownTeam, opponent: oppTeam, teamId };
+        const compiled: Array<{ intent: string; scope: string; ack: string; wire: unknown }> = [];
+        const rejected: Array<{ intent: string; reason: string }> = [];
+        for (const order of result.orders){
+          const out = compileGameCommand(order, ctx);
+          if (out.ok) compiled.push({ intent: order.intent, scope: order.scope, ack: out.ack, wire: out.wire });
+          else rejected.push({ intent: order.intent, reason: out.reason });
+        }
+        const { orders: _raw, ...rest } = result;
+        return {
+          ...rest,
+          ...(compiled.length ? { orders: compiled } : {}),
+          ...(rejected.length ? { rejected } : {}),
+        };
       };
       type ControllerGate =
         | { error: [number, string]; room?: undefined; teamId?: undefined }
@@ -347,13 +379,18 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           return json(res, 422, { error: 'nothing intelligible heard', transcript: '' });
         const startedAt = Date.now();
         const result = await interpretFor(gate.room, gate.teamId, transcript);
+        const interpretMs = Date.now() - startedAt;
         telemetry.log('coach_voice', {
           matchId: parts[1], teamId: gate.teamId, audioBytes: audio.length,
-          transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs: Date.now() - startedAt,
-          outcome: result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
+          transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs,
+          orders: result.orders?.length ?? 0, rejected: result.rejected?.length ?? 0,
+          outcome: result.orders?.length ? 'orders' : result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
         });
-        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
-        return json(res, 200, { transcript, ...result });
+        telemetry.metric('CoachInterpretMs', interpretMs, 'Milliseconds');
+        return json(res, 200, {
+          transcript, ...result,
+          latency: { sttMs: startedAt - sttStart, interpretMs },
+        });
       }
 
       // C2 — POST /matches/:id/coach/interpret (typed text / browser-SR path)
@@ -371,10 +408,15 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           return json(res, 400, { error: 'text must be a non-empty string of at most 500 chars' });
         const startedAt = Date.now();
         const result = await interpretFor(room, payload.teamId, text.trim());
-        const outcome = result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
-        telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
-        telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
-        return json(res, 200, result);
+        const interpretMs = Date.now() - startedAt;
+        const outcome = result.orders?.length ? 'orders'
+          : result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
+        telemetry.log('coach_interpreted', {
+          matchId, teamId: payload.teamId, outcome, ms: interpretMs,
+          orders: result.orders?.length ?? 0, rejected: result.rejected?.length ?? 0,
+        });
+        telemetry.metric('CoachInterpretMs', interpretMs, 'Milliseconds');
+        return json(res, 200, { ...result, latency: { interpretMs } });
       }
 
       // M1.2 replay theater: the full match as a recorded frame stream. The
