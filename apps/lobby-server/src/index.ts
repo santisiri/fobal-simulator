@@ -5,8 +5,9 @@ export type { Account, MatchRecord, MatchResultSummary, SquadCustomization, Lobb
 export { signSession, verifySession, SESSION_MAX_AGE_MS } from './sessions.js';
 export type { SessionPayload } from './sessions.js';
 export { buildTeam, buildManifest } from './teams.js';
-export { createSesDeliverer } from './email.js';
-export type { SesDelivererOptions } from './email.js';
+export { createSesDeliverer, createSesProvider, createResendProvider, renderInvitationEmail } from './email.js';
+export type { SesDelivererOptions, SesProviderOptions, ResendProviderOptions, EmailProvider, MatchInvitationEmail } from './email.js';
+export type { Invitation } from './store.js';
 export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
 export type { NormalizedPlayer } from './chain.js';
 export { playerName, squadNames } from './playerNames.js';
@@ -27,8 +28,14 @@ export type { IdentityResolver, IdentityResolverOptions, WalletIdentity, EnsClie
 //                           (default: FOBAL_MATCH_URL)
 //   FOBAL_CREATE_KEY        match-server create key (REQUIRED)
 //   FOBAL_DEV_AUTH          '1' → login codes returned in the response (dev)
-//   FOBAL_EMAIL_BACKEND     'ses' → deliver codes by email (SESv2)
-//   FOBAL_EMAIL_FROM        verified sender identity (required for ses)
+//   FOBAL_EMAIL_BACKEND     'ses' | 'resend' → outbound email provider
+//                           (login codes AND match invitations)
+//   FOBAL_EMAIL_FROM        verified sender identity (required for either)
+//   FOBAL_RESEND_API_KEY    SECRET — required for the resend backend
+//   FOBAL_INVITE_BASE_URL   public client base for invitation links
+//                           (e.g. https://play-staging.fobal.ai)
+//   FOBAL_EMAIL_WEBHOOK_SECRET  SECRET — Resend webhook signing secret
+//                           (whsec_…); unset → /webhooks/email answers 501
 //   FOBAL_TEST_LOGIN_KEY    secret; requests with x-fobal-test-key equal to
 //                           it receive the code in the response (acceptance)
 //   FOBAL_CORS_ORIGIN       Access-Control-Allow-Origin (default '*')
@@ -80,15 +87,29 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   }
   const devAuth = process.env.FOBAL_DEV_AUTH === '1';
   let deliverCode;
-  if (process.env.FOBAL_EMAIL_BACKEND === 'ses'){
+  let emailProvider = null;
+  const emailBackend = process.env.FOBAL_EMAIL_BACKEND;
+  if (emailBackend === 'ses' || emailBackend === 'resend'){
     const from = process.env.FOBAL_EMAIL_FROM;
     if (!from){
-      console.error('FOBAL_EMAIL_BACKEND=ses requires FOBAL_EMAIL_FROM (a verified SES identity)');
+      console.error(`FOBAL_EMAIL_BACKEND=${emailBackend} requires FOBAL_EMAIL_FROM (a verified sender)`);
       process.exit(1);
     }
-    const { createSesDeliverer } = await import('./email.js');
-    deliverCode = createSesDeliverer({ from });
-    console.log(JSON.stringify({ msg: 'email_delivery', backend: 'ses', from }));
+    if (emailBackend === 'ses'){
+      const { createSesProvider } = await import('./email.js');
+      emailProvider = createSesProvider({ from });
+    } else {
+      const apiKey = process.env.FOBAL_RESEND_API_KEY;
+      if (!apiKey){
+        console.error('FOBAL_EMAIL_BACKEND=resend requires FOBAL_RESEND_API_KEY');
+        process.exit(1);
+      }
+      const { createResendProvider } = await import('./email.js');
+      emailProvider = createResendProvider({ from, apiKey });
+    }
+    deliverCode = (email: string, code: string) => emailProvider!.sendLoginCode(email, code);
+    // never log key material — backend + sender only
+    console.log(JSON.stringify({ msg: 'email_delivery', backend: emailBackend, from }));
   }
   const { createChainReader } = await import('./chain.js');
   const chainReader = createChainReader({
@@ -133,6 +154,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     deliverCode,
     chainReader,
     mintService,
+    emailProvider,
+    inviteBaseUrl: process.env.FOBAL_INVITE_BASE_URL,
+    emailWebhookSecret: process.env.FOBAL_EMAIL_WEBHOOK_SECRET,
     identity,
     testLoginKey: process.env.FOBAL_TEST_LOGIN_KEY,
     matchServer: {

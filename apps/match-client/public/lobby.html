@@ -233,7 +233,20 @@
 
     <div class="card">
       <h2>Coaches in the lobby</h2>
-      <div id="players"><span class="muted">Nobody else is online. Open a second tab to warm up against yourself, or send a friend this page.</span></div>
+      <div id="players"><span class="muted">Nobody else is online. Open a second tab to warm up against yourself, or invite a friend below.</span></div>
+    </div>
+
+    <div class="card">
+      <h2 class="green">Invite a rival by email</h2>
+      <div class="row">
+        <input id="inviteEmail" type="email" placeholder="friend@example.com" autocomplete="off" style="flex:1;min-width:180px;">
+        <button id="inviteBtn" class="primary sm">SEND INVITE</button>
+      </div>
+      <div class="row">
+        <input id="inviteMessage" placeholder="optional message — “bring your best XI”" maxlength="200" style="flex:1;min-width:180px;">
+      </div>
+      <div class="muted" id="inviteNote"></div>
+      <div id="inviteList"></div>
     </div>
 
     <div class="card">
@@ -758,16 +771,70 @@
       // just ended (full time detected server-side) so the result pops in
       const ended = wasInMatch && !state.match;
       wasInMatch = !!state.match;
-      if (ended || pollCount++ % 5 === 0) await fetchHistory();
+      if (ended || pollCount++ % 5 === 0){ await fetchHistory(); await fetchInvites(); }
     } catch (err){
       if (session) $('lobbyErr').textContent = `Lobby unreachable: ${err.message ?? err}`;
     }
+  }
+
+  // ---- email invitations ------------------------------------------------
+  $('inviteBtn').onclick = async () => {
+    $('inviteNote').textContent = 'Sending…';
+    try {
+      const email = $('inviteEmail').value.trim();
+      const message = $('inviteMessage').value.trim();
+      const res = await api('/invites', { method: 'POST', body: { email, ...(message ? { message } : {}) } });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? res.status);
+      $('inviteEmail').value = ''; $('inviteMessage').value = '';
+      $('inviteNote').textContent = `Invitation sent to ${email}. They get an email with a join link.`;
+      fetchInvites();
+    } catch (err){ $('inviteNote').textContent = String(err.message ?? err); }
+  };
+
+  const INVITE_CHIP = { created: '…', sent: 'SENT', delivered: 'DELIVERED', opened: 'OPENED', accepted: '✓ JOINED', expired: 'EXPIRED', failed: 'FAILED' };
+  async function fetchInvites(){
+    try {
+      const res = await api('/invites');
+      if (!res.ok) return;
+      const { invitations } = await res.json();
+      $('inviteList').innerHTML = invitations.slice(0, 6).map(v => `
+        <div class="player">
+          <span class="tag">${INVITE_CHIP[v.status] ?? v.status}</span>
+          <span class="name">${esc(v.recipientEmail)}</span>
+          <span class="team">${ago(v.createdAt)}</span>
+        </div>`).join('');
+    } catch { /* next cycle */ }
+  }
+
+  // an invitation token rides in from invite.html and SURVIVES the whole
+  // sign-in journey (email code, wallet connect, even a squad mint) in
+  // sessionStorage — claimed on the first successful lobby entry
+  if (params.get('invite')) sessionStorage.setItem('fobal.invite', params.get('invite'));
+  async function claimPendingInvite(){
+    const token = sessionStorage.getItem('fobal.invite');
+    if (!token) return;
+    try {
+      const res = await api(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body: {} });
+      const out = await res.json();
+      if (res.ok){
+        $('lobbyErr').textContent = '';
+        $('inviteNote').textContent = `Challenge sent to ${out.inviter.teamName} — the match starts when they accept.`;
+      } else {
+        $('inviteNote').textContent = out.error ?? 'could not claim the invitation';
+      }
+      // consumed either way — a used/expired token must not retry forever
+      sessionStorage.removeItem('fobal.invite');
+      poll();
+    } catch { /* leave the token for the next entry — network blip */ }
   }
 
   function enterLobby(){
     show('lobby');
     poll();
     refreshCrest();
+    fetchInvites();
+    claimPendingInvite();
     clearInterval(pollTimer);
     pollTimer = setInterval(poll, 2000);
   }

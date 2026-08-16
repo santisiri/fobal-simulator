@@ -537,6 +537,8 @@ export class FobalStack extends Stack {
           // Acceptance scripts read codes via the test-login-key secret.
           FOBAL_EMAIL_BACKEND: 'ses',
           FOBAL_EMAIL_FROM: 'lobby@fobal.ai',
+          // email invitations link back to the public client
+          FOBAL_INVITE_BASE_URL: `https://${envCfg.playHostname}`,
           // M5: chain reads (D1). Addresses are public, not secrets; in
           // envs.ts so no deploy can silently drop them (alarmEmail rule)
           ...(envCfg.chain ? {
