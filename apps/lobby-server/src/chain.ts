@@ -34,6 +34,31 @@ export interface ChainReaderOptions {
 export interface ChainReader {
   /** Read wallet's team at one pinned block → protocol-validated snapshot. */
   readTeam(wallet: string, teamId: number): Promise<TeamSnapshot>;
+  /** One player, one eth_call — the frontend's getPlayer(tokenId). */
+  readPlayer(tokenId: bigint): Promise<NormalizedPlayer>;
+}
+
+/** The canonical read shape for a player NFT (docs/PLAYER_DATA_MODEL.md).
+ *  Everything here decodes from ONE playerView call — no multicall needed.
+ *  `ratings` speaks the game's 13-rating language via the D1 lane seam;
+ *  `overall` is the presentation aggregate (mean of the 12 on-chain lanes,
+ *  the same quantity the generator's power budget bounds). */
+export interface NormalizedPlayer {
+  tokenId: string;
+  name: string;
+  owner: string;
+  lockedBy: string | null;
+  position: number;
+  role: string;
+  generation: number;
+  level: number;
+  xp: number;
+  career: {
+    matchesPlayed: number; wins: number; draws: number; losses: number;
+    goals: number; assists: number; cleanSheets: number;
+  };
+  ratings: PlayerSnapshot['ratings'];
+  overall: number;
 }
 
 /** Thrown for every "the chain says no" case — carries an http-ish status
@@ -159,7 +184,50 @@ export function createChainReader(options: ChainReaderOptions = {}): ChainReader
     return out.replace(/^0x/, '');
   };
 
+  /** playerView tuple decode — see the layout notes in readTeam */
+  const decodePlayerView = (data: string) => {
+    const t = data.slice(64);
+    return {
+      name: stringAt(t, wordNum(t, 16)),
+      owner: wordAddress(t, 17),
+      lockedBy: wordAddress(t, 18),
+      generation: wordNum(t, 0),
+      xp: wordNum(t, 1),
+      level: wordNum(t, 2),
+      position: wordNum(t, 4),
+      skills: BigInt(`0x${word(t, 14) || '0'}`),
+      career: {
+        matchesPlayed: wordNum(t, 6), wins: wordNum(t, 7), draws: wordNum(t, 8),
+        losses: wordNum(t, 9), goals: wordNum(t, 10), assists: wordNum(t, 11),
+        cleanSheets: wordNum(t, 12),
+      },
+    };
+  };
+
   return {
+    async readPlayer(tokenId: bigint): Promise<NormalizedPlayer> {
+      const blockTag = await rpc<string>('eth_blockNumber', []);
+      const data = await call(playerAddress!, SEL_PLAYER_VIEW + pad32(tokenId), blockTag)
+        .catch(() => { throw new ChainReadError(404, `player ${tokenId} does not exist`); });
+      const v = decodePlayerView(data);
+      let total = 0;
+      for (let lane = 0; lane < 12; lane++) total += Number((v.skills >> BigInt(lane * 8)) & 0xffn);
+      return {
+        tokenId: tokenId.toString(),
+        name: v.name,
+        owner: v.owner,
+        lockedBy: /^0x0+$/.test(v.lockedBy) ? null : v.lockedBy,
+        position: v.position,
+        role: ROLE_BY_POSITION[v.position] ?? 'CM',
+        generation: v.generation,
+        level: v.level,
+        xp: v.xp,
+        career: v.career,
+        ratings: ratingsFromSkills(v.skills),
+        overall: Math.round(total / 12),
+      };
+    },
+
     async readTeam(wallet: string, teamId: number): Promise<TeamSnapshot> {
       const me = wallet.toLowerCase();
       // pin every read to one block — the squad is a snapshot, not a smear
@@ -201,20 +269,19 @@ export function createChainReader(options: ChainReaderOptions = {}): ChainReader
         // dna, skills, appearance, name-offset, owner, lockedBy
         const data = await call(playerAddress!, SEL_PLAYER_VIEW + pad32(tokenId), blockTag)
           .catch(() => { throw new ChainReadError(422, `player ${tokenId} does not exist`); });
-        const t = data.slice(64);                    // the tuple body
-        const owner = wordAddress(t, 17);
-        if (owner !== me)
+        const v = decodePlayerView(data);
+        if (v.owner !== me)
           throw new ChainReadError(403,
-            `player ${tokenId} is rostered but owned by ${owner} — declare a roster you own`);
+            `player ${tokenId} is rostered but owned by ${v.owner} — declare a roster you own`);
         players.push(playerSnapshotFrom({
           tokenId,
-          name: stringAt(t, wordNum(t, 16)),
-          owner,
-          position: wordNum(t, 4),
-          skills: BigInt(`0x${word(t, 14) || '0'}`),
-          level: wordNum(t, 2),
-          matchesPlayed: wordNum(t, 6),
-          goals: wordNum(t, 10),
+          name: v.name,
+          owner: v.owner,
+          position: v.position,
+          skills: v.skills,
+          level: v.level,
+          matchesPlayed: v.career.matchesPlayed,
+          goals: v.career.goals,
         }, i + 1));
       }
 

@@ -323,6 +323,21 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         });
       }
 
+      // The frontend's getPlayer(tokenId) — one normalized structure from
+      // ONE eth_call (docs/PLAYER_DATA_MODEL.md). Public on purpose: it
+      // serves chain state, which is public by nature, and needs no session.
+      const playerMatch = req.method === 'GET' && url.pathname.match(/^\/players\/(\d{1,20})$/);
+      if (playerMatch){
+        if (!options.chainReader)
+          return json(res, 501, { error: 'chain reads are not configured on this lobby' });
+        try {
+          return json(res, 200, { player: await options.chainReader.readPlayer(BigInt(playerMatch[1]!)) });
+        } catch (err) {
+          if (err instanceof ChainReadError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'chain read failed — try again shortly' });
+        }
+      }
+
       if (req.method === 'POST' && url.pathname === '/auth/request'){
         let email: unknown;
         try { email = (JSON.parse(await readBody(req)) as { email?: unknown }).email; }

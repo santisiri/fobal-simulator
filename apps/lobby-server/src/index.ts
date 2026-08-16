@@ -8,6 +8,8 @@ export { buildTeam, buildManifest } from './teams.js';
 export { createSesDeliverer } from './email.js';
 export type { SesDelivererOptions } from './email.js';
 export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
+export type { NormalizedPlayer } from './chain.js';
+export { playerName, squadNames } from './playerNames.js';
 export { createMintService, MintError, validateSeeds, signSquadMint, encodeSeedsStandalone } from './mint.js';
 export type { MintService, MintServiceOptions, MintPlan, MintProgress, PlayerSeedInput, PreparedTx } from './mint.js';
 export type { ChainReader, ChainReaderOptions, ChainPlayer } from './chain.js';
