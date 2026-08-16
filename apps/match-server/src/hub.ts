@@ -401,7 +401,12 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           outcome: result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
         });
         telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
-        return json(res, 200, { transcript, ...result });
+        // STEP 8: the measured stages ride the response for the client's
+        // inspector — the manager-facing end-to-end is stamped client-side
+        return json(res, 200, {
+          transcript, ...result,
+          latency: { sttMs: startedAt - sttStart, interpretMs: Date.now() - startedAt },
+        });
       }
 
       // C2 — POST /matches/:id/coach/interpret (typed text / browser-SR path)
@@ -422,7 +427,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         const outcome = result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only';
         telemetry.log('coach_interpreted', { matchId, teamId: payload.teamId, outcome, ms: Date.now() - startedAt });
         telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');
-        return json(res, 200, result);
+        return json(res, 200, { ...result, latency: { interpretMs: Date.now() - startedAt } });
       }
 
       // M1.2 replay theater: the full match as a recorded frame stream. The
