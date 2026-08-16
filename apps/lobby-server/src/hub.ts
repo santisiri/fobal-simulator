@@ -30,6 +30,7 @@ import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js
 import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
 import { ChainReader, ChainReadError } from './chain.js';
+import { IdentityResolver } from './identity.js';
 import { MintError, MintProgress, MintService, PlayerSeedInput } from './mint.js';
 import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
@@ -76,6 +77,11 @@ export interface LobbyServerOptions {
   /** M5: the mint step machine (createMintService). Absent → POST
    *  /mint/prepare answers 501. Requires the generator signer key. */
   mintService?: MintService | null;
+  /** Wallet identity (createIdentityResolver): verified ENS names for
+   *  wallet accounts, decorating every public account surface. Absent →
+   *  clients see shortened addresses. Never blocks a request: identity
+   *  rides the NEXT poll after the async resolve lands. */
+  identity?: IdentityResolver | null;
 }
 
 export interface LobbyServer {
@@ -217,11 +223,29 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     return account;
   }
 
+  // ENS is presentation, not authorization: identity decorates the account
+  // for DISPLAY; every ownership/security decision stays on the address.
+  // peek() is synchronous (the poll must never wait on mainnet); the
+  // fire-and-forget resolve() warms the cache so the name arrives on a
+  // later poll. resolve() never rejects by contract.
+  const identityFor = (wallet: string) => {
+    if (!options.identity) return {};
+    void options.identity.resolve(wallet);
+    const id = options.identity.peek(wallet);
+    return id ? {
+      identity: {
+        displayName: id.displayName, verified: id.verified, source: id.source,
+        ...(id.ensName ? { ensName: id.ensName } : {}),
+        ...(id.ensAvatar ? { ensAvatar: id.ensAvatar } : {}),
+      },
+    } : {};
+  };
+
   const publicAccount = (a: Account) =>
     ({
       accountId: a.accountId, handle: a.handle, teamName: a.teamName,
       // both are public information by nature (the chain is public)
-      ...(a.wallet ? { wallet: a.wallet } : {}),
+      ...(a.wallet ? { wallet: a.wallet, ...identityFor(a.wallet) } : {}),
       ...(a.chainTeam ? { chainTeamId: a.chainTeam.teamId } : {}),
     });
 
