@@ -91,6 +91,13 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
+// 4b. the invitation landing page — config only (it reads the lobby URL to
+//     fetch the invite context before anyone signs in)
+const invite = readFileSync(join(root, 'apps/match-client/public/invite.html'), 'utf8');
+writeFileSync(join(outDir, 'invite.html'), rewrite('invite.html', invite, [
+  ['<script type="module">', CONFIG_SNIPPET()],
+]));
+
 // 5. the web app surfaces (onboarding, hub, play + shared design system).
 //    Static and self-contained; relative paths resolve at the dist root. A
 //    FOBAL_CONFIG snippet is injected so play.html can find the relocated

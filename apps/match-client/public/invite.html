@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="You've been challenged to a FOBAL match.">
+<meta name="theme-color" content="#0a0f1e">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<title>FOBAL — Match Challenge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500;600&display=swap">
+<style>
+  /* Tokens = apps/web/public/styles/fobal.css (keep in sync) */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0f1e; --bg-2: #070b16; --panel: #0d1428; --panel-2: #111a33;
+    --ink: #f8fafc; --dim: rgba(248,250,252,0.56); --faint: rgba(248,250,252,0.34);
+    --green: #22c55e; --green-ink: #041a0c; --red: #f87171;
+    --line: rgba(120,150,200,0.16); --line-strong: rgba(120,150,200,0.3);
+    --sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 50% -10%, rgba(34,197,94,0.08), transparent 60%),
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 44px 100%,
+      var(--bg);
+    display: flex; flex-direction: column; align-items: center;
+  }
+  header { width: 100%; display: flex; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .brand { font-family: var(--display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+  .brand span { color: var(--green); }
+  main { width: 100%; max-width: 520px; padding: 48px 16px 60px; text-align: center; }
+  .label { font-family: var(--mono); font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--green); }
+  h1 { font-family: var(--display); font-weight: 800; font-size: clamp(28px, 7vw, 40px); letter-spacing: -0.5px; line-height: 1.08; margin: 14px 0 10px; }
+  .sub { color: var(--dim); font-size: 15px; line-height: 1.5; margin: 0 0 6px; }
+  .note { border-left: 3px solid var(--green); text-align: left; padding: 8px 14px; margin: 18px auto 0; max-width: 380px; font-style: italic; color: var(--dim); }
+  .cta { display: inline-block; margin-top: 30px; background: var(--green); color: var(--green-ink); font-family: var(--display); font-weight: 700; font-size: 16px; letter-spacing: 1px; text-decoration: none; padding: 16px 46px; border-radius: 12px; box-shadow: 0 8px 30px rgba(34,197,94,0.3); }
+  .cta:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .expiry { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--faint); margin-top: 16px; }
+  .err h1 { color: var(--red); font-size: clamp(22px, 5vw, 30px); }
+  .hidden { display: none; }
+  .fine { color: var(--faint); font-size: 12px; margin-top: 34px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<header><div class="brand">FOBAL<span>.ai</span></div></header>
+<main>
+  <div id="loading"><p class="sub">Opening your invitation…</p></div>
+  <div id="challenge" class="hidden">
+    <div class="label">Match challenge</div>
+    <h1 id="headline"></h1>
+    <p class="sub">You coach live — call the shots with your voice, in any language. Free to play in your browser.</p>
+    <div class="note hidden" id="note"></div>
+    <a class="cta" id="joinBtn" href="#">JOIN THE MATCH</a>
+    <div class="expiry" id="expiry"></div>
+  </div>
+  <div id="problem" class="err hidden">
+    <h1 id="problemLine"></h1>
+    <p class="sub">You can still head to the lobby and challenge anyone who's around.</p>
+    <a class="cta" href="lobby.html">GO TO THE LOBBY</a>
+  </div>
+  <p class="fine">This page opens a game invitation and nothing else.<br>Didn't expect it? You can safely close this tab.</p>
+</main>
+<script type="module">
+  const $ = id => document.getElementById(id);
+  const token = new URLSearchParams(location.search).get('t');
+  const lobbyUrl = (window.FOBAL_CONFIG?.lobbyUrl ?? 'http://localhost:8475').replace(/\/+$/, '');
+
+  function problem(line){
+    $('loading').classList.add('hidden');
+    $('challenge').classList.add('hidden');
+    $('problemLine').textContent = line;
+    $('problem').classList.remove('hidden');
+  }
+
+  if (!token){
+    problem('This invitation link is incomplete.');
+  } else {
+    try {
+      const res = await fetch(`${lobbyUrl}/invites/${encodeURIComponent(token)}`);
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error ?? `invitation lookup failed (${res.status})`);
+      $('headline').textContent = `${out.inviter.teamName} challenged you to a match`;
+      if (out.message){
+        $('note').textContent = `“${out.message}” — ${out.inviter.handle}`;
+        $('note').classList.remove('hidden');
+      }
+      const days = Math.max(0, Math.round((Date.parse(out.expiresAt) - Date.now()) / 86400000));
+      $('expiry').textContent = days > 1 ? `EXPIRES IN ${days} DAYS` : 'EXPIRES SOON';
+      // the token rides to the lobby, which claims it after ANY sign-in —
+      // email code, wallet, even a freshly minted squad later
+      $('joinBtn').href = `lobby.html?invite=${encodeURIComponent(token)}`;
+      $('loading').classList.add('hidden');
+      $('challenge').classList.remove('hidden');
+    } catch (err){
+      problem(String(err.message ?? err));
+    }
+  }
+</script>
+</body>
+</html>
