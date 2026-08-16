@@ -8,7 +8,7 @@
 // without ever re-invoking a model. Provider keys live server-side
 // (Secrets Manager in staging) — never in the browser.
 import Anthropic from '@anthropic-ai/sdk';
-import { GameCommand, MatchIntent, PlayerIntent, TacticalPatch, TeamIntent } from '@fobal/protocol';
+import { TacticalPatch } from '@fobal/protocol';
 
 /** Structured-output schema the model must satisfy: a loose patch (numeric
  *  constraints are unsupported by structured outputs — we clamp, then
@@ -18,47 +18,9 @@ import { GameCommand, MatchIntent, PlayerIntent, TacticalPatch, TeamIntent } fro
  *  zodOutputFormat helper, which requires zod v4 (the protocol package —
  *  the deterministic core — pins zod 3). */
 const NUM = { type: 'number' } as const;
-/** A player REFERENCE — the model names who it heard; it never sees or
- *  emits playerIds (resolution is deterministic, server-side, manifest-
- *  bound: an invented player cannot survive). */
-const REF = {
-  type: 'object',
-  properties: {
-    side: { type: 'string', enum: ['own', 'opponent'] },
-    name: { type: 'string' },
-    shirtNumber: { type: 'integer' },
-  },
-  required: ['side'],
-  additionalProperties: false,
-} as const;
 const INTERPRETATION_SCHEMA = {
   type: 'object',
   properties: {
-    // workstream G: taxonomy orders — the closed football vocabulary
-    orders: {
-      type: 'array',
-      maxItems: 4,
-      items: {
-        type: 'object',
-        properties: {
-          scope: { type: 'string', enum: ['team', 'player', 'match'] },
-          intent: { type: 'string', enum: [...TeamIntent.options, ...PlayerIntent.options, ...MatchIntent.options] },
-          target: REF,
-          formation: { type: 'string', enum: ['442', '433', '352'] },
-          sub: {
-            type: 'object',
-            properties: { out: REF, in: REF },
-            required: ['out', 'in'],
-            additionalProperties: false,
-          },
-          intensity: NUM,
-        },
-        required: ['scope', 'intent'],
-        additionalProperties: false,
-      },
-    },
-    // free-form numeric adjustments for COMPARATIVE language the taxonomy
-    // cannot carry ("press a LITTLE harder") — relative to current tactics
     patch: {
       type: 'object',
       properties: {
@@ -85,30 +47,19 @@ export interface CoachContext {
   minute: number;
   currentTactics: Record<string, unknown>;
   opponent: { formation?: string; style?: unknown; pressing?: unknown };
-  /** compact roster digests (shirt/name/role) — reference resolution needs
-   *  names; NOTHING else from the sim rides along (STEP 6: no state dumps) */
-  roster?: {
-    own: Array<{ shirt: number; name: string; role: string }>;
-    opponent: Array<{ shirt: number; name: string; role: string }>;
-  };
 }
 
 export interface CoachInterpretation {
   patch?: TacticalPatch;
-  /** schema-validated taxonomy orders (references unresolved — the hub
-   *  resolves + compiles them against the manifest) */
-  orders?: GameCommand[];
   coachText?: string;
   say: string | null;
 }
 
-const SYSTEM = `You are the tactical interpreter for a football management game. A coach speaks an instruction — in ANY language, in natural sideline speech (slang, fragments, self-corrections, "go go go") — and you translate it into the game's command vocabulary.
+const SYSTEM = `You are the tactical interpreter for a football management game. A coach speaks an instruction — in ANY language — and you translate it into tactical settings.
 
-PREFER "orders": the closed football taxonomy. Team intents set the whole team's approach (press_high, drop_deep, counterattack, attack_left, play_direct, waste_time, park_the_bus, …). Player intents address ONE player (mark_player, overlap, stay_wide, …) — identify the player by a "target" REFERENCE: side ('own' = the coach's player, 'opponent' = theirs) plus the name you heard and/or a shirt number. NEVER invent players; if the coach names someone, pass the name through exactly as heard — the game resolves it against the real roster, and asks back when it is ambiguous. Match intents: change_formation (with formation), substitution (with sub.out/sub.in references). A multi-part instruction ("press high and mark their nine") becomes MULTIPLE orders. If the coach self-corrects ("no, actually drop back"), emit only the FINAL intention.
+Numeric settings range 0..1: pressing, defLine, mentality, risk, compactness, width, tempo, crossing, shootTendency, overlap, counter, timeWaste, pressAfterLoss, defAggression, gkLong, trap. Enum settings: formation (442|433|352), scheme (zonal|man|trap), style (direct|possession|counter|mixed), attackSide (left|right|both). Adjust RELATIVE to the team's current tactics when the instruction is comparative ("press harder" means raise pressing from its current value).
 
-Use "patch" ONLY for comparative or fine-grained numeric language the taxonomy cannot carry ("press a bit harder", "slightly deeper line") — numeric settings range 0..1, adjusted RELATIVE to currentTactics. Enum settings: formation (442|433|352), scheme (zonal|man|trap), style (direct|possession|counter|mixed), attackSide (left|right|both).
-
-If the instruction is not tactical (chit-chat, a question, encouragement with no actionable content), omit both orders and patch.
+Include in patch ONLY the settings the instruction changes. If the instruction is not tactical (chit-chat, a question, encouragement with no actionable content), omit patch entirely.
 
 "say" is your confirmation back to the coach: ONE short sentence, in the SAME language the coach spoke, in the voice of an assistant coach acknowledging the order.`;
 
@@ -151,7 +102,6 @@ export function createCoachInterpreter(options: CoachInterpreterOptions = {}): C
             minute: ctx.minute,
             currentTactics: ctx.currentTactics,
             opponent: ctx.opponent,
-            ...(ctx.roster ? { roster: ctx.roster } : {}),
           }),
         }],
       }, { timeout: 10_000, maxRetries: 1 });
@@ -160,33 +110,16 @@ export function createCoachInterpreter(options: CoachInterpreterOptions = {}): C
       if (response.stop_reason === 'refusal') return { coachText: text, say: null };
       const textBlock = response.content.find(b => b.type === 'text');
       if (!textBlock || textBlock.type !== 'text') return { coachText: text, say: null };
-      const out = JSON.parse(textBlock.text) as {
-        patch?: Record<string, unknown>; orders?: unknown[]; say?: string;
-      };
+      const out = JSON.parse(textBlock.text) as { patch?: Record<string, unknown>; say?: string };
+      if (!out.patch || Object.keys(out.patch).length === 0)
+        return { say: out.say ?? null };
 
-      // taxonomy orders: each shape must survive the protocol schema — a
-      // malformed order is dropped here, an invented PLAYER dies later at
-      // the deterministic resolver (there is no id field to hallucinate)
-      const orders = (out.orders ?? [])
-        .map(o => GameCommand.safeParse({ version: 1, ...(o as Record<string, unknown>) }))
-        .filter((r): r is { success: true; data: GameCommand } => r.success)
-        .map(r => r.data);
-
-      let patch: TacticalPatch | undefined;
-      if (out.patch && Object.keys(out.patch).length > 0){
-        const clamped = Object.fromEntries(Object.entries(out.patch)
-          .map(([k, v]) => [k, typeof v === 'number' ? clamp01(v) : v]));
-        const parsed = TacticalPatch.safeParse(clamped);
-        if (parsed.success && Object.keys(parsed.data).length > 0) patch = parsed.data;
-      }
-
-      if (!patch && orders.length === 0)
-        // nothing structured survived: hand the raw text to the golden
-        // parseCoach fallback ONLY if the model produced no read at all
-        return out.patch || out.orders?.length
-          ? { coachText: text, say: out.say ?? null }
-          : { say: out.say ?? null };
-      return { ...(patch ? { patch } : {}), ...(orders.length ? { orders } : {}), say: out.say ?? null };
+      const clamped = Object.fromEntries(Object.entries(out.patch)
+        .map(([k, v]) => [k, typeof v === 'number' ? clamp01(v) : v]));
+      const patch = TacticalPatch.safeParse(clamped);
+      if (!patch.success || Object.keys(patch.data).length === 0)
+        return { coachText: text, say: out.say ?? null };
+      return { patch: patch.data, say: out.say ?? null };
     } catch {
       // model unreachable/timeout — the golden parseCoach still gets a shot
       return { coachText: text, say: null };
