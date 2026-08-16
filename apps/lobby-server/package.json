@@ -19,5 +19,8 @@
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
     "tsx": "^4.19.0"
+  },
+  "devDependencies": {
+    "viem": "^2.55.16"
   }
 }

@@ -30,6 +30,7 @@ import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js
 import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
 import { ChainReader, ChainReadError } from './chain.js';
+import { MintError, MintProgress, MintService, PlayerSeedInput } from './mint.js';
 import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
 export interface LobbyServerOptions {
@@ -72,6 +73,9 @@ export interface LobbyServerOptions {
    *  /squad/chain answers 501. Wallet AUTH needs no configuration at all —
    *  signature recovery is offline. */
   chainReader?: ChainReader | null;
+  /** M5: the mint step machine (createMintService). Absent → POST
+   *  /mint/prepare answers 501. Requires the generator signer key. */
+  mintService?: MintService | null;
 }
 
 export interface LobbyServer {
@@ -541,6 +545,33 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         } catch (err) {
           if (err instanceof ChainReadError) return json(res, err.status, { error: err.message });
           return json(res, 502, { error: 'chain read failed — try again shortly' });
+        }
+      }
+
+      // M5 — mint your team: the idempotent step machine. Each call returns
+      // the NEXT prepared transaction ({to, data} — the browser wallet just
+      // sends it) until the wallet owns team + 11 NFTs + declared roster;
+      // then it's done and /squad/chain adopts the squad. The permit is
+      // signed HERE; the player's wallet pays gas and owns everything.
+      if (req.method === 'POST' && url.pathname === '/mint/prepare'){
+        if (!me.wallet)
+          return json(res, 403, { error: 'minting needs a wallet login (POST /auth/wallet)' });
+        if (!options.mintService)
+          return json(res, 501, { error: 'minting is not configured on this lobby' });
+        let body: { teamName?: unknown; seeds?: unknown; progress?: unknown };
+        try { body = JSON.parse(await readBody(req, 64 * 1024)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof body.teamName !== 'string' || !Array.isArray(body.seeds))
+          return json(res, 400, { error: 'teamName and seeds are required' });
+        const progress = typeof body.progress === 'object' && body.progress !== null
+          ? body.progress as MintProgress : undefined;
+        try {
+          const plan = await options.mintService.prepare(
+            me.wallet, body.teamName, body.seeds as PlayerSeedInput[], progress);
+          return json(res, 200, plan);
+        } catch (err) {
+          if (err instanceof MintError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'mint preparation failed — try again shortly' });
         }
       }
 
