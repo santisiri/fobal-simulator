@@ -23,10 +23,11 @@
 // spectator token it already holds (and uses them to auto-free players at
 // full time, so nobody has to click LEAVE).
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { TeamSnapshot } from '@fobal/protocol';
 import { signSession, verifySession } from './sessions.js';
-import { Account, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
+import { Account, Invitation, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
+import { EmailProvider } from './email.js';
 import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
 import { ChainReader, ChainReadError } from './chain.js';
@@ -76,6 +77,20 @@ export interface LobbyServerOptions {
   /** M5: the mint step machine (createMintService). Absent → POST
    *  /mint/prepare answers 501. Requires the generator signer key. */
   mintService?: MintService | null;
+  /** email invitations: the outbound-mail seam (createSesProvider /
+   *  createResendProvider). Absent → POST /invites answers 501. */
+  emailProvider?: EmailProvider | null;
+  /** public base for invitation links (e.g. https://play-staging.fobal.ai);
+   *  the emailed link is <base>/invite.html?t=<token> */
+  inviteBaseUrl?: string;
+  /** invite-spam guard: max invites an account may SEND per rolling window
+   *  (default 5 per hour; ATTEMPTS count, not successes) */
+  inviteLimit?: { count: number; windowMs: number };
+  /** invitation lifetime (default 7 days) */
+  inviteTtlMs?: number;
+  /** Resend webhook signing secret (whsec_…). Absent → POST /webhooks/email
+   *  answers 501. SERVER-SIDE ONLY. */
+  emailWebhookSecret?: string;
 }
 
 export interface LobbyServer {
@@ -146,6 +161,57 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
   const challengeLimit = options.challengeLimit ?? { count: 8, windowMs: 10 * 60 * 1000 };
   const challengeTimes = new Map<string, number[]>();  // accountId → creation times
+
+  // ---- email invitations ------------------------------------------------
+  const inviteLimit = options.inviteLimit ?? { count: 5, windowMs: 60 * 60 * 1000 };
+  const inviteTtl = options.inviteTtlMs ?? 7 * 24 * 60 * 60 * 1000;
+  const inviteTimes = new Map<string, number[]>();     // accountId → send attempts
+  const inviteBase = (options.inviteBaseUrl ?? 'http://localhost:8492').replace(/\/+$/, '');
+  const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+  const INVITE_STATUS_RANK: Record<Invitation['status'], number> =
+    { created: 0, sent: 1, delivered: 2, opened: 3, accepted: 4, expired: 9, failed: 9 };
+  /** the status ladder only climbs; terminal states never regress an accept */
+  function advanceInviteStatus(invite: Invitation, to: Invitation['status']): void {
+    if (invite.status === 'accepted' || invite.status === 'expired') return;
+    if (to === 'failed' || INVITE_STATUS_RANK[to] > INVITE_STATUS_RANK[invite.status]){
+      invite.status = to;
+      invite.lastEventAt = new Date().toISOString();
+      store.saveInvite(invite);
+    }
+  }
+  function expireIfDue(invite: Invitation): void {
+    if (invite.status !== 'accepted' && invite.status !== 'expired'
+      && Date.parse(invite.expiresAt) < Date.now()){
+      invite.status = 'expired';
+      store.saveInvite(invite);
+    }
+  }
+  const inviteView = (v: Invitation) => ({
+    invitationId: v.invitationId,
+    recipientEmail: v.recipientEmail,
+    status: v.status,
+    createdAt: v.createdAt,
+    expiresAt: v.expiresAt,
+  });
+  /** svix signature scheme (Resend webhooks): base64-HMAC-SHA256 of
+   *  "<id>.<timestamp>.<payload>" with the base64-decoded whsec_ key;
+   *  the header carries space-separated "v1,<sig>" candidates. */
+  function verifySvix(payload: string, headers: IncomingMessage['headers'], secret: string): boolean {
+    const id = headers['svix-id'];
+    const timestamp = headers['svix-timestamp'];
+    const signatures = headers['svix-signature'];
+    if (typeof id !== 'string' || typeof timestamp !== 'string' || typeof signatures !== 'string') return false;
+    if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 5 * 60) return false;   // replay window
+    const key = Buffer.from(secret.replace(/^whsec_/, ''), 'base64');
+    const expected = createHmac('sha256', key).update(`${id}.${timestamp}.${payload}`).digest();
+    return signatures.split(' ').some(part => {
+      const sig = part.split(',')[1];
+      if (!sig) return false;
+      let given: Buffer;
+      try { given = Buffer.from(sig, 'base64'); } catch { return false; }
+      return given.length === expected.length && timingSafeEqual(given, expected);
+    });
+  }
 
   const online = (accountId: string): boolean =>
     (presence.get(accountId) ?? 0) > Date.now() - presenceTtl;
@@ -413,9 +479,165 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         return json(res, 200, { token: signSession(account.accountId, secret), account: publicAccount(account) });
       }
 
+      // ---- email invitations: PUBLIC surface -----------------------------
+      // GET /invites/:token — the landing page's context call. No session:
+      // the recipient hasn't signed in yet. Serves only what the email
+      // already told them (who, which club, until when) — never tokens,
+      // emails, or ids beyond the inviter's public identity.
+      const inviteViewMatch = req.method === 'GET' && url.pathname.match(/^\/invites\/([A-Za-z0-9_-]{20,})$/);
+      if (inviteViewMatch){
+        const invite = store.inviteByTokenHash(hashToken(inviteViewMatch[1]!));
+        if (!invite) return json(res, 404, { error: 'this invitation does not exist' });
+        expireIfDue(invite);
+        if (invite.status === 'expired')
+          return json(res, 410, { error: 'this invitation has expired — ask your friend for a new one' });
+        if (invite.status === 'accepted')
+          return json(res, 409, { error: 'this invitation was already used' });
+        const inviter = store.getAccount(invite.inviterAccountId);
+        return json(res, 200, {
+          inviter: inviter ? publicAccount(inviter) : { handle: '?', teamName: '?' },
+          ...(invite.message ? { message: invite.message } : {}),
+          expiresAt: invite.expiresAt,
+          status: invite.status,
+        });
+      }
+
+      // POST /webhooks/email — Resend delivery events (svix-signed).
+      // Idempotent by design: the status ladder only climbs, so replays and
+      // out-of-order deliveries are harmless. Always 2xx on a verified
+      // payload — a webhook endpoint that errors gets hammered by retries.
+      if (req.method === 'POST' && url.pathname === '/webhooks/email'){
+        if (!options.emailWebhookSecret)
+          return json(res, 501, { error: 'email webhooks are not configured' });
+        const payload = await readBody(req, 64 * 1024);
+        if (!verifySvix(payload, req.headers, options.emailWebhookSecret))
+          return json(res, 401, { error: 'bad webhook signature' });
+        let event: { type?: string; data?: { email_id?: string } };
+        try { event = JSON.parse(payload) as typeof event; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        const messageId = event.data?.email_id;
+        const invite = messageId ? store.inviteByProviderMessageId(messageId) : null;
+        if (invite){
+          const next: Record<string, Invitation['status']> = {
+            'email.delivered': 'delivered',
+            'email.opened': 'opened',
+            'email.clicked': 'opened',
+            'email.bounced': 'failed',
+            'email.complained': 'failed',
+          };
+          const to = next[event.type ?? ''];
+          if (to) advanceInviteStatus(invite, to);
+        }
+        return json(res, 204, {});
+      }
+
       // everything below requires a session
       const me = authed(req);
       if (!me) return json(res, 401, { error: 'session token required' });
+
+      // ---- email invitations: send / list / accept -----------------------
+      // POST /invites {email, message?} — invite a friend to a match.
+      if (req.method === 'POST' && url.pathname === '/invites'){
+        if (!options.emailProvider)
+          return json(res, 501, { error: 'email invitations are not configured on this lobby' });
+        let body: { email?: unknown; message?: unknown };
+        try { body = JSON.parse(await readBody(req)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (typeof body.email !== 'string' || !EMAIL_RE.test(body.email) || body.email.length > 254)
+          return json(res, 400, { error: 'a valid email is required' });
+        const recipient = body.email.toLowerCase();
+        if (recipient === me.email.toLowerCase())
+          return json(res, 400, { error: "that's your own address — challenge someone else" });
+        let message: string | undefined;
+        if (body.message !== undefined){
+          if (typeof body.message !== 'string') return json(res, 400, { error: 'message must be a string' });
+          message = cleanName(body.message).slice(0, 200) || undefined;
+        }
+        // spam guard: ATTEMPTS count against the rolling window
+        const times = (inviteTimes.get(me.accountId) ?? []).filter(t => t > Date.now() - inviteLimit.windowMs);
+        if (times.length >= inviteLimit.count)
+          return json(res, 429, { error: 'invite limit reached — try again in a while' });
+        times.push(Date.now());
+        inviteTimes.set(me.accountId, times);
+        // duplicate suppression: one live invite per (inviter, address)
+        const existing = store.liveInviteFor(me.accountId, recipient);
+        if (existing)
+          return json(res, 409, { error: 'you already have a live invitation to that address', invitation: inviteView(existing) });
+
+        const token = randomBytes(24).toString('base64url');
+        const invite: Invitation = {
+          invitationId: `inv-${randomBytes(6).toString('hex')}`,
+          tokenHash: hashToken(token),
+          inviterAccountId: me.accountId,
+          recipientEmail: recipient,
+          ...(message ? { message } : {}),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + inviteTtl).toISOString(),
+          status: 'created',
+        };
+        store.saveInvite(invite);
+        const inviteUrl = `${inviteBase}/invite.html?t=${token}`;
+        try {
+          const out = await options.emailProvider.sendMatchInvitation({
+            to: recipient,
+            inviterName: me.handle,
+            inviterTeam: me.teamName,
+            ...(message ? { message } : {}),
+            inviteUrl,
+            expiresAt: invite.expiresAt,
+          });
+          invite.status = 'sent';
+          if (out.messageId) invite.providerMessageId = out.messageId;
+          store.saveInvite(invite);
+        } catch {
+          // failed sends stay on the books (inviter sees FAILED) but do not
+          // block a retry — liveInviteFor ignores 'failed'
+          invite.status = 'failed';
+          store.saveInvite(invite);
+          return json(res, 502, { error: 'could not send the invitation — try again shortly' });
+        }
+        // the inviter may also copy the link and share it themselves
+        return json(res, 201, { invitation: inviteView(invite), inviteUrl });
+      }
+
+      // GET /invites — my sent invitations, newest first
+      if (req.method === 'GET' && url.pathname === '/invites'){
+        for (const v of store.invitesFrom(me.accountId)) expireIfDue(v);
+        return json(res, 200, { invitations: store.invitesFrom(me.accountId).slice(0, 20).map(inviteView) });
+      }
+
+      // POST /invites/:token/accept — the recipient, signed in (with email
+      // or wallet, squad minted or generated — any account works), claims
+      // the invite. The reward is game-native: a challenge to the inviter.
+      const inviteAcceptMatch = req.method === 'POST' && url.pathname.match(/^\/invites\/([A-Za-z0-9_-]{20,})\/accept$/);
+      if (inviteAcceptMatch){
+        const invite = store.inviteByTokenHash(hashToken(inviteAcceptMatch[1]!));
+        if (!invite) return json(res, 404, { error: 'this invitation does not exist' });
+        expireIfDue(invite);
+        if (invite.status === 'expired')
+          return json(res, 410, { error: 'this invitation has expired — ask your friend for a new one' });
+        if (invite.status === 'accepted')
+          return json(res, 409, { error: 'this invitation was already used' });
+        if (invite.inviterAccountId === me.accountId)
+          return json(res, 400, { error: 'this is your own invitation — send it to a friend' });
+        const inviter = store.getAccount(invite.inviterAccountId);
+        if (!inviter) return json(res, 410, { error: 'the inviting account no longer exists' });
+        invite.status = 'accepted';
+        invite.acceptedBy = me.accountId;
+        invite.lastEventAt = new Date().toISOString();
+        store.saveInvite(invite);
+        // the challenge goes FROM the accepter TO the inviter, so the
+        // inviter simply accepts it whenever they are next in the lobby
+        const challenge: Challenge = {
+          id: `ch-${randomBytes(4).toString('hex')}`,
+          from: me.accountId,
+          to: inviter.accountId,
+          createdAt: Date.now(),
+        };
+        challenges.set(challenge.id, challenge);
+        presence.set(me.accountId, Date.now());
+        return json(res, 200, { inviter: publicAccount(inviter), challenge: { id: challenge.id } });
+      }
 
       if (req.method === 'GET' && url.pathname === '/lobby')
         return json(res, 200, await lobbyState(me));
