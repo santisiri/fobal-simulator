@@ -3,167 +3,239 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="FOBAL lobby — find an opponent, coach by voice, keep the rivalry.">
-<meta name="theme-color" content="#070b12">
+<meta name="description" content="FOBAL matchday lobby — sign in, dress your club, find a rival, coach by voice.">
+<meta name="theme-color" content="#0a0f1e">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
-<title>FOBAL — Lobby</title>
+<title>FOBAL — Matchday Lobby</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500;600;700&display=swap">
 <style>
+  /* Tokens = apps/web/public/styles/fobal.css (the canonical fobal.ai
+     brand). Inlined so the lobby stands alone in dev; keep in sync. */
   :root {
     color-scheme: dark;
-    --sans: "Space Grotesk", -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    --bg: #0a0f1e; --bg-2: #070b16;
+    --panel: #0d1428; --panel-2: #111a33;
+    --ink: #f8fafc;
+    --dim: rgba(248, 250, 252, 0.56);
+    --faint: rgba(248, 250, 252, 0.34);
+    --green: #22c55e; --green-ink: #041a0c;
+    --purple: #a855f7;
+    --red: #f87171;
+    --line: rgba(120, 150, 200, 0.16);
+    --line-strong: rgba(120, 150, 200, 0.3);
+    --sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
     --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --radius: 12px;
   }
-  html, body { margin: 0; min-height: 100%; background: #070b12; color: #e8eef5;
-    font-family: var(--mono); }
-  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px;
-    border-bottom: 1px solid rgba(70,200,150,0.25); }
-  header h1 { font-family: var(--sans); font-weight: 800; font-size: 15px; margin: 0;
-    letter-spacing: 3px; }
-  header h1 span { color: #2be08f; }
-  header .who { margin-left: auto; font-size: 12px; opacity: 0.8; }
-  main { max-width: 720px; margin: 0 auto; padding: 24px 16px; }
-  .card { background: rgba(12,19,32,0.9); border: 1px solid rgba(70,200,150,0.3);
-    border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  .card h2 { font-family: var(--sans); margin: 0 0 12px; font-size: 12px;
-    letter-spacing: 2.5px; color: #2be08f; }
-  button, input { background: #0c1320; color: #e8eef5; border: 1px solid rgba(70,200,150,0.4);
-    border-radius: 6px; padding: 8px 12px; font: inherit; }
-  button { cursor: pointer; font-family: var(--sans); font-weight: 600; letter-spacing: 0.5px; }
-  button:hover { border-color: #2be08f; }
-  button.danger { border-color: rgba(226,89,72,0.5); }
-  button.primary { background: #123726; border-color: #2be08f; font-weight: 700; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  body {
+    /* the field: the faint iso-pitch grid that grounds every FOBAL screen */
+    background:
+      radial-gradient(1200px 600px at 50% -10%, rgba(34,197,94,0.06), transparent 60%),
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 44px 100%,
+      var(--bg);
+  }
+
+  header { display: flex; gap: 14px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .brand { font-family: var(--display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+  .brand span { color: var(--green); }
+  .brandTag { font-family: var(--mono); font-size: 11px; letter-spacing: 2.4px; color: var(--dim); text-transform: uppercase; }
+  header .who { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--dim); }
+
+  main { max-width: 720px; margin: 0 auto; padding: 26px 16px 60px; }
+
+  .card { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 14px; }
+  .card h2 { font-family: var(--mono); font-weight: 600; font-size: 11px; letter-spacing: 2.4px; text-transform: uppercase; color: var(--dim); margin: 0 0 12px; }
+  .card h2.green { color: var(--green); }
+  .card h2.purple { color: var(--purple); }
+
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: 0.7px; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+  button:hover { border-color: var(--green); transform: translateY(-1px); }
+  button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  button.primary { background: var(--green); color: var(--green-ink); border-color: var(--green); box-shadow: 0 6px 24px rgba(34,197,94,0.24); }
+  button.primary:hover { box-shadow: 0 8px 30px rgba(34,197,94,0.34); }
+  button.purple { border-color: rgba(168,85,247,0.5); }
+  button.purple:hover { border-color: var(--purple); }
+  button.danger { border-color: rgba(248,113,113,0.4); }
+  button.danger:hover { border-color: var(--red); }
+  button.ghost { background: transparent; }
+  button.sm { padding: 6px 11px; font-size: 12px; }
+
+  input { padding: 11px 13px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line-strong); color: var(--ink); font-family: var(--sans); font-size: 15px; }
+  input:focus { outline: none; border-color: var(--green); }
+  input[type=color] { width: 44px; height: 38px; padding: 0; border-radius: 8px; cursor: pointer; }
+
   .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-  .player { display: flex; gap: 10px; align-items: center; padding: 8px 4px;
-    border-bottom: 1px solid rgba(70,200,150,0.12); }
-  .player:last-child { border-bottom: 0; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5568; flex: none; }
-  .dot.on { background: #2be08f; box-shadow: 0 0 6px #2be08f; }
-  .player .name { flex: 1; }
-  .player .team { opacity: 0.65; font-size: 12px; }
-  .tag { font-size: 10px; letter-spacing: 1px; padding: 2px 6px; border-radius: 4px;
-    border: 1px solid rgba(232,238,245,0.3); opacity: 0.8; }
-  .rec { font-size: 11px; opacity: 0.6; letter-spacing: 1px; }
-  .badge { font-weight: 700; width: 20px; height: 20px; border-radius: 4px; flex: none;
-    display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
-  .badge.W { background: #123726; color: #2be08f; }
-  .badge.D { background: #1c2430; color: #9fb2c8; }
-  .badge.L { background: #3a1420; color: #ffb0a8; }
-  .badge.live { background: #0c1320; color: #e8eef5; font-size: 9px; width: auto; padding: 0 6px; }
-  .squadRow { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
-  .squadRow .rl { width: 30px; opacity: 0.55; font-size: 11px; flex: none; }
-  .squadRow input.pname { flex: 1; padding: 4px 8px; min-width: 0; }
-  input[type=color] { padding: 0; width: 34px; height: 26px; cursor: pointer; }
-  .muted { opacity: 0.6; font-size: 12px; }
-  .err { color: #ffb0a8; font-size: 12px; min-height: 16px; }
-  #matchCard { border-color: #2be08f; box-shadow: 0 0 24px rgba(43,224,143,0.15); }
-  #matchCard .big { font-size: 18px; font-weight: 700; letter-spacing: 1px; margin: 4px 0 12px; }
+  .muted { color: var(--dim); font-size: 13px; }
+  .err { color: var(--red); font-size: 13px; min-height: 18px; }
   .hidden { display: none; }
-  @media (max-width: 480px) {
-    header { padding: 8px 10px; }
-    header h1 { font-size: 12px; letter-spacing: 1px; }
-    header .who { font-size: 10px; }
-    main { padding: 14px 8px; }
-    .card { padding: 12px 10px; margin-bottom: 12px; }
-    button, input { padding: 6px 9px; font-size: 12px; }
-    .player { flex-wrap: wrap; row-gap: 4px; }
-    .player .team { font-size: 11px; }
-    #matchCard .big { font-size: 15px; }
+
+  /* ---- login ---- */
+  .hero { text-align: center; padding: 30px 0 22px; }
+  .hero .kick { font-family: var(--display); font-weight: 800; font-size: clamp(34px, 8vw, 52px); letter-spacing: -1px; line-height: 1.02; }
+  .hero .kick span { color: var(--green); }
+  .hero p { color: var(--dim); margin: 10px 0 0; font-size: 15px; }
+  .loginGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .loginGrid .card { margin: 0; }
+  .loginGrid .full { width: 100%; }
+  .loginGrid input { width: 100%; margin-bottom: 8px; }
+  details.adv { margin-top: 14px; color: var(--faint); font-size: 12px; }
+  details.adv summary { cursor: pointer; font-family: var(--mono); letter-spacing: 1.5px; text-transform: uppercase; font-size: 10px; }
+  details.adv input { width: 100%; margin-top: 8px; font-family: var(--mono); font-size: 12px; }
+
+  /* ---- the tunnel: match ready ---- */
+  #matchCard { border-color: rgba(34,197,94,0.55); box-shadow: 0 0 34px rgba(34,197,94,0.18); position: relative; overflow: hidden; }
+  #matchCard::before { content: ""; position: absolute; inset: 0; background: radial-gradient(400px 120px at 50% 0%, rgba(34,197,94,0.14), transparent 70%); pointer-events: none; }
+  #matchCard .big { font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: 0.5px; margin: 2px 0 14px; }
+
+  /* ---- crest: your kit, everywhere your club appears ---- */
+  .crest { width: 30px; height: 34px; border-radius: 5px 5px 9px 9px; border: 1px solid var(--line-strong); flex: none; background: linear-gradient(90deg, var(--c1, #22c55e) 0 34%, var(--c2, #0d1428) 34% 66%, var(--c1, #22c55e) 66% 100%); }
+  .crest.sm { width: 20px; height: 23px; border-radius: 3px 3px 6px 6px; }
+
+  .clubLine { display: flex; align-items: center; gap: 12px; }
+  .clubLine .cn { font-family: var(--display); font-weight: 800; font-size: 19px; letter-spacing: 0.5px; flex: 1; min-width: 0; }
+  .rec { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--dim); }
+
+  /* ---- roster / fixture rows ---- */
+  .player { display: flex; gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+  .player:last-child { border-bottom: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(248,250,252,0.22); flex: none; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .player .name { flex: 1; min-width: 0; font-weight: 500; }
+  .player .name b { font-family: var(--mono); }
+  .player .team { color: var(--dim); font-size: 13px; }
+  .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--dim); }
+  .badge { font-family: var(--mono); font-weight: 700; width: 22px; height: 22px; border-radius: 5px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; }
+  .badge.W { background: rgba(34,197,94,0.16); color: var(--green); }
+  .badge.D { background: rgba(120,150,200,0.16); color: var(--dim); }
+  .badge.L { background: rgba(248,113,113,0.14); color: var(--red); }
+  .badge.live { background: transparent; border: 1px solid var(--green); color: var(--green); font-size: 9px; width: auto; padding: 0 7px; letter-spacing: 1px; }
+
+  /* ---- squad editor ---- */
+  .squadRow { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .squadRow .rl { width: 32px; color: var(--faint); font-family: var(--mono); font-size: 11px; flex: none; }
+  .squadRow input.pname { flex: 1; padding: 6px 10px; min-width: 0; font-size: 14px; }
+
+  @media (max-width: 560px) {
+    header { padding: 10px 12px; gap: 8px; }
+    .brandTag { display: none; }
+    main { padding: 16px 10px 48px; }
+    .card { padding: 13px 12px; }
+    .loginGrid { grid-template-columns: 1fr; }
+    .hero { padding: 18px 0 14px; }
+    button { padding: 9px 13px; font-size: 12px; }
+    .player { flex-wrap: wrap; row-gap: 6px; }
+    #matchCard .big { font-size: 17px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    button { transition: none; }
   }
 </style>
 </head>
 <body>
 <header>
-  <h1>FOBAL<span>.ai</span> LOBBY</h1>
+  <div class="brand">FOBAL<span>.ai</span></div>
+  <div class="brandTag">Matchday Lobby</div>
   <span class="who" id="who"></span>
-  <button id="logoutBtn" class="hidden">LOG OUT</button>
+  <button id="logoutBtn" class="ghost sm hidden">LOG OUT</button>
 </header>
 <main>
   <!-- login -->
   <section id="loginView" class="hidden">
-    <div class="card">
-      <h2>SIGN IN</h2>
-      <div class="row">
-        <input id="lobbyUrl" size="28" placeholder="lobby url" value="http://localhost:8475">
-      </div>
-      <div class="row">
-        <input id="email" type="email" size="28" placeholder="you@example.com" autocomplete="email">
-        <button id="requestBtn" class="primary">SEND CODE</button>
-      </div>
-      <div class="row hidden" id="codeRow">
-        <input id="code" size="12" placeholder="login code" autocomplete="one-time-code">
-        <button id="verifyBtn" class="primary">ENTER LOBBY</button>
-      </div>
-      <div class="row">
-        <button id="walletBtn">🦊 SIGN IN WITH WALLET</button>
-      </div>
-      <div class="err" id="loginErr"></div>
-      <div class="muted" id="loginNote"></div>
+    <div class="hero">
+      <div class="kick">IT'S <span>MATCHDAY</span></div>
+      <p>Two coaches, one pitch, live orders by voice. Sign in and find a rival.</p>
     </div>
+    <div class="loginGrid">
+      <div class="card">
+        <h2 class="green">With email</h2>
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email">
+        <div id="codeRow" class="hidden">
+          <input id="code" placeholder="login code" autocomplete="one-time-code">
+        </div>
+        <button id="requestBtn" class="primary full">SEND CODE</button>
+        <button id="verifyBtn" class="primary full hidden">ENTER LOBBY</button>
+      </div>
+      <div class="card">
+        <h2 class="purple">With wallet</h2>
+        <p class="muted" style="margin:0 0 12px;">Sign a free message — no gas, no transaction. Your NFT squad follows you to any device.</p>
+        <button id="walletBtn" class="purple full">🦊 SIGN IN WITH WALLET</button>
+      </div>
+    </div>
+    <div class="err" id="loginErr" style="margin-top:10px;"></div>
+    <div class="muted" id="loginNote"></div>
+    <details class="adv">
+      <summary>Advanced — lobby server</summary>
+      <input id="lobbyUrl" placeholder="lobby url" value="http://localhost:8475">
+    </details>
   </section>
 
   <!-- lobby -->
   <section id="lobbyView" class="hidden">
     <div class="card hidden" id="matchCard">
-      <h2>MATCH READY</h2>
+      <h2 class="green">Kick-off — your match is ready</h2>
       <div class="big" id="matchLine"></div>
       <div class="row">
         <button id="enterBtn" class="primary">ENTER MATCH</button>
         <button id="specBtn">COPY SPECTATOR LINK</button>
-        <button id="leaveBtn" class="danger">LEAVE</button>
+        <button id="leaveBtn" class="danger ghost">LEAVE</button>
       </div>
       <div class="muted" id="enterNote"></div>
     </div>
 
     <div class="card">
-      <h2>MY TEAM</h2>
-      <div class="row">
-        <span id="teamName" style="font-weight:700; letter-spacing:1px;"></span>
-        <button id="renameBtn" title="rename team">✎</button>
-        <button id="squadBtn">EDIT SQUAD</button>
+      <h2>My club</h2>
+      <div class="clubLine">
+        <div class="crest" id="crest"></div>
+        <span class="cn" id="teamName"></span>
+        <button id="renameBtn" class="sm ghost" title="Rename club">RENAME</button>
+        <button id="squadBtn" class="sm">EDIT SQUAD</button>
       </div>
       <div id="squadPanel" class="hidden">
-        <div class="row" style="margin-top:10px;">
-          <span class="muted">KIT</span>
-          <input type="color" id="kitPrimary" value="#d8342c" title="primary — shirt and socks">
-          <input type="color" id="kitSecondary" value="#f2ece0" title="secondary — shorts and trim">
+        <div class="row" style="margin-top:14px;">
+          <span class="muted">Kit</span>
+          <input type="color" id="kitPrimary" value="#d8342c" title="Primary — shirt and socks">
+          <input type="color" id="kitSecondary" value="#f2ece0" title="Secondary — shorts and trim">
           <span class="muted">shirt · shorts</span>
         </div>
-        <div id="squadList" style="margin:8px 0;"></div>
+        <div id="squadList" style="margin:10px 0;"></div>
         <div class="row">
-          <button id="squadSave" class="primary">SAVE SQUAD</button>
-          <button id="squadClose">CLOSE</button>
+          <button id="squadSave" class="primary sm">SAVE SQUAD</button>
+          <button id="squadClose" class="sm ghost">CLOSE</button>
           <span class="muted" id="squadNote"></span>
         </div>
       </div>
     </div>
 
     <div class="card hidden" id="chainCard">
-      <h2>ON-CHAIN TEAM</h2>
-      <div class="muted" id="chainState" style="margin-bottom:8px;"></div>
+      <h2 class="purple">On-chain team</h2>
+      <div class="muted" id="chainState" style="margin-bottom:10px;"></div>
       <div class="row">
-        <input id="chainTeamId" size="8" placeholder="team id" inputmode="numeric">
-        <button id="chainLinkBtn" class="primary">LINK NFT SQUAD</button>
-        <button id="chainUnlinkBtn" class="danger hidden">UNLINK</button>
+        <input id="chainTeamId" placeholder="team id" inputmode="numeric" style="width:110px;">
+        <button id="chainLinkBtn" class="purple">LINK NFT SQUAD</button>
+        <button id="chainUnlinkBtn" class="danger ghost hidden">UNLINK</button>
       </div>
       <div class="muted" id="chainNote"></div>
     </div>
 
     <div class="card" id="challengesCard">
-      <h2>CHALLENGES</h2>
-      <div id="challenges"><span class="muted">none pending</span></div>
+      <h2>Challenges</h2>
+      <div id="challenges"><span class="muted">No challenges yet — pick a rival below.</span></div>
     </div>
 
     <div class="card">
-      <h2>PLAYERS ONLINE</h2>
-      <div id="players"><span class="muted">nobody else is here yet</span></div>
+      <h2>Coaches in the lobby</h2>
+      <div id="players"><span class="muted">Nobody else is online. Open a second tab to warm up against yourself, or send a friend this page.</span></div>
     </div>
 
     <div class="card">
-      <h2>MATCH HISTORY</h2>
-      <div id="history"><span class="muted">no matches yet — challenge someone</span></div>
+      <h2>Match history</h2>
+      <div id="history"><span class="muted">No matches yet — your first result lands here.</span></div>
     </div>
     <div class="err" id="lobbyErr"></div>
   </section>
@@ -223,11 +295,13 @@
       const out = await res.json();
       if (!res.ok) throw new Error(out.error ?? res.status);
       $('codeRow').classList.remove('hidden');
+      $('requestBtn').classList.add('hidden');
+      $('verifyBtn').classList.remove('hidden');
       if (out.devCode){
         $('code').value = out.devCode;
-        $('loginNote').textContent = 'dev mode: code auto-filled';
+        $('loginNote').textContent = 'Dev mode: code auto-filled.';
       } else {
-        $('loginNote').textContent = 'check your email for the code';
+        $('loginNote').textContent = 'Check your email for the code.';
       }
     } catch (err){ $('loginErr').textContent = String(err.message ?? err); }
   };
@@ -257,7 +331,7 @@
     $('loginErr').textContent = '';
     const url = $('lobbyUrl').value.replace(/\/+$/, '');
     try {
-      if (!window.ethereum) throw new Error('no wallet extension detected in this browser');
+      if (!window.ethereum) throw new Error('No wallet extension detected — install MetaMask, or sign in with email.');
       const [address] = await window.ethereum.request({ method: 'eth_requestAccounts' });
       const chRes = await fetch(`${url}/auth/wallet`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -265,7 +339,7 @@
       });
       const ch = await chRes.json();
       if (!chRes.ok) throw new Error(ch.error ?? chRes.status);
-      $('loginNote').textContent = 'sign the message in your wallet…';
+      $('loginNote').textContent = 'Sign the message in your wallet…';
       const hexMessage = '0x' + [...new TextEncoder().encode(ch.message)]
         .map(b => b.toString(16).padStart(2, '0')).join('');
       const signature = await window.ethereum.request({
@@ -295,6 +369,20 @@
 
   const rec = r => r ? `<span class="rec">${r.w}W ${r.d}D ${r.l}L</span>` : '';
 
+  // your kit colors, painted onto the crest wherever your club appears
+  function paintCrest(colors){
+    const c1 = colors?.primary || '#22c55e';
+    const c2 = colors?.secondary || '#0d1428';
+    $('crest').style.setProperty('--c1', c1);
+    $('crest').style.setProperty('--c2', c2);
+  }
+  async function refreshCrest(){
+    try {
+      const res = await api('/squad');
+      if (res.ok) paintCrest((await res.json()).colors);
+    } catch { /* keep defaults */ }
+  }
+
   function render(state){
     $('who').textContent = `${state.me.handle} · ${state.me.teamName}`;
     $('teamName').innerHTML = `${esc(state.me.teamName)} &nbsp;${rec(state.me.record)}`;
@@ -305,8 +393,8 @@
     if (state.me.wallet){
       $('chainUnlinkBtn').classList.toggle('hidden', !state.me.chainTeamId);
       $('chainState').textContent = state.me.chainTeamId
-        ? `linked: ${state.me.chainTeamId} — your NFTs take the field`
-        : 'link your registry team to play with your NFTs';
+        ? `Linked: ${state.me.chainTeamId} — your NFTs take the field.`
+        : 'Link your registry team and your NFTs take the field.';
     }
 
     const players = state.players
@@ -317,37 +405,37 @@
           <span class="name">${esc(p.handle)} ${rec(p.record)}</span>
           <span class="team">${esc(p.teamName)}</span>
           ${p.inMatch ? '<span class="tag">IN MATCH</span>'
-            : p.online ? `<button data-challenge="${p.accountId}">CHALLENGE</button>` : ''}
+            : p.online ? `<button class="sm primary" data-challenge="${p.accountId}">CHALLENGE</button>` : ''}
         </div>`).join('');
-    $('players').innerHTML = players || '<span class="muted">nobody else is here yet</span>';
+    $('players').innerHTML = players || '<span class="muted">Nobody else is online. Open a second tab to warm up against yourself, or send a friend this page.</span>';
 
     const rows = [
       ...state.challenges.incoming.map(c => `
         <div class="player">
-          <span class="name">⚔ ${esc(c.from.handle)} (${esc(c.from.teamName)}) ${c.rematch ? 'wants a REMATCH' : 'challenges you'}</span>
-          <button class="primary" data-accept="${c.id}">ACCEPT</button>
-          <button class="danger" data-decline="${c.id}">DECLINE</button>
+          <span class="name"><b>${esc(c.from.teamName)}</b> — ${esc(c.from.handle)} ${c.rematch ? 'wants a rematch' : 'challenges you'}</span>
+          <button class="sm primary" data-accept="${c.id}">ACCEPT</button>
+          <button class="sm danger ghost" data-decline="${c.id}">DECLINE</button>
         </div>`),
       ...state.challenges.outgoing.map(c => `
         <div class="player">
-          <span class="name">→ waiting for ${esc(c.to.handle)}…</span>
-          <button class="danger" data-decline="${c.id}">CANCEL</button>
+          <span class="name muted">Waiting for ${esc(c.to.handle)}…</span>
+          <button class="sm danger ghost" data-decline="${c.id}">CANCEL</button>
         </div>`),
     ].join('');
-    $('challenges').innerHTML = rows || '<span class="muted">none pending</span>';
+    $('challenges').innerHTML = rows || '<span class="muted">No challenges yet — pick a rival below.</span>';
 
     const match = state.match;
     $('matchCard').classList.toggle('hidden', !match);
     if (match){
-      $('matchLine').textContent = `${state.me.teamName} · match ${match.matchId}`;
+      $('matchLine').textContent = `${state.me.teamName} — walk the tunnel`;
       $('enterBtn').onclick = () => {
         sessionStorage.setItem('fobal.lobby.entered', match.matchId);
         location.href = matchClientUrl(match, match.token);
       };
       $('specBtn').onclick = async () => {
         const link = new URL(matchClientUrl(match, match.spectatorToken), location.href).href;
-        try { await navigator.clipboard.writeText(link); $('enterNote').textContent = 'spectator link copied'; }
-        catch { prompt('spectator link:', link); }
+        try { await navigator.clipboard.writeText(link); $('enterNote').textContent = 'Spectator link copied.'; }
+        catch { prompt('Spectator link:', link); }
       };
       $('leaveBtn').onclick = async () => {
         await api(`/matches/${match.matchId}/leave`, { method: 'POST', body: {} });
@@ -355,16 +443,22 @@
         enteredMatchId = null;
         poll();
       };
-      // fresh match (not one we already entered and came back from): auto-enter
+      // fresh match (not one we already entered and came back from): auto-
+      // enter, armed ONCE per match — the 2s poll re-renders faster than
+      // the 3s fuse, so a clear-and-rearm here would never fire (it never
+      // did, all the way back to B1; this revamp caught it)
       if (enteredMatchId !== match.matchId){
-        $('enterNote').textContent = 'entering in 3s…';
-        clearTimeout(render.autoEnter);
-        render.autoEnter = setTimeout(() => {
-          sessionStorage.setItem('fobal.lobby.entered', match.matchId);
-          location.href = matchClientUrl(match, match.token);
-        }, 3000);
+        $('enterNote').textContent = 'Entering in 3 seconds…';
+        if (render.autoEnterFor !== match.matchId){
+          render.autoEnterFor = match.matchId;
+          clearTimeout(render.autoEnter);
+          render.autoEnter = setTimeout(() => {
+            sessionStorage.setItem('fobal.lobby.entered', match.matchId);
+            location.href = matchClientUrl(match, match.token);
+          }, 3000);
+        }
       } else {
-        $('enterNote').textContent = 'you can re-enter or share the spectator link';
+        $('enterNote').textContent = 'Re-enter any time, or share the spectator link.';
       }
     } else {
       clearTimeout(render.autoEnter);
@@ -407,7 +501,7 @@
       <div class="squadRow">
         <span class="rl">#${p.shirtNumber}</span><span class="rl">${esc(p.role)}</span>
         <input class="pname" data-pid="${p.playerId}" value="${esc(p.name)}" maxlength="24">
-        <button data-preset="${p.playerId}" title="reset to default">↺</button>
+        <button class="sm ghost" data-preset="${p.playerId}" title="Reset to default">↺</button>
       </div>`).join('');
     for (const btn of document.querySelectorAll('[data-preset]'))
       btn.onclick = () => {
@@ -426,11 +520,12 @@
       players,
     } });
     const out = await res.json().catch(() => ({}));
-    $('squadNote').textContent = res.ok ? 'saved — your next match wears it' : (out.error ?? 'save failed');
+    $('squadNote').textContent = res.ok ? 'Saved — your next match wears it.' : (out.error ?? 'save failed');
+    if (res.ok) paintCrest({ primary: $('kitPrimary').value, secondary: $('kitSecondary').value });
   };
 
   $('renameBtn').onclick = async () => {
-    const name = prompt('team name (2–32 chars):');
+    const name = prompt('Club name (2–32 characters):');
     if (!name) return;
     const res = await api('/account/team', { method: 'POST', body: { teamName: name } });
     const out = await res.json();
@@ -442,20 +537,20 @@
   // through the protocol schema, and stores the squad; errors carry the
   // chain's real reason — wrong owner, sold player, GK-less roster)
   $('chainLinkBtn').onclick = async () => {
-    $('chainNote').textContent = 'reading the chain…';
+    $('chainNote').textContent = 'Reading the chain…';
     try {
       const teamId = Number($('chainTeamId').value.trim());
-      if (!Number.isInteger(teamId) || teamId <= 0) throw new Error('enter your registry team id (a number)');
+      if (!Number.isInteger(teamId) || teamId <= 0) throw new Error('Enter your registry team id (a number).');
       const res = await api('/squad/chain', { method: 'POST', body: { teamId } });
       const out = await res.json();
       if (!res.ok) throw new Error(out.error ?? res.status);
-      $('chainNote').textContent = `${out.team.name} — ${out.team.players.length} players take the field`;
+      $('chainNote').textContent = `${out.team.name} — ${out.team.players.length} players take the field.`;
       poll();
     } catch (err){ $('chainNote').textContent = String(err.message ?? err); }
   };
   $('chainUnlinkBtn').onclick = async () => {
     await api('/squad/chain', { method: 'DELETE' });
-    $('chainNote').textContent = 'unlinked — back to the generated squad';
+    $('chainNote').textContent = 'Unlinked — back to your generated squad.';
     poll();
   };
 
@@ -468,13 +563,13 @@
     const rows = history.matches.map(m => `
       <div class="player">
         ${m.outcome ? `<span class="badge ${m.outcome}">${m.outcome}</span>` : '<span class="badge live">LIVE</span>'}
-        <span class="name">${m.score ? `<b>${m.score[0]} - ${m.score[1]}</b>` : '· - ·'}
-          vs ${m.opponent ? `${esc(m.opponent.handle)} (${esc(m.opponent.teamName)})` : '?'}</span>
+        <span class="name">${m.score ? `<b>${m.score[0]} – ${m.score[1]}</b>` : '· – ·'}
+          vs ${m.opponent ? `${esc(m.opponent.teamName)}` : '?'}</span>
         <span class="team">${ago(m.finishedAt ?? m.createdAt)}</span>
-        ${m.outcome ? `<button data-watch="${m.matchId}" data-watch-url="${esc(m.matchUrl)}" data-watch-token="${esc(m.spectatorToken)}">WATCH</button>` : ''}
-        ${m.outcome && m.opponent ? `<button data-rematch="${m.opponent.accountId}" data-rematch-of="${m.matchId}">REMATCH</button>` : ''}
+        ${m.outcome ? `<button class="sm ghost" data-watch="${m.matchId}" data-watch-url="${esc(m.matchUrl)}" data-watch-token="${esc(m.spectatorToken)}">WATCH</button>` : ''}
+        ${m.outcome && m.opponent ? `<button class="sm" data-rematch="${m.opponent.accountId}" data-rematch-of="${m.matchId}">REMATCH</button>` : ''}
       </div>`).join('');
-    $('history').innerHTML = rows || '<span class="muted">no matches yet — challenge someone</span>';
+    $('history').innerHTML = rows || '<span class="muted">No matches yet — your first result lands here.</span>';
     for (const btn of document.querySelectorAll('[data-watch]'))
       btn.onclick = () => {
         location.href = `index.html?replayUrl=${encodeURIComponent(btn.dataset.watchUrl)}`
@@ -505,13 +600,14 @@
       wasInMatch = !!state.match;
       if (ended || pollCount++ % 5 === 0) await fetchHistory();
     } catch (err){
-      if (session) $('lobbyErr').textContent = `lobby unreachable: ${err.message ?? err}`;
+      if (session) $('lobbyErr').textContent = `Lobby unreachable: ${err.message ?? err}`;
     }
   }
 
   function enterLobby(){
     show('lobby');
     poll();
+    refreshCrest();
     clearInterval(pollTimer);
     pollTimer = setInterval(poll, 2000);
   }
