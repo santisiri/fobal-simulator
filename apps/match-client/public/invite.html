@@ -69,8 +69,12 @@
 </main>
 <script type="module">
   const $ = id => document.getElementById(id);
-  const token = new URLSearchParams(location.search).get('t');
-  const lobbyUrl = (window.FOBAL_CONFIG?.lobbyUrl ?? 'http://localhost:8475').replace(/\/+$/, '');
+  const params = new URLSearchParams(location.search);
+  const token = params.get('t');
+  // ?lobby= is the dev override, same as lobby.html; built sites carry
+  // FOBAL_CONFIG instead
+  const lobbyParam = params.get('lobby');
+  const lobbyUrl = (lobbyParam ?? window.FOBAL_CONFIG?.lobbyUrl ?? 'http://localhost:8475').replace(/\/+$/, '');
 
   function problem(line){
     $('loading').classList.add('hidden');
@@ -95,7 +99,8 @@
       $('expiry').textContent = days > 1 ? `EXPIRES IN ${days} DAYS` : 'EXPIRES SOON';
       // the token rides to the lobby, which claims it after ANY sign-in —
       // email code, wallet, even a freshly minted squad later
-      $('joinBtn').href = `lobby.html?invite=${encodeURIComponent(token)}`;
+      $('joinBtn').href = `lobby.html?invite=${encodeURIComponent(token)}`
+        + (lobbyParam ? `&lobby=${encodeURIComponent(lobbyParam)}` : '');
       $('loading').classList.add('hidden');
       $('challenge').classList.remove('hidden');
     } catch (err){
