@@ -426,6 +426,18 @@ export class FobalStack extends Stack {
         },
       });
 
+      // M5 mint: the generator-signer key authorizes SquadMint permits and
+      // NOTHING else (it holds zero on-chain roles — the generator contract
+      // enforces the power budget regardless). Created imperatively, gated
+      // on -c mintSigner=1 so deploys stay valid until the secret exists
+      // (a missing referenced secret crash-loops the task at launch):
+      //   aws secretsmanager create-secret \
+      //     --name <prefix>/lobby-server/generator-signer-pk --secret-string <0x…>
+      const mintSignerSecret = envCfg.chain?.generatorAddress && this.node.tryGetContext('mintSigner')
+        ? secretsmanager.Secret.fromSecretNameV2(
+            this, 'MintSignerSecret', `${envCfg.secretsPrefix}/lobby-server/generator-signer-pk`)
+        : null;
+
       const lobbyTaskRole = new iam.Role(this, 'LobbyTaskRole', {
         roleName: `Fobal-${ROLE}-lobby-server-task-role`,
         assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -479,7 +491,13 @@ export class FobalStack extends Stack {
                 actions: ['secretsmanager:DescribeSecret', 'secretsmanager:GetSecretValue'],
                 // the lobby shares the CREATE KEY with the match server — it
                 // is the only holder of it besides the match server itself
-                resources: [lobbySessionSecret.secretArn, lobbyTestLoginKey.secretArn, createKey.secretArn],
+                resources: [
+                  lobbySessionSecret.secretArn,
+                  lobbyTestLoginKey.secretArn,
+                  createKey.secretArn,
+                  // fromSecretNameV2 arns lack the random suffix — wildcard it
+                  ...(mintSignerSecret ? [`${mintSignerSecret.secretArn}-??????`] : []),
+                ],
               }),
             ],
           }),
@@ -523,14 +541,21 @@ export class FobalStack extends Stack {
           // envs.ts so no deploy can silently drop them (alarmEmail rule)
           ...(envCfg.chain ? {
             FOBAL_RPC_URL: envCfg.chain.rpcUrl,
+            FOBAL_CHAIN_ID: String(envCfg.chain.chainId),
             FOBAL_CHAIN_PLAYER: envCfg.chain.playerAddress,
             FOBAL_CHAIN_REGISTRY: envCfg.chain.registryAddress,
+          } : {}),
+          // harmless without the signer secret: the mint service only boots
+          // when the FULL set (generator + chainId + key) is present
+          ...(envCfg.chain?.generatorAddress ? {
+            FOBAL_CHAIN_GENERATOR: envCfg.chain.generatorAddress,
           } : {}),
         },
         secrets: {
           FOBAL_LOBBY_SECRET: ecs.Secret.fromSecretsManager(lobbySessionSecret),
           FOBAL_TEST_LOGIN_KEY: ecs.Secret.fromSecretsManager(lobbyTestLoginKey),
           FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
+          ...(mintSignerSecret ? { FOBAL_GENERATOR_SIGNER_PK: ecs.Secret.fromSecretsManager(mintSignerSecret) } : {}),
         },
         portMappings: [{ containerPort: LOBBY_PORT, protocol: ecs.Protocol.TCP }],
         healthCheck: {

@@ -8,6 +8,8 @@ export { buildTeam, buildManifest } from './teams.js';
 export { createSesDeliverer } from './email.js';
 export type { SesDelivererOptions } from './email.js';
 export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
+export { createMintService, MintError, validateSeeds, signSquadMint, encodeSeedsStandalone } from './mint.js';
+export type { MintService, MintServiceOptions, MintPlan, MintProgress, PlayerSeedInput, PreparedTx } from './mint.js';
 export type { ChainReader, ChainReaderOptions, ChainPlayer } from './chain.js';
 export { challengeMessage, recoverPersonalSigner, ADDRESS_RE } from './wallet.js';
 
@@ -33,6 +35,10 @@ export { challengeMessage, recoverPersonalSigner, ADDRESS_RE } from './wallet.js
 //   FOBAL_RPC_URL           JSON-RPC endpoint for chain squads (D1); all
 //   FOBAL_CHAIN_PLAYER      three must be set to enable POST /squad/chain
 //   FOBAL_CHAIN_REGISTRY    (FobalPlayer / FobalTeamRegistry addresses)
+//   FOBAL_CHAIN_GENERATOR   FobalPlayerGenerator address; with the two below
+//   FOBAL_CHAIN_ID          (+ the three above) enables POST /mint/prepare
+//   FOBAL_GENERATOR_SIGNER_PK  SquadMint permit signer key — SECRET, holds
+//                           zero on-chain roles; Secrets Manager in deploys
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startLobbyServer } = await import('./hub.js');
@@ -84,12 +90,31 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   if (chainReader)
     console.log(JSON.stringify({ msg: 'chain_reader', rpc: process.env.FOBAL_RPC_URL }));
 
+  // M5 mint service: reads + generator + the signer key (Secrets Manager)
+  let mintService = null;
+  if (process.env.FOBAL_CHAIN_GENERATOR && process.env.FOBAL_GENERATOR_SIGNER_PK
+      && process.env.FOBAL_RPC_URL && process.env.FOBAL_CHAIN_PLAYER
+      && process.env.FOBAL_CHAIN_REGISTRY && process.env.FOBAL_CHAIN_ID){
+    const { createMintService } = await import('./mint.js');
+    mintService = createMintService({
+      rpcUrl: process.env.FOBAL_RPC_URL,
+      generatorAddress: process.env.FOBAL_CHAIN_GENERATOR,
+      registryAddress: process.env.FOBAL_CHAIN_REGISTRY,
+      playerAddress: process.env.FOBAL_CHAIN_PLAYER,
+      chainId: Number(process.env.FOBAL_CHAIN_ID),
+      signerPk: process.env.FOBAL_GENERATOR_SIGNER_PK,
+    });
+    // the key itself must never appear in any log line
+    console.log(JSON.stringify({ msg: 'mint_service', generator: process.env.FOBAL_CHAIN_GENERATOR, chainId: process.env.FOBAL_CHAIN_ID }));
+  }
+
   const server = await startLobbyServer({
     port: Number(process.env.PORT ?? 8475),
     secret: process.env.FOBAL_LOBBY_SECRET,
     store,
     deliverCode,
     chainReader,
+    mintService,
     testLoginKey: process.env.FOBAL_TEST_LOGIN_KEY,
     matchServer: {
       url: process.env.FOBAL_MATCH_URL ?? 'http://localhost:8473',
