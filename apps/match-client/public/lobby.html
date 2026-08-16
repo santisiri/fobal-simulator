@@ -107,6 +107,8 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(248,250,252,0.22); flex: none; }
   .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
   .player .name { flex: 1; min-width: 0; font-weight: 500; }
+  /* a VERIFIED ens name — forward-checked server-side; purple = on-chain */
+  .ens { color: var(--purple); font-family: var(--mono); font-size: 14px; }
   .player .name b { font-family: var(--mono); }
   .player .team { color: var(--dim); font-size: 13px; }
   .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--dim); }
@@ -370,6 +372,15 @@
 
   const rec = r => r ? `<span class="rec">${r.w}W ${r.d}D ${r.l}L</span>` : '';
 
+  // Wallet identity: the server sends identity.displayName — a VERIFIED ens
+  // name (reverse + forward checked) or the shortened address; email
+  // accounts keep their handle. The raw address stays reachable via title
+  // hover. Names are presentation only — every action still keys accountId.
+  const nameOf = a => a?.identity?.displayName ?? a?.handle ?? '?';
+  const nameHtml = a => a?.identity?.ensName
+    ? `<span class="ens" title="${esc(a.wallet ?? '')}">${esc(a.identity.ensName)}</span>`
+    : `<span title="${esc(a?.wallet ?? '')}">${esc(nameOf(a))}</span>`;
+
   // your kit colors, painted onto the crest wherever your club appears
   function paintCrest(colors){
     const c1 = colors?.primary || '#22c55e';
@@ -385,7 +396,8 @@
   }
 
   function render(state){
-    $('who').textContent = `${state.me.handle} · ${state.me.teamName}`;
+    $('who').textContent = `${nameOf(state.me)} · ${state.me.teamName}`;
+    $('who').title = state.me.wallet ?? '';
     $('teamName').innerHTML = `${esc(state.me.teamName)} &nbsp;${rec(state.me.record)}`;
 
     // D1 — the on-chain team card, wallet accounts only. Linked state comes
@@ -404,7 +416,7 @@
       .map(p => `
         <div class="player">
           <span class="dot ${p.online ? 'on' : ''}"></span>
-          <span class="name">${esc(p.handle)} ${rec(p.record)}</span>
+          <span class="name">${nameHtml(p)} ${rec(p.record)}</span>
           <span class="team">${esc(p.teamName)}</span>
           ${p.inMatch ? '<span class="tag">IN MATCH</span>'
             : p.online ? `<button class="sm primary" data-challenge="${p.accountId}">CHALLENGE</button>` : ''}
@@ -414,13 +426,13 @@
     const rows = [
       ...state.challenges.incoming.map(c => `
         <div class="player">
-          <span class="name"><b>${esc(c.from.teamName)}</b> — ${esc(c.from.handle)} ${c.rematch ? 'wants a rematch' : 'challenges you'}</span>
+          <span class="name"><b>${esc(c.from.teamName)}</b> — ${nameHtml(c.from)} ${c.rematch ? 'wants a rematch' : 'challenges you'}</span>
           <button class="sm primary" data-accept="${c.id}">ACCEPT</button>
           <button class="sm danger ghost" data-decline="${c.id}">DECLINE</button>
         </div>`),
       ...state.challenges.outgoing.map(c => `
         <div class="player">
-          <span class="name muted">Waiting for ${esc(c.to.handle)}…</span>
+          <span class="name muted">Waiting for ${nameHtml(c.to)}…</span>
           <button class="sm danger ghost" data-decline="${c.id}">CANCEL</button>
         </div>`),
     ].join('');
