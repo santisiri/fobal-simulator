@@ -85,9 +85,14 @@ writeFileSync(join(outDir, 'index.html'), rewrite('index.html', shell, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 4. the lobby page — config only
+// 4. the lobby page — config injected, squad-experience module paths
+//    flattened (they ship under /src with the other client modules)
 const lobby = readFileSync(join(root, 'apps/match-client/public/lobby.html'), 'utf8');
 writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
+  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
+  ["from '../src/ui/squadView.js'", "from './src/ui/squadView.js'"],
+  ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
+  ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
