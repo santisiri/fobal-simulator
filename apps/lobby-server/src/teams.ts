@@ -5,6 +5,7 @@
 import { MatchManifest, PROTOCOL_VERSION } from '@fobal/protocol';
 import type { PlayerSnapshot, TeamSnapshot } from '@fobal/protocol';
 import type { Account } from './store.js';
+import { squadNames } from './playerNames.js';
 
 const ROLES_XI = ['GK', 'CB', 'CB', 'LB', 'RB', 'CM', 'CM', 'LM', 'RM', 'ST', 'ST'] as const;
 const ROLES_BENCH = ['GK', 'CB', 'CM', 'LW', 'ST'] as const;
@@ -12,14 +13,14 @@ const ROLES_BENCH = ['GK', 'CB', 'CM', 'LW', 'ST'] as const;
 const hashOf = (s: string): number =>
   [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
 
-function player(account: Account, i: number, role: PlayerSnapshot['role']): PlayerSnapshot {
+function player(account: Account, i: number, role: PlayerSnapshot['role'], name: string): PlayerSnapshot {
   // same plausible-and-asymmetric spread as the protocol sample fixtures,
   // seeded per-account so no two squads are identical
   const base = 55 + ((i * 7 + (hashOf(account.teamKey) % 97)) % 30);
   const r = (offset: number) => Math.max(30, Math.min(95, base + offset));
   return {
     playerId: `${account.teamKey}-p${String(i + 1).padStart(2, '0')}`,
-    name: `${account.handle.toUpperCase()} ${role} ${i + 1}`.slice(0, 48),
+    name,
     shirtNumber: i + 1,
     role,
     nationality: i % 3 === 0 ? 'AR' : i % 3 === 1 ? 'BR' : 'DE',
@@ -46,9 +47,13 @@ export function buildTeam(account: Account, { customized = true } = {}): TeamSna
     if (colors && (colors.primary || colors.secondary)) team.colors = colors;
     return team;
   }
+  // deterministic footballer names, unique within the squad — keyed by
+  // teamKey so the same account grows the same players on any device (and
+  // the mint flow, which reads /squad, puts these very names on-chain)
+  const names = squadNames(account.teamKey, ROLES_XI.length + ROLES_BENCH.length);
   const players = [
-    ...ROLES_XI.map((role, i) => player(account, i, role)),
-    ...ROLES_BENCH.map((role, i) => player(account, 11 + i, role)),
+    ...ROLES_XI.map((role, i) => player(account, i, role, names[i]!)),
+    ...ROLES_BENCH.map((role, i) => player(account, 11 + i, role, names[11 + i]!)),
   ];
   const squad = customized ? account.squad : undefined;
   if (squad?.playerNames)

@@ -9,10 +9,14 @@ export { createSesDeliverer, createSesProvider, createResendProvider, renderInvi
 export type { SesDelivererOptions, SesProviderOptions, ResendProviderOptions, EmailProvider, MatchInvitationEmail } from './email.js';
 export type { Invitation } from './store.js';
 export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
+export type { NormalizedPlayer } from './chain.js';
+export { playerName, squadNames } from './playerNames.js';
 export { createMintService, MintError, validateSeeds, signSquadMint, encodeSeedsStandalone } from './mint.js';
 export type { MintService, MintServiceOptions, MintPlan, MintProgress, PlayerSeedInput, PreparedTx } from './mint.js';
 export type { ChainReader, ChainReaderOptions, ChainPlayer } from './chain.js';
 export { challengeMessage, recoverPersonalSigner, ADDRESS_RE } from './wallet.js';
+export { createIdentityResolver, shortAddress } from './identity.js';
+export type { IdentityResolver, IdentityResolverOptions, WalletIdentity, EnsClient } from './identity.js';
 
 // CLI entry — configuration is environment-only:
 //   PORT                    listen port (default 8475)
@@ -46,6 +50,11 @@ export { challengeMessage, recoverPersonalSigner, ADDRESS_RE } from './wallet.js
 //   FOBAL_CHAIN_ID          (+ the three above) enables POST /mint/prepare
 //   FOBAL_GENERATOR_SIGNER_PK  SquadMint permit signer key — SECRET, holds
 //                           zero on-chain roles; Secrets Manager in deploys
+//   FOBAL_IDENTITY          '0' disables ENS identity (default: on)
+//   FOBAL_IDENTITY_RPC_URL  Ethereum MAINNET rpc for identity resolution —
+//                           the IDENTITY network, deliberately separate
+//                           from the game network (default: viem's public
+//                           mainnet transport). Keyed URLs are secrets.
 import { fileURLToPath } from 'node:url';
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
   const { startLobbyServer } = await import('./hub.js');
@@ -129,6 +138,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     console.log(JSON.stringify({ msg: 'mint_service', generator: process.env.FOBAL_CHAIN_GENERATOR, chainId: process.env.FOBAL_CHAIN_ID }));
   }
 
+  // wallet identity (ENS) — on by default: it degrades to shortened
+  // addresses on any failure and never blocks a request
+  let identity = null;
+  if (process.env.FOBAL_IDENTITY !== '0'){
+    const { createIdentityResolver } = await import('./identity.js');
+    identity = createIdentityResolver({ rpcUrl: process.env.FOBAL_IDENTITY_RPC_URL });
+    console.log(JSON.stringify({ msg: 'identity_resolver', rpc: process.env.FOBAL_IDENTITY_RPC_URL ?? 'viem-default-mainnet' }));
+  }
+
   const server = await startLobbyServer({
     port: Number(process.env.PORT ?? 8475),
     secret: process.env.FOBAL_LOBBY_SECRET,
@@ -139,6 +157,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     emailProvider,
     inviteBaseUrl: process.env.FOBAL_INVITE_BASE_URL,
     emailWebhookSecret: process.env.FOBAL_EMAIL_WEBHOOK_SECRET,
+    identity,
     testLoginKey: process.env.FOBAL_TEST_LOGIN_KEY,
     matchServer: {
       url: process.env.FOBAL_MATCH_URL ?? 'http://localhost:8473',
