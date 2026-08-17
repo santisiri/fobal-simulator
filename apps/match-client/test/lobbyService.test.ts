@@ -229,6 +229,89 @@ describe('LobbyService — two clients', () => {
     } finally { await r.close(); }
   });
 
+  test('quick match: two queuers converge on ONE match — even when they queue simultaneously', async () => {
+    const r = await rig();
+    try {
+      const A = svc(r.base), B = svc(r.base);
+      await emailLogin(A, 'a@fobal.ai');
+      await emailLogin(B, 'b@fobal.ai');
+
+      // the race: both hit the queue in the same tick, both polling at 100ms
+      await Promise.all([A.joinQueue(), B.joinQueue()]);
+
+      const aMatch = await until(() => A.state.match, 'A paired');
+      const bMatch = await until(() => B.state.match, 'B paired');
+      expect(aMatch.matchId).toBe(bMatch.matchId);          // ONE match
+      expect(aMatch.teamId).not.toBe(bMatch.teamId);        // opposite dugouts
+      // and exactly one match exists for each of them
+      const history = await A.history();
+      expect(history.matches.filter((m: { matchId: string }) => m.matchId === aMatch.matchId)).toHaveLength(1);
+      expect(history.matches).toHaveLength(1);
+      // the queue empties itself once the match is born
+      await until(() => A.state.queue.status === 'idle', 'A queue cleared');
+      expect(A.state.queue.waiting).toBe(0);
+    } finally { await r.close(); }
+  });
+
+  test('a lone queuer waits, is visible as queued, and can leave', async () => {
+    const r = await rig();
+    try {
+      const A = svc(r.base), B = svc(r.base);
+      await emailLogin(A, 'a@fobal.ai');
+      await emailLogin(B, 'b@fobal.ai');            // present but NOT queueing
+
+      const queued = await A.joinQueue();
+      expect(queued).toMatchObject({ status: 'searching', waiting: 1 });
+      expect(Date.parse(queued.since)).toBeGreaterThan(0);
+      // the roster tells the other coach what A is doing
+      await until(() => B.state.participants[0]?.status === 'queued', 'B sees A queued');
+      expect(A.state.match).toBeNull();
+
+      const left = await A.leaveQueue();
+      expect(left.status).toBe('idle');
+      await until(() => B.state.participants[0]?.status === 'available', 'B sees A available again');
+      await expect(A.leaveQueue()).resolves.toMatchObject({ status: 'idle' });   // idempotent
+    } finally { await r.close(); }
+  });
+
+  test('a queuer who vanishes is never paired — presence backs the queue', async () => {
+    const r = await rig({ presenceTtlMs: 300 });
+    try {
+      const A = svc(r.base), B = svc(r.base);
+      await emailLogin(A, 'a@fobal.ai');
+      await emailLogin(B, 'b@fobal.ai');
+      await A.joinQueue();
+      A.dispose();                                   // tab closed while queued
+      await new Promise(res => setTimeout(res, 400));  // presence goes stale
+
+      const queued = await B.joinQueue();
+      expect(queued.status).toBe('searching');       // no ghost to pair with
+      await new Promise(res => setTimeout(res, 300));
+      expect(B.state.match).toBeNull();
+      expect(B.state.queue.waiting).toBe(1);
+    } finally { await r.close(); }
+  });
+
+  test('queueing is refused mid-match, and a challenge accept clears the queue', async () => {
+    const r = await rig();
+    try {
+      const A = svc(r.base), B = svc(r.base);
+      await emailLogin(A, 'a@fobal.ai');
+      await emailLogin(B, 'b@fobal.ai');
+      const bId = (await until(() => A.state.participants[0], 'roster')).accountId;
+
+      await A.joinQueue();                            // searching…
+      await A.challenge(bId);                         // …and challenges directly
+      const ch = await until(() => B.state.incomingChallenges[0], 'incoming');
+      await B.accept(ch.id);
+      await until(() => A.state.match, 'A in a match');
+
+      // the queue drops anyone who found a game elsewhere
+      await until(() => A.state.queue.status === 'idle', 'queue cleared by the match');
+      await expect(A.joinQueue()).rejects.toThrow(/already in a match/);
+    } finally { await r.close(); }
+  });
+
   test('wallet login works through the service; switching accounts ends the session', async () => {
     const r = await rig();
     try {
