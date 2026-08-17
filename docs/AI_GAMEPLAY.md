@@ -32,19 +32,32 @@ means the same thing in every match. Comparative language ("press a BIT
 harder") flows through the interpreter's free-form numeric patch instead,
 relative to current tactics.
 
-**PLAYER (11 intents — 1 binds, 10 reserved)**: `mark_player` binds NOW
-(compiles to the engine's man-marking assignment: `markTarget` +
-`scheme:'man'`). `stay_wide` `cut_inside` `overlap` `underlap`
-`hold_position` `make_forward_runs` `come_short` `press_player`
-`shoot_more` `dribble_more` are reserved AT THE COMPILE
-TABLE: they validate, resolve their target (so a typo'd name is a NAME
-error, not a fake "unsupported"), and reject honestly — *"Ferreyra: not
-on the pitch yet"*. The ENGINE side of G3 has landed separately
-(`packages/engine/src/tactics.ts` + the protocol `PlayerInstruction`
-command — spatial instructions with tick-based TTLs, one active per
-player; see `docs/TACTICAL_EXECUTION.md`): the remaining bridge is
-teaching the compile table to lower these intents onto that command,
-which flips them from reserved to live without touching the interpreter.
+**PLAYER (11 intents — 7 bind, 4 reserved)**: `mark_player` compiles to
+the engine's man-marking assignment (`markTarget` + `scheme:'man'`). Six
+spatial intents lower onto the engine's `PlayerInstruction` layer
+(`packages/engine/src/tactics.ts` — station biasing, one active
+instruction per player, replacement semantics, attributes decide every
+step; see `docs/TACTICAL_EXECUTION.md`):
+
+| intent | engine instruction | ack |
+|---|---|---|
+| `stay_wide` | `stay_wide` | `FERREYRA → STAY WIDE ✓` |
+| `cut_inside` | `stay_central` | `… → CUT INSIDE ✓` |
+| `overlap` | `overlap` | `… → OVERLAP ✓` |
+| `hold_position` | `hold_position` | `… → HOLD POSITION ✓` |
+| `make_forward_runs` | `push_forward` | `… → PUSH FORWARD ✓` |
+| `come_short` | `drop_back` | `… → COME SHORT ✓` |
+
+Spatial orders address YOUR player (an opponent-side target is refused
+with direction), and the goalkeeper keeps his post — checked at compile
+for a fast answer, enforced again by the engine.
+
+Four remain reserved, each with ITS OWN honest reason: `underlap` (the
+engine runs overlaps, not underlaps yet), `press_player` (the engine
+cannot single out a presser — use marking or press as a team),
+`shoot_more`/`dribble_more` (per-player behavior tendencies are not
+tunable yet). A typo'd name still surfaces as a NAME error before any
+"unsupported" talk.
 
 **MATCH (2 intents — both bind)**: `change_formation` (442|433|352),
 `substitution` (compiles to the existing wire substitution; the engine
@@ -102,12 +115,17 @@ no ball state, no sim internals.
 ## Command lifetime
 
 - **Instant**: substitutions.
-- **Persistent-until-replaced**: every compiled tactical intent — orders
-  patch the team's tactical state; the next order touching the same
-  fields overwrites (last wins per field, no contradiction accumulation).
-- **Cancellation** = issue the counter-order.
-- **Timed instructions** ("for five minutes") are a documented non-goal
-  until the engine can expire state.
+- **Persistent-until-replaced**: team tactical intents patch the team's
+  state; the next order touching the same fields overwrites (last wins
+  per field, no contradiction accumulation). Player instructions are ONE
+  per player — a new instruction replaces the old, geometry always
+  derived from the base station so replacements never compound.
+- **Cancellation** = issue the counter-order; for player instructions,
+  `hold_position` effectively re-pins the station, and a formation change
+  clears every spatial instruction (new shape, new stations).
+- **Timed instructions**: the engine supports `ttlTicks` expiry on player
+  instructions; the taxonomy does not surface durations yet ("overlap for
+  five minutes" is interpreted as persistent) — a candidate G5 extension.
 
 ## Attributes decide execution
 
@@ -172,10 +190,11 @@ pipeline.
 
 ## Known limitations (honest list)
 
-- 10 of 11 player intents are reserved at the compile table; the engine's
-  PlayerInstruction layer exists (docs/TACTICAL_EXECUTION.md) but the
-  taxonomy→PlayerInstruction bridge is not yet written — only marking
-  reaches the pitch through the spoken path today.
+- 4 of 11 player intents remain reserved (underlap, press_player,
+  shoot_more, dribble_more) — each rejection names its own reason.
+- Spoken durations are not honored yet: the engine's `ttlTicks` exists,
+  but the taxonomy has no duration field, so every spatial instruction is
+  persistent-until-replaced.
 - One `markTarget` per team (the engine's model) — "mark their nine AND
   their seven" keeps the last.
 - Ambiguity between two players sharing a surname produces a degenerate

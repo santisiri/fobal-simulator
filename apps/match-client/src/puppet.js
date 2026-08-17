@@ -577,6 +577,8 @@ export class GoldenPuppet {
           cmd = { kind: 'substitution', commandId: id, teamId: conn.teamId,
             playerOut: wire.playerOut, playerIn: wire.playerIn };
         else if (wire.kind === 'player_instruction')
+          // G3 bridge: spatial instruction to one of OUR players — the
+          // engine biases his station; his attributes still take the steps
           cmd = { kind: 'player_instruction', commandId: id, teamId: conn.teamId,
             playerId: wire.playerId, instruction: wire.instruction,
             ...(wire.targetPlayerId ? { targetPlayerId: wire.targetPlayerId } : {}),

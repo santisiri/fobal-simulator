@@ -89,7 +89,7 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
     } finally { await server.close(); }
   });
 
-  test('spatial instructions COMPILE now (feat/player-commands): overlap becomes a ttl-bound player_instruction', async () => {
+  test('G3 bridge: a spatial instruction compiles to the player_instruction wire', async () => {
     const { server, interpret } = await boot({
       orders: [{ scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreyra' } }],
       say: 'ok',
@@ -97,20 +97,22 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
     try {
       const out = await (await interpret('ferreyra overlap left')).json() as OrdersResponse;
       expect(out.rejected).toBeUndefined();
-      expect(out.orders![0]!.ack).toContain('OVERLAP');
-      expect(out.orders![0]!.wire).toMatchObject({ kind: 'player_instruction', instruction: 'overlap', ttlTicks: 600 });
+      expect(out.orders![0]!.ack).toBe('FERREYRA → OVERLAP ✓');
+      expect(out.orders![0]!.wire).toMatchObject({
+        kind: 'player_instruction', playerId: 'rhinos-player-10', instruction: 'overlap',
+      });
     } finally { await server.close(); }
   });
 
-  test('still-reserved instructions come back as "not on the pitch yet", named', async () => {
+  test('still-reserved instructions reject with their SPECIFIC reason, named', async () => {
     const { server, interpret } = await boot({
-      orders: [{ scope: 'player', intent: 'press_player', target: { side: 'own', name: 'Ferreyra' } }],
+      orders: [{ scope: 'player', intent: 'underlap', target: { side: 'own', name: 'Ferreyra' } }],
       say: 'ok',
     });
     try {
-      const out = await (await interpret('ferreyra press their keeper')).json() as OrdersResponse;
+      const out = await (await interpret('ferreyra underlap')).json() as OrdersResponse;
       expect(out.rejected![0]!.reason).toContain('Ferreyra');
-      expect(out.rejected![0]!.reason).toContain('not on the pitch yet');
+      expect(out.rejected![0]!.reason).toContain('overlaps, not underlaps');
     } finally { await server.close(); }
   });
 
@@ -167,13 +169,14 @@ describe('the FULL loop: interpret -> compiled order -> real WS -> engine state'
       orders: [
         { scope: 'team', intent: 'press_high' },
         { scope: 'player', intent: 'mark_player', target: { side: 'opponent', shirtNumber: 9 } },
+        { scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreyra' } },
       ],
       say: 'done',
     });
     try {
       const room = server.rooms.get('orders-1')!;
-      const out = await (await interpret('press high and mark their nine')).json() as OrdersResponse;
-      expect(out.orders).toHaveLength(2);
+      const out = await (await interpret('press high, mark their nine, ferreyra overlap')).json() as OrdersResponse;
+      expect(out.orders).toHaveLength(3);
 
       const acks: Array<{ commandId: string; effectiveTick: number }> = [];
       const rejections: unknown[] = [];
@@ -199,14 +202,17 @@ describe('the FULL loop: interpret -> compiled order -> real WS -> engine state'
       // exactly what puppet.dispatchInterpretation does with the response
       const sendResults: boolean[] = [];
       for (const [i, order] of out.orders!.entries()){
-        const wire = order.wire;
+        const wire = order.wire as Record<string, unknown> & { kind: string };
         if (wire.kind === 'tactical')
           sendResults.push(conn.sendCommand({ kind: 'tactical', commandId: `t-${i}`, teamId: 'team-rhinos', payload: wire.payload }));
+        else if (wire.kind === 'player_instruction')
+          sendResults.push(conn.sendCommand({ kind: 'player_instruction', commandId: `t-${i}`, teamId: 'team-rhinos',
+            playerId: wire.playerId, instruction: wire.instruction }));
       }
       await new Promise<void>((resolve, reject) => {
         const start = Date.now();
         const poll = () => {
-          if (acks.length === 2) return resolve();
+          if (acks.length === 3) return resolve();
           if (Date.now() - start > 10_000) return reject(new Error('acks never arrived; sends=' + JSON.stringify(sendResults) + ' status=' + conn.status + ' rejections=' + JSON.stringify(rejections)));
           setTimeout(poll, 10);
         };
@@ -216,10 +222,18 @@ describe('the FULL loop: interpret -> compiled order -> real WS -> engine state'
       // the engine applies at effectiveTick — advance past it and observe
       const maxTick = Math.max(...acks.map(a => a.effectiveTick));
       room.advance(maxTick - room.currentTick + 1);
-      const tactics = room.snapshot().teams[0]!.tactics as { pressing: number; markTarget: string | null; scheme: string };
+      const snap = room.snapshot();
+      const tactics = snap.teams[0]!.tactics as { pressing: number; markTarget: string | null; scheme: string };
       expect(tactics.pressing).toBe(0.85);
       expect(tactics.markTarget).toBe('comets-player-09');
       expect(tactics.scheme).toBe('man');
+      // the G3 bridge's observable result: the instruction book, in the
+      // authoritative snapshot both players and spectators receive
+      const instructions = (snap.teams[0] as { instructions?: Array<{ playerId: string; instruction: string }> }).instructions;
+      expect(instructions).toBeDefined();
+      expect(instructions).toContainEqual(expect.objectContaining({
+        playerId: 'rhinos-player-10', instruction: 'overlap',
+      }));
       conn.close();
     } finally { await server.close(); }
   });
