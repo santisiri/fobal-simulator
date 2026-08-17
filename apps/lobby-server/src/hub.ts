@@ -313,6 +313,11 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     for (const [id, c] of challenges) if (c.createdAt < cutoff) challenges.delete(id);
     const settledCutoff = Date.now() - SETTLED_TTL_MS;
     for (const [id, s] of settledChallenges) if (s.at < settledCutoff) settledChallenges.delete(id);
+    // presence hygiene: entries an hour past their TTL carry no signal
+    // (statusOf reads absence and staleness identically) — drop them so the
+    // map never grows with every account that ever visited
+    const presenceCutoff = Date.now() - Math.max(60 * 60 * 1000, presenceTtl * 10);
+    for (const [id, p] of presence) if (p.lastSeen < presenceCutoff) presence.delete(id);
   }
 
   function authed(req: IncomingMessage): Account | null {
@@ -654,6 +659,38 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       // everything below requires a session
       const me = authed(req);
       if (!me) return json(res, 401, { error: 'session token required' });
+
+      // ---- opponent scouting (charter goal 5) ----------------------------
+      // GET /coaches/:accountId — the card a coach reads before accepting a
+      // challenge: identity, form, kit, and the XI as name/role/shirt/OVERALL
+      // only. The 13-rating spreadsheet is deliberately withheld — scouting
+      // shows shape and strength; the full numbers reveal themselves on the
+      // pitch. (/players/:tokenId is the NFT read — different namespace.)
+      if (req.method === 'GET' && parts[0] === 'coaches' && parts.length === 2){
+        const target = store.getAccount(parts[1]!);
+        if (!target) return json(res, 404, { error: 'unknown coach' });
+        const team = buildTeam(target);
+        const overallOf = (ratings: Record<string, number>): number => {
+          const values = Object.values(ratings);
+          return Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+        };
+        return json(res, 200, {
+          coach: {
+            ...participantView(target),
+            kit: team.colors ?? null,
+            chainTeam: target.chainTeam !== undefined,
+            squad: {
+              formation: team.formation ?? '442',
+              players: team.players.slice(0, 11).map(p => ({
+                name: p.name,
+                role: p.role,
+                shirtNumber: p.shirtNumber,
+                overall: overallOf(p.ratings),
+              })),
+            },
+          },
+        });
+      }
 
       // ---- email invitations: send / list / accept -----------------------
       // POST /invites {email, message?} — invite a friend to a match.
