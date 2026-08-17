@@ -89,13 +89,26 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
     } finally { await server.close(); }
   });
 
-  test('reserved instructions come back as "not on the pitch yet", named', async () => {
+  test('spatial instructions COMPILE now (feat/player-commands): overlap becomes a ttl-bound player_instruction', async () => {
     const { server, interpret } = await boot({
       orders: [{ scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreyra' } }],
       say: 'ok',
     });
     try {
       const out = await (await interpret('ferreyra overlap left')).json() as OrdersResponse;
+      expect(out.rejected).toBeUndefined();
+      expect(out.orders![0]!.ack).toContain('OVERLAP');
+      expect(out.orders![0]!.wire).toMatchObject({ kind: 'player_instruction', instruction: 'overlap', ttlTicks: 600 });
+    } finally { await server.close(); }
+  });
+
+  test('still-reserved instructions come back as "not on the pitch yet", named', async () => {
+    const { server, interpret } = await boot({
+      orders: [{ scope: 'player', intent: 'press_player', target: { side: 'own', name: 'Ferreyra' } }],
+      say: 'ok',
+    });
+    try {
+      const out = await (await interpret('ferreyra press their keeper')).json() as OrdersResponse;
       expect(out.rejected![0]!.reason).toContain('Ferreyra');
       expect(out.rejected![0]!.reason).toContain('not on the pitch yet');
     } finally { await server.close(); }
