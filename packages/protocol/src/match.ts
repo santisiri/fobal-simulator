@@ -179,6 +179,7 @@ export const PlayerInstructionKind = z.enum([
   'push_forward',   // advance the station toward the opposition goal
   'drop_back',      // retreat it toward his own goal
   'overlap',        // forward + wide — the classic outside run (often ttl'd)
+  'underlap',       // forward + central — the inside channel run
   'hold_position',  // return to and keep the exact formation station
   'mark_opponent',  // defensive assignment on targetPlayerId (their player)
   'clear',          // remove the active instruction

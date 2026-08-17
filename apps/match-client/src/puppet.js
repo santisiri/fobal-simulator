@@ -576,6 +576,12 @@ export class GoldenPuppet {
         else if (wire.kind === 'substitution')
           cmd = { kind: 'substitution', commandId: id, teamId: conn.teamId,
             playerOut: wire.playerOut, playerIn: wire.playerIn };
+        else if (wire.kind === 'player_instruction')
+          // G3 bindings: "Ferreyra, overlap" — station biasing, per player
+          cmd = { kind: 'player_instruction', commandId: id, teamId: conn.teamId,
+            playerId: wire.playerId, instruction: wire.instruction,
+            ...(wire.targetPlayerId ? { targetPlayerId: wire.targetPlayerId } : {}),
+            ...(wire.ttlTicks ? { ttlTicks: wire.ttlTicks } : {}) };
         if (!cmd) continue;
         conn.sendCommand(cmd);
         const ack = String(order.ack ?? order.intent).slice(0, 60);

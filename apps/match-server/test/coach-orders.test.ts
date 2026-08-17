@@ -89,15 +89,28 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
     } finally { await server.close(); }
   });
 
-  test('reserved instructions come back as "not on the pitch yet", named', async () => {
+  test('bound player instructions compile to player_instruction wires (G3)', async () => {
     const { server, interpret } = await boot({
       orders: [{ scope: 'player', intent: 'overlap', target: { side: 'own', name: 'Ferreyra' } }],
       say: 'ok',
     });
     try {
       const out = await (await interpret('ferreyra overlap left')).json() as OrdersResponse;
+      expect(out.rejected).toBeUndefined();
+      expect(out.orders![0]!.ack).toContain('OVERLAP ✓');
+      expect(out.orders![0]!.wire).toMatchObject({ kind: 'player_instruction', instruction: 'overlap' });
+    } finally { await server.close(); }
+  });
+
+  test('still-reserved instructions reject named, with their specific reason', async () => {
+    const { server, interpret } = await boot({
+      orders: [{ scope: 'player', intent: 'press_player', target: { side: 'own', name: 'Ferreyra' } }],
+      say: 'ok',
+    });
+    try {
+      const out = await (await interpret('ferreyra press their keeper')).json() as OrdersResponse;
       expect(out.rejected![0]!.reason).toContain('Ferreyra');
-      expect(out.rejected![0]!.reason).toContain('not on the pitch yet');
+      expect(out.rejected![0]!.reason).toContain('per-player pressing');
     } finally { await server.close(); }
   });
 

@@ -70,6 +70,11 @@ export function biasedSlot(kind: InstructionRecord['kind'], base: { x: number; y
         x: clamp(base.x + OVERLAP_X, X_MIN, X_MAX),
         y: clamp(base.y + towardTouchline * OVERLAP_Y, Y_MIN, Y_MAX),
       };
+    case 'underlap': {
+      // the inside channel: forward like an overlap, but toward the half-space
+      const y = base.y >= 0.5 ? Math.max(0.5, base.y - OVERLAP_Y) : Math.min(0.5, base.y + OVERLAP_Y);
+      return { x: clamp(base.x + OVERLAP_X, X_MIN, X_MAX), y };
+    }
     case 'hold_position':
     case 'mark_opponent':
       return { x: base.x, y: base.y };
