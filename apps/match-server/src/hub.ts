@@ -391,6 +391,11 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
           return json(res, 502, { error: 'transcription failed — try again or type it' });
         }
         telemetry.metric('SttMs', Date.now() - sttStart, 'Milliseconds');
+        // G4: the capture stage happens in the browser — the client stamps
+        // it onto the request so the whole voice budget meters server-side
+        const captureMs = Number(req.headers['x-fobal-voice-capture-ms']);
+        const validCapture = Number.isFinite(captureMs) && captureMs > 0 && captureMs < 120_000;
+        if (validCapture) telemetry.metric('VoiceCaptureMs', Math.round(captureMs), 'Milliseconds');
         if (!transcript || transcript.length > 500)
           return json(res, 422, { error: 'nothing intelligible heard', transcript: '' });
         const startedAt = Date.now();
@@ -398,6 +403,7 @@ export async function startMatchServer(options: MatchServerOptions): Promise<Mat
         telemetry.log('coach_voice', {
           matchId: parts[1], teamId: gate.teamId, audioBytes: audio.length,
           transcriptChars: transcript.length, sttMs: startedAt - sttStart, interpretMs: Date.now() - startedAt,
+          ...(validCapture ? { captureMs: Math.round(captureMs) } : {}),
           outcome: result.patch ? 'patch' : result.coachText ? 'coach_text' : 'say_only',
         });
         telemetry.metric('CoachInterpretMs', Date.now() - startedAt, 'Milliseconds');

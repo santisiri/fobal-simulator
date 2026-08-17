@@ -577,7 +577,8 @@ export class GoldenPuppet {
           cmd = { kind: 'substitution', commandId: id, teamId: conn.teamId,
             playerOut: wire.playerOut, playerIn: wire.playerIn };
         else if (wire.kind === 'player_instruction')
-          // G3 bindings: "Ferreyra, overlap" — station biasing, per player
+          // G3 bridge: spatial instruction to one of OUR players — the
+          // engine biases his station; his attributes still take the steps
           cmd = { kind: 'player_instruction', commandId: id, teamId: conn.teamId,
             playerId: wire.playerId, instruction: wire.instruction,
             ...(wire.targetPlayerId ? { targetPlayerId: wire.targetPlayerId } : {}),
@@ -624,15 +625,20 @@ export class GoldenPuppet {
     });
 
     if (!sent.length){
+      if (fromVoice){ this._voiceT0 = null; this._captureMs = null; }
       if (fromVoice) this.voiceState(out.rejected?.length ? 'failed' : 'noop',
         out.rejected?.[0]?.reason ?? out.say ?? 'heard \u2014 nothing tactical in that');
       return;
     }
     if (fromVoice){
-      // the chip tracks the LAST command's server ack; the summary
-      // carries every ack so a multi-order utterance reads back in full
-      const last = sent[sent.length - 1];
-      this.pendingVoiceAck = { id: last.id, summary: sent.map(s => s.ack).join(' \u00b7 ') };
+      // the chip goes green only when EVERY command is acked; any
+      // rejection flips it red. t0 is the G4 voice-to-ack clock.
+      this.pendingVoiceAck = {
+        ids: new Set(sent.map(s => s.id)),
+        summary: sent.map(s => s.ack).join(' \u00b7 '),
+        t0: this._voiceT0 ?? null,
+      };
+      this._voiceT0 = null; this._captureMs = null;   // one utterance, one clock
       this.voiceState('sent', this.pendingVoiceAck.summary);
     }
   }
@@ -666,7 +672,12 @@ export class GoldenPuppet {
       const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
       const res = await fetch(`${base}/matches/${conn.matchId}/coach/voice`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${conn.token}`, 'content-type': blob.type || 'audio/webm' },
+        headers: {
+          authorization: `Bearer ${conn.token}`,
+          'content-type': blob.type || 'audio/webm',
+          // G4: capture stage of the voice budget, measured where it happens
+          ...(this._captureMs ? { 'x-fobal-voice-capture-ms': String(this._captureMs) } : {}),
+        },
         body: blob,
         signal: AbortSignal.timeout(25_000),
       });
@@ -710,15 +721,23 @@ export class GoldenPuppet {
       const prevAck = conn.hooks.onAck;
       conn.hooks.onAck = (m) => {
         if (prevAck) prevAck(m);
-        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
-          this.voiceState('applied', this.pendingVoiceAck.summary);
-          this.pendingVoiceAck = null;
+        const p = this.pendingVoiceAck;
+        if (p?.ids?.has(m.commandId)){
+          p.ids.delete(m.commandId);
+          if (p.ids.size === 0){
+            // G4: voice-to-ack, capture-stop to the LAST server ack — the
+            // end-to-end number only the client can measure
+            const ms = p.t0 != null ? Math.round(performance.now() - p.t0) : null;
+            if (ms !== null) console.log(JSON.stringify({ msg: 'voice_to_ack', ms }));
+            this.voiceState('applied', ms !== null ? `${p.summary} \u00b7 ${(ms / 1000).toFixed(1)}s` : p.summary);
+            this.pendingVoiceAck = null;
+          }
         }
       };
       const prevRej = conn.hooks.onRejected;
       conn.hooks.onRejected = (m) => {
         if (prevRej) prevRej(m);
-        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
+        if (this.pendingVoiceAck?.ids?.has(m.commandId)){
           this.voiceState('failed', m.message ?? 'the bench rejected it');
           this.pendingVoiceAck = null;
         }
@@ -737,6 +756,9 @@ export class GoldenPuppet {
           rec.onstop = () => {
             for (const t of stream.getTracks()) t.stop();
             this.recorder = null;
+            // G4 stamps: capture length, and t0 for the voice-to-ack clock
+            this._voiceT0 = performance.now();
+            this._captureMs = this._captureStart ? Math.round(this._voiceT0 - this._captureStart) : null;
             const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
             if (blob.size < 1200){ this.voiceState('idle'); return; }   // a tap, not talk
             void this.voiceViaStt(conn, blob).then(handled => {
@@ -749,6 +771,7 @@ export class GoldenPuppet {
             });
           };
           rec.start();
+          this._captureStart = performance.now();   // G4
           this.recorder = rec;
         } catch {
           // mic permission denied for MediaRecorder — try the SR path
@@ -823,6 +846,7 @@ export class GoldenPuppet {
    *  after the microphone is exactly the typed coach-console path. */
   submitVoiceTranscript(text){
     this._fromVoice = true;
+    this._voiceT0 = this._voiceT0 ?? performance.now();   // G4 (SR path)
     const game = this.win.game;
     if (!game.coachOpen) game.openCoach();
     game.coachText = String(text ?? '').trim().slice(0, 280);

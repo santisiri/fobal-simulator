@@ -19,15 +19,12 @@
 //      Intents the simulation cannot express yet are REJECTED with the real
 //      reason — never silently approximated.
 //
-// Command lifetime semantics: every compiled tactical intent is
+// Command lifetime semantics (v1): every compiled tactical intent is
 // PERSISTENT-UNTIL-REPLACED — it patches the team's tactical state, and the
 // next order touching the same fields overwrites it (no accumulation, no
 // contradiction pile-up: last order wins per field). Substitutions are
-// INSTANT. Player instructions are one-per-player, replace-never-accumulate,
-// and may carry a tick-based ttl (the engine expires them on tick
-// boundaries and restores the player's station — make_forward_runs uses
-// this: a run is a spell, not a lifestyle). Free-form durations ("for the
-// next five minutes") remain interpreter-side future work.
+// INSTANT. Timed instructions ("for the next five minutes") are a
+// documented non-goal until the engine can expire state.
 import { z } from 'zod';
 import { Formation, Role } from './core.js';
 import { PlayerInstructionKind, TacticalPatch, TeamSnapshot } from './match.js';
@@ -176,32 +173,31 @@ const TEAM_EFFECTS: Record<TeamIntent, (intensity?: number) => { kind: 'patch'; 
   cross_more: () => t({ crossing: 0.85, width: 0.75 }, 'GET CROSSES IN'),
 };
 
-/** Player intents that bind TODAY, lowered onto the engine's
- *  player_instruction command (formation-station biasing + the marking
- *  machine — see docs/TACTICAL_EXECUTION.md). The growth rule stands:
- *  engine bindings first, then the vocabulary — everything not in this
- *  table validates and rejects honestly with its specific reason. */
-const PLAYER_EFFECTS: Partial<Record<PlayerIntent,
-  { instruction: PlayerInstructionKind; ack: string; ttlTicks?: number }>> = {
-  stay_wide: { instruction: 'stay_wide', ack: 'STAY WIDE' },
-  cut_inside: { instruction: 'stay_central', ack: 'CUT INSIDE' },
-  overlap: { instruction: 'overlap', ack: 'OVERLAP' },
-  underlap: { instruction: 'underlap', ack: 'UNDERLAP' },
-  hold_position: { instruction: 'hold_position', ack: 'HOLD YOUR POSITION' },
-  // a run is a spell, not a lifestyle: expires after 900 ticks (~15s of
-  // sim), station restored automatically — say it again for another burst
-  make_forward_runs: { instruction: 'push_forward', ack: 'MAKE RUNS', ttlTicks: 900 },
-  come_short: { instruction: 'drop_back', ack: 'COME SHORT' },
+/** G3 bridge: spatial player intents lower onto the engine's
+ *  PlayerInstruction layer (packages/engine/src/tactics.ts — station
+ *  biasing; one active instruction per player, replacement semantics,
+ *  attributes decide every actual step). The instruction is addressed to
+ *  YOUR player; the engine re-validates XI membership and refuses
+ *  goalkeepers. */
+const SPATIAL_BINDINGS: Partial<Record<PlayerIntent, { kind: PlayerInstructionKind; ack: string; ttlTicks?: number }>> = {
+  stay_wide: { kind: 'stay_wide', ack: 'STAY WIDE' },
+  cut_inside: { kind: 'stay_central', ack: 'CUT INSIDE' },
+  overlap: { kind: 'overlap', ack: 'OVERLAP' },
+  underlap: { kind: 'underlap', ack: 'UNDERLAP' },
+  hold_position: { kind: 'hold_position', ack: 'HOLD POSITION' },
+  // a run is a spell, not a lifestyle: 900 ticks (~15s of sim), then the
+  // station restores itself — say it again for another burst
+  make_forward_runs: { kind: 'push_forward', ack: 'PUSH FORWARD', ttlTicks: 900 },
+  come_short: { kind: 'drop_back', ack: 'COME SHORT' },
 };
 
-/** Still reserved, each with its honest reason (the generic line hid the
- *  real state of the engine). */
-const STILL_RESERVED: Partial<Record<PlayerIntent, string>> = {
-  press_player: 'per-player pressing has no engine binding yet — team pressing works today',
-  shoot_more: 'shot tendency is team-level today (try shoot_on_sight) — per-player is future work',
-  dribble_more: 'dribble tendency has no per-player engine binding yet',
+/** Still reserved — each with ITS OWN honest reason (a generic "not
+ *  supported" teaches the manager nothing). */
+const RESERVED_REASONS: Partial<Record<PlayerIntent, string>> = {
+  press_player: "the engine cannot single out a presser yet — try 'mark their number' or press as a team",
+  shoot_more: 'per-player shooting tendency is not tunable yet — shoot_on_sight sets it for the team',
+  dribble_more: 'per-player dribbling tendency is not tunable yet',
 };
-const RESERVED_REASON = 'not on the pitch yet — this order needs an engine binding first';
 
 // ---------------------------------------------------------------------------
 // compileGameCommand — the simulation integration boundary
@@ -239,26 +235,24 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
         wire: { kind: 'tactical', payload: { type: 'patch', patch: { markTarget: target.playerId, scheme: 'man' } } },
       };
     }
-    const bound = PLAYER_EFFECTS[cmd.intent as PlayerIntent];
-    if (bound){
-      // spatial instructions address YOUR OWN player ("Ferreyra, overlap")
+    const binding = SPATIAL_BINDINGS[cmd.intent as PlayerIntent];
+    if (binding){
+      // spatial instructions address YOUR player
       if (cmd.target!.side !== 'own')
-        return { ok: false, reason: `${cmd.intent.replace(/_/g, ' ')} is an order for YOUR player, not theirs` };
+        return { ok: false, reason: 'spatial orders are for YOUR players — name one of your own' };
       const target = resolvePlayerRef(cmd.target!, ctx);
       if (!target.ok) return { ok: false, reason: target.reason };
-      // the engine rejects GK instructions too — saying it here keeps the
-      // round trip out of an answer the compile table already knows
-      const targetRole = ctx.own.players.find(p => p.playerId === target.playerId)?.role;
-      if (targetRole === 'GK')
-        return { ok: false, reason: 'the goalkeeper keeps his post — pick an outfielder' };
+      // mirror the engine's goalkeeper rule with a friendlier front door
+      // (the engine still enforces it — this answers before a round trip)
+      const role = ctx.own.players.find(p => p.playerId === target.playerId)?.role;
+      if (role === 'GK')
+        return { ok: false, reason: `${target.name.split(/\s+/).pop()}: the goalkeeper keeps his post` };
       return {
         ok: true,
-        ack: `${target.name.split(/\s+/).pop()!.toUpperCase()}: ${bound.ack} ✓`,
+        ack: `${target.name.split(/\s+/).pop()!.toUpperCase()} → ${binding.ack} ✓`,
         wire: {
-          kind: 'player_instruction',
-          playerId: target.playerId,
-          instruction: bound.instruction,
-          ...(bound.ttlTicks !== undefined ? { ttlTicks: bound.ttlTicks } : {}),
+          kind: 'player_instruction', playerId: target.playerId, instruction: binding.kind,
+          ...(binding.ttlTicks !== undefined ? { ttlTicks: binding.ttlTicks } : {}),
         },
       };
     }
@@ -267,7 +261,8 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
     // surface now (a typo should not masquerade as "unsupported")
     const target = resolvePlayerRef(cmd.target!, ctx);
     if (!target.ok) return { ok: false, reason: target.reason };
-    return { ok: false, reason: `${target.name.split(/\s+/).pop()}: ${STILL_RESERVED[cmd.intent as PlayerIntent] ?? RESERVED_REASON}` };
+    const reason = RESERVED_REASONS[cmd.intent as PlayerIntent] ?? 'not on the pitch yet';
+    return { ok: false, reason: `${target.name.split(/\s+/).pop()}: ${reason}` };
   }
 
   // match scope

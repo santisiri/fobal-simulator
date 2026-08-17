@@ -119,52 +119,46 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
     expect(out.ok).toBe(false);
   });
 
-  test('bound player intents lower onto player_instruction (G3 bindings)', () => {
-    const out = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'overlap',
-      target: { side: 'own', name: 'Ferreyra' },
-    }), ctx);
-    expect(out).toMatchObject({
-      ok: true,
-      ack: 'FERREYRA: OVERLAP ✓',
-      wire: { kind: 'player_instruction', playerId: 'own-p4', instruction: 'overlap' },
-    });
-
-    // taxonomy → engine vocabulary mappings that differ by name
-    const inside = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'cut_inside',
-      target: { side: 'own', shirtNumber: 8 },
-    }), ctx);
-    if (inside.ok) expect(inside.wire).toMatchObject({ kind: 'player_instruction', instruction: 'stay_central' });
-
-    // a run is a spell: make_forward_runs carries the tick-based ttl
-    const runs = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'make_forward_runs',
-      target: { side: 'own', name: 'Njoku' },
-    }), ctx);
-    expect(runs).toMatchObject({
-      ok: true,
-      wire: { kind: 'player_instruction', instruction: 'push_forward', ttlTicks: 900 },
-    });
+  test('G3 bridge: the six spatial intents lower onto PlayerInstruction', () => {
+    const expected: Array<[string, string, string]> = [
+      ['stay_wide', 'stay_wide', 'STAY WIDE'],
+      ['cut_inside', 'stay_central', 'CUT INSIDE'],
+      ['overlap', 'overlap', 'OVERLAP'],
+      ['hold_position', 'hold_position', 'HOLD POSITION'],
+      ['make_forward_runs', 'push_forward', 'PUSH FORWARD'],
+      ['come_short', 'drop_back', 'COME SHORT'],
+    ];
+    for (const [intent, instruction, ackWord] of expected){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent,
+        target: { side: 'own', name: 'Ferreyra' },
+      }), ctx);
+      expect(out.ok, intent).toBe(true);
+      if (out.ok && out.wire.kind === 'player_instruction'){
+        expect(out.wire.playerId, intent).toBe('own-p4');
+        expect(out.wire.instruction, intent).toBe(instruction);
+        expect(out.ack, intent).toBe(`FERREYRA → ${ackWord} ✓`);
+      } else if (out.ok) expect.fail(`${intent} compiled to ${out.wire.kind}, expected player_instruction`);
+    }
   });
 
-  test('bound intents guard direction and the keeper at compile time', () => {
-    const theirGuy = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'stay_wide',
+  test('spatial orders are for YOUR players; the goalkeeper keeps his post', () => {
+    const theirs = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'overlap',
       target: { side: 'opponent', shirtNumber: 9 },
     }), ctx);
-    expect(theirGuy.ok).toBe(false);
-    if (!theirGuy.ok) expect(theirGuy.reason).toContain('YOUR player');
+    expect(theirs.ok).toBe(false);
+    if (!theirs.ok) expect(theirs.reason).toContain('YOUR players');
 
-    const keeper = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'make_forward_runs',
+    const gk = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'stay_wide',
       target: { side: 'own', shirtNumber: 1 },
     }), ctx);
-    expect(keeper.ok).toBe(false);
-    if (!keeper.ok) expect(keeper.reason).toContain('goalkeeper');
+    expect(gk.ok).toBe(false);
+    if (!gk.ok) expect(gk.reason).toContain('keeps his post');
   });
 
-  test('still-reserved player intents resolve the name FIRST, then reject with their SPECIFIC reason', () => {
+  test('still-reserved intents resolve the name FIRST, then reject with a SPECIFIC reason', () => {
     const typo = compileGameCommand(GameCommand.parse({
       version: 1, scope: 'player', intent: 'press_player',
       target: { side: 'own', name: 'Zlatan' },
@@ -172,12 +166,42 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
     expect(typo.ok).toBe(false);
     if (!typo.ok) expect(typo.reason).toContain('Zlatan');   // the typo surfaces as a typo
 
-    const reserved = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'press_player',
+    const cases: Array<[string, string]> = [
+      ['press_player', 'single out a presser'],
+      ['shoot_more', 'shoot_on_sight'],
+      ['dribble_more', 'not tunable'],
+    ];
+    for (const [intent, fragment] of cases){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent,
+        target: { side: intent === 'press_player' ? 'opponent' : 'own',
+          name: intent === 'press_player' ? 'Doyle' : 'Ferreyra' },
+      }), ctx);
+      expect(out.ok, intent).toBe(false);
+      if (!out.ok) expect(out.reason, intent).toContain(fragment);
+    }
+  });
+
+  test('underlap binds (the engine has the half-space run) and make_forward_runs is a spell with a ttl', () => {
+    const under = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'underlap',
       target: { side: 'own', name: 'Ferreyra' },
     }), ctx);
-    expect(reserved.ok).toBe(false);
-    if (!reserved.ok) expect(reserved.reason).toContain('per-player pressing');   // honest, specific
+    expect(under).toMatchObject({ ok: true, wire: { kind: 'player_instruction', instruction: 'underlap' } });
+
+    const runs = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'make_forward_runs',
+      target: { side: 'own', name: 'Njoku' },
+    }), ctx);
+    expect(runs).toMatchObject({
+      ok: true, wire: { kind: 'player_instruction', instruction: 'push_forward', ttlTicks: 900 },
+    });
+    // spatial orders without a ttl carry none — persistence until replaced
+    const wide = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'stay_wide',
+      target: { side: 'own', name: 'Njoku' },
+    }), ctx);
+    if (wide.ok && wide.wire.kind === 'player_instruction') expect(wide.wire.ttlTicks).toBeUndefined();
   });
 
   test('substitutions resolve both refs on OUR side and emit the wire command', () => {

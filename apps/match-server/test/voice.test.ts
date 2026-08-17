@@ -83,6 +83,43 @@ describe('voice endpoint', () => {
     } finally { await server.close(); }
   });
 
+  test('G: a spoken player order comes back COMPILED — wire-ready player_instruction (+ capture metered)', async () => {
+    const fakeCoach = {
+      messages: { create: async () => ({
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: JSON.stringify({
+          orders: [{ version: 1, scope: 'player', intent: 'stay_wide',
+            target: { side: 'own', shirtNumber: 4 } }],
+          say: 'Wide it is, boss.',
+        }) }],
+      }) },
+    } as never;
+    const { server, created, lines } = await boot({
+      stt: { apiKey: 'k', fetchImpl: (async () => new Response(JSON.stringify({ text: 'number four stay wide' }))) as typeof fetch },
+      coach: { client: fakeCoach },
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/matches/voice-1/coach/voice`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${created.tokens['team-rhinos']!}`,
+          'content-type': 'audio/webm',
+          'x-fobal-voice-capture-ms': '1450',            // G4: client capture stamp
+        },
+        body: audio,
+      });
+      expect(res.status).toBe(200);
+      const out = await res.json() as VoiceResponse & {
+        orders?: Array<{ ack: string; wire: { kind: string; playerId: string; instruction: string } }>;
+      };
+      expect(out.orders).toHaveLength(1);
+      expect(out.orders![0]!.wire).toMatchObject({ kind: 'player_instruction', instruction: 'stay_wide' });
+      expect(out.orders![0]!.wire.playerId).toMatch(/.+/);       // resolved to a real manifest id
+      expect(out.orders![0]!.ack).toContain('WIDE');
+      expect(lines.some(l => l.includes('"VoiceCaptureMs"'))).toBe(true);
+    } finally { await server.close(); }
+  });
+
   test('STT works even with NO interpreter: transcript degrades to coachText (golden parseCoach path)', async () => {
     const { server, created, voice } = await boot({
       stt: { apiKey: 'k', fetchImpl: (async () => new Response(JSON.stringify({ text: 'press high' }))) as typeof fetch },

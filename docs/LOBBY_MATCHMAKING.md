@@ -81,6 +81,18 @@ created ──(target's next poll)──→ delivered ──→ accepted → mat
   per-account creation cap (8/10min rolling) against spam; rematch
   references must be a match both actually played.
 
+## Opponent scouting
+
+`GET /coaches/:accountId` (session-required) — the card a coach reads
+before accepting a challenge: the normalized identity + form (`record`,
+`status`, `teamOverall`), kit colors, a `chainTeam` flag, and the XI as
+`{ name, role, shirtNumber, overall }`. **The 13-rating spreadsheet is
+deliberately withheld** — scouting shows shape and strength; the full
+numbers reveal themselves on the pitch (the manifest is only ever served
+to match participants). Client: `lobby.inspect(accountId)`.
+(`/players/:tokenId` is the separate, public NFT read — different
+namespace on purpose.)
+
 ## Match state machine
 
 Accept is the only transition that creates a match, and it is atomic on
