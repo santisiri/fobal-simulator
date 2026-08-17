@@ -119,20 +119,68 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
     expect(out.ok).toBe(false);
   });
 
-  test('reserved player intents resolve the name FIRST, then reject honestly', () => {
-    const typo = compileGameCommand(GameCommand.parse({
+  test('G3 bridge: the six spatial intents lower onto PlayerInstruction', () => {
+    const expected: Array<[string, string, string]> = [
+      ['stay_wide', 'stay_wide', 'STAY WIDE'],
+      ['cut_inside', 'stay_central', 'CUT INSIDE'],
+      ['overlap', 'overlap', 'OVERLAP'],
+      ['hold_position', 'hold_position', 'HOLD POSITION'],
+      ['make_forward_runs', 'push_forward', 'PUSH FORWARD'],
+      ['come_short', 'drop_back', 'COME SHORT'],
+    ];
+    for (const [intent, instruction, ackWord] of expected){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent,
+        target: { side: 'own', name: 'Ferreyra' },
+      }), ctx);
+      expect(out.ok, intent).toBe(true);
+      if (out.ok && out.wire.kind === 'player_instruction'){
+        expect(out.wire.playerId, intent).toBe('own-p4');
+        expect(out.wire.instruction, intent).toBe(instruction);
+        expect(out.ack, intent).toBe(`FERREYRA → ${ackWord} ✓`);
+      } else if (out.ok) expect.fail(`${intent} compiled to ${out.wire.kind}, expected player_instruction`);
+    }
+  });
+
+  test('spatial orders are for YOUR players; the goalkeeper keeps his post', () => {
+    const theirs = compileGameCommand(GameCommand.parse({
       version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(theirs.ok).toBe(false);
+    if (!theirs.ok) expect(theirs.reason).toContain('YOUR players');
+
+    const gk = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'stay_wide',
+      target: { side: 'own', shirtNumber: 1 },
+    }), ctx);
+    expect(gk.ok).toBe(false);
+    if (!gk.ok) expect(gk.reason).toContain('keeps his post');
+  });
+
+  test('still-reserved intents resolve the name FIRST, then reject with a SPECIFIC reason', () => {
+    const typo = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'underlap',
       target: { side: 'own', name: 'Zlatan' },
     }), ctx);
     expect(typo.ok).toBe(false);
     if (!typo.ok) expect(typo.reason).toContain('Zlatan');   // the typo surfaces as a typo
 
-    const reserved = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'overlap',
-      target: { side: 'own', name: 'Ferreyra' },
-    }), ctx);
-    expect(reserved.ok).toBe(false);
-    if (!reserved.ok) expect(reserved.reason).toContain('Ferreyra: ');   // honest, named rejection
+    const cases: Array<[string, string]> = [
+      ['underlap', 'overlaps, not underlaps'],
+      ['press_player', 'single out a presser'],
+      ['shoot_more', 'shoot_on_sight'],
+      ['dribble_more', 'not tunable'],
+    ];
+    for (const [intent, fragment] of cases){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent,
+        target: { side: intent === 'press_player' ? 'opponent' : 'own',
+          name: intent === 'press_player' ? 'Doyle' : 'Ferreyra' },
+      }), ctx);
+      expect(out.ok, intent).toBe(false);
+      if (!out.ok) expect(out.reason, intent).toContain(fragment);
+    }
   });
 
   test('substitutions resolve both refs on OUR side and emit the wire command', () => {
