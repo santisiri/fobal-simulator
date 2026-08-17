@@ -35,8 +35,8 @@ Every roster entry (and `me`) is:
 
 ```
 { accountId, walletAddress,        // null for email accounts
-  displayName,                     // handle today; the ENS workstream will
-                                   // enrich the SOURCE, the field stays
+  displayName,                     // the ENS workstream's verified name
+                                   // when resolved, else the handle
   squadId, squadName, teamOverall, // scouting: mean of the XI's rating
                                    // means, from the SAME buildTeam that
                                    // builds the manifest
@@ -59,6 +59,7 @@ match exists?  ── age < 45s ──→  preparing_match
        │                                         closed — they're playing)
   no match, TTL expired ─────→  disconnected
   party to a live challenge ─→  challenged
+  searching for a quick match → queued
   otherwise ─────────────────→  available
 ```
 
@@ -93,10 +94,44 @@ to match participants). Client: `lobby.inspect(accountId)`.
 (`/players/:tokenId` is the separate, public NFT read — different
 namespace on purpose.)
 
+## Quick match (the queue)
+
+`POST /queue` joins, `DELETE /queue` leaves, `lobby.joinQueue()` /
+`lobby.leaveQueue()` on the client; `state.queue` is
+`{ status: 'idle'|'searching'|'matching', since?, waiting, error? }`.
+For the roster, a searching coach reads `status: 'queued'` (still
+challengeable by name — the queue is a second path to a game, not a
+mode).
+
+Pairing happens on the poll (and immediately on join, so a waiting
+opponent means no wait at all): the longest-waiting eligible coach is
+chosen, and **the longer wait gets the home dugout**.
+
+**The race, and why it is safe.** Two coaches poll concurrently, so both
+can see each other as pairable in the same instant. The pair is
+therefore **claimed synchronously** — both removed from the queue and
+marked `pairing` — *before* the first `await`. Node's single-threaded
+turn boundary guarantees the other poll then finds nobody to pair with;
+it simply waits for the match record. One pair, one match, always.
+
+The queue is ephemeral and presence-backed, exactly like challenges:
+- Closing the tab stops the poll, presence goes stale, the sweep removes
+  you — there is no "leave" anyone can forget to press, and no ghost to
+  be paired against.
+- Finding a game elsewhere (accepting a challenge) drops you from the
+  queue automatically.
+- A full match server (503) puts **both** coaches back in the queue with
+  their original wait preserved, and the reason arrives once in
+  `queue.error`; the next poll retries.
+- A pairing claim that never produced a match (server died mid-create)
+  expires after 30s rather than stranding anyone in `matching`.
+- `DELETE /queue` refuses only once your pair is claimed (409) — by then
+  the match is seconds away.
+
 ## Match state machine
 
-Accept is the only transition that creates a match, and it is atomic on
-the server: manifest built from BOTH accounts' squads (chain-verified for
+Challenge-accept and quick-match pairing both create matches through the
+SAME function, so both produce identical canonical records: manifest built from BOTH accounts' squads (chain-verified for
 NFT teams) → authoritative match server creates the room → canonical
 `matchId` + per-side tokens recorded → challenge settled. Both clients
 converge on the same `matchId` via their next poll — there is no

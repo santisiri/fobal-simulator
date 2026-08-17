@@ -17,6 +17,8 @@
 //                          //   status, joinedAt, record, ... }
 //     incomingChallenges,  // [{ id, from, status, expiresAt, ... }]
 //     outgoingChallenges,
+//     queue,               // { status: 'idle'|'searching'|'matching',
+//                          //   since?, waiting, error? } — quick match
 //     match,               // { matchId, matchUrl, token, spectatorToken,
 //                          //   teamId, status: 'preparing'|'live' } | null
 //     error,               // last transport/api error string or null
@@ -58,6 +60,7 @@ export function createLobbyService({
     participants: [],
     incomingChallenges: [],
     outgoingChallenges: [],
+    queue: { status: 'idle', waiting: 0 },
     match: null,
     error: null,
   };
@@ -109,6 +112,7 @@ export function createLobbyService({
     state.participants = [];
     state.incomingChallenges = [];
     state.outgoingChallenges = [];
+    state.queue = { status: 'idle', waiting: 0 };
     state.match = null;
     changed();
     emit('logout', { reason });
@@ -125,6 +129,7 @@ export function createLobbyService({
       state.participants = s.players;
       state.incomingChallenges = s.challenges.incoming;
       state.outgoingChallenges = s.challenges.outgoing;
+      state.queue = s.queue ?? { status: 'idle', waiting: 0 };
       const hadMatch = state.match?.matchId;
       state.match = s.match;
       for (const c of s.challenges.incoming)
@@ -212,6 +217,25 @@ export function createLobbyService({
       await poll();
       return out;
     },
+    /** Quick match: join the queue. Pairs instantly if someone is already
+     *  waiting, otherwise the next poll does it. Idempotent — joining while
+     *  queued keeps your place in line. */
+    async joinQueue(){
+      const out = await api('/queue', { method: 'POST', body: {} });
+      state.queue = out.queue;
+      changed();
+      await poll();               // a same-instant pairing lands right away
+      return state.queue;
+    },
+    /** Leave the queue. Refuses only once your pair is already becoming a
+     *  match (409) — by then the match is seconds away. */
+    async leaveQueue(){
+      const out = await api('/queue', { method: 'DELETE' });
+      state.queue = out.queue;
+      changed();
+      return state.queue;
+    },
+
     async leaveMatch(){
       if (!state.match) return;
       await api(`/matches/${state.match.matchId}/leave`, { method: 'POST', body: {} });

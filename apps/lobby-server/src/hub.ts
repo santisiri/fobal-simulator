@@ -172,6 +172,13 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   // reconnect replay converges instead of erroring or double-creating
   const settledChallenges = new Map<string, { outcome: 'accepted' | 'declined'; matchId?: string; at: number }>();
   const SETTLED_TTL_MS = 5 * 60 * 1000;
+  // quick match: accountId → joinedAt (ephemeral, presence-backed)
+  const quickQueue = new Map<string, number>();
+  // accountIds mid-pairing — the synchronous claim that makes the race safe
+  const pairing = new Map<string, number>();
+  const PAIRING_TIMEOUT_MS = 30_000;
+  // one-shot failure notes, delivered on the queuer's next poll
+  const queueErrors = new Map<string, string>();
   const resultChecks = new Map<string, number>();   // matchId → last poll ms
   const challengeLimit = options.challengeLimit ?? { count: 8, windowMs: 10 * 60 * 1000 };
   const challengeTimes = new Map<string, number[]>();  // accountId → creation times
@@ -245,13 +252,16 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   /** The lobby presence state machine, derived — no writes, no sweeps:
    *  a live match wins (a playing coach's lobby tab may be closed), then
    *  TTL silence means disconnected, then a live challenge, else available. */
-  function statusOf(accountId: string): 'available' | 'challenged' | 'preparing_match' | 'in_match' | 'disconnected' {
+  function statusOf(accountId: string): 'available' | 'queued' | 'challenged' | 'preparing_match' | 'in_match' | 'disconnected' {
     const match = activeMatchFor(accountId);
     if (match)
       return Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing_match' : 'in_match';
     if (!online(accountId)) return 'disconnected';
     for (const c of challenges.values())
       if (c.from === accountId || c.to === accountId) return 'challenged';
+    // searching for a quick match — still challengeable by name, but the
+    // roster shows what they're doing
+    if (quickQueue.has(accountId) || pairing.has(accountId)) return 'queued';
     return 'available';
   }
 
@@ -355,6 +365,125 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       ...(a.chainTeam ? { chainTeamId: a.chainTeam.teamId } : {}),
     });
 
+  /** The one place a match is born — challenge accept AND quick match both
+   *  come through here, so both produce identical canonical records. */
+  class MatchCreateError extends Error {
+    constructor(readonly status: number, message: string){ super(message); }
+  }
+
+  async function createMatchBetween(home: Account, away: Account): Promise<MatchRecord> {
+    const matchId = `lm-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`;
+    const seed = randomInt(0, 0x100000000);
+    const manifest = buildManifest(matchId, seed, home, away);
+    let created: { matchId: string; tokens: Record<string, string>; spectatorToken: string };
+    try {
+      const upstream = await fetch(`${matchUrl}/matches`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${options.matchServer.createKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(manifest),
+      });
+      const body = await upstream.json() as typeof created & { error?: string; code?: string };
+      // M2 backpressure: capacity is temporary — surface it plainly so the
+      // caller can keep the challenge / requeue instead of losing the pair
+      if (upstream.status === 503 || body.code === 'server_full')
+        throw new MatchCreateError(503, 'the match servers are full — try again in a minute');
+      if (upstream.status !== 201)
+        throw new MatchCreateError(502, `match server rejected the match: ${body.error ?? upstream.status}`);
+      created = body;
+    } catch (err) {
+      if (err instanceof MatchCreateError) throw err;
+      throw new MatchCreateError(502, 'match server unreachable');
+    }
+    const [homeTeam, awayTeam] = manifest.teams;
+    const record: MatchRecord = {
+      matchId: created.matchId,
+      matchUrl: publicMatchUrl,
+      createdAt: new Date().toISOString(),
+      spectatorToken: created.spectatorToken,
+      players: {
+        [home.accountId]: { teamId: homeTeam.teamId, token: created.tokens[homeTeam.teamId]! },
+        [away.accountId]: { teamId: awayTeam.teamId, token: created.tokens[awayTeam.teamId]! },
+      },
+      left: {},
+    };
+    store.saveMatch(record);
+    return record;
+  }
+
+  // ---- quick match: the queue ---------------------------------------------
+  // Presence-backed and ephemeral, like challenges: a queued player who
+  // closes the tab stops polling, goes stale, and is swept out — there is no
+  // "leave" anyone can forget to press.
+
+  function sweepQueue(): void {
+    for (const id of [...quickQueue.keys()]){
+      if (!store.getAccount(id) || !online(id) || activeMatchFor(id)) quickQueue.delete(id);
+    }
+    // a pairing claim that never produced a match (server died mid-create)
+    // must not strand anyone in 'matching' forever
+    for (const [id, since] of pairing) if (Date.now() - since > PAIRING_TIMEOUT_MS) pairing.delete(id);
+  }
+
+  /** Pair me with the longest-waiting eligible opponent, if there is one.
+   *  THE RACE: both players poll concurrently, so the pair is CLAIMED
+   *  synchronously (both removed from the queue, both marked pairing)
+   *  BEFORE the first await — the other poll then finds nobody to pair
+   *  with and simply waits for the match record to appear. */
+  async function tryPair(me: Account): Promise<void> {
+    sweepQueue();
+    if (!quickQueue.has(me.accountId) || pairing.has(me.accountId)) return;
+    if (activeMatchFor(me.accountId)) return;
+
+    let opponentId: string | null = null;
+    let waitingLongest = Infinity;
+    for (const [id, since] of quickQueue){
+      if (id === me.accountId || pairing.has(id)) continue;
+      if (since < waitingLongest){ waitingLongest = since; opponentId = id; }
+    }
+    if (!opponentId) return;
+    const opponent = store.getAccount(opponentId);
+    if (!opponent){ quickQueue.delete(opponentId); return; }
+
+    // ---- the claim (synchronous, no awaits until it is complete) ----
+    const myJoinedAt = quickQueue.get(me.accountId)!;
+    quickQueue.delete(me.accountId);
+    quickQueue.delete(opponentId);
+    pairing.set(me.accountId, Date.now());
+    pairing.set(opponentId, Date.now());
+
+    try {
+      // the longer wait gets the home dugout — a small fairness dividend
+      await createMatchBetween(opponent, me);
+    } catch (err) {
+      // capacity is temporary: put both back where they were (queue order
+      // preserved) so the next poll retries instead of dumping them out
+      if (err instanceof MatchCreateError && err.status === 503){
+        quickQueue.set(opponentId, waitingLongest);
+        quickQueue.set(me.accountId, myJoinedAt);
+      }
+      queueErrors.set(me.accountId, err instanceof Error ? err.message : 'quick match failed');
+      queueErrors.set(opponentId, err instanceof Error ? err.message : 'quick match failed');
+    } finally {
+      pairing.delete(me.accountId);
+      pairing.delete(opponentId);
+    }
+  }
+
+  function queueView(accountId: string){
+    const error = queueErrors.get(accountId);
+    queueErrors.delete(accountId);            // surfaced once, then cleared
+    const since = quickQueue.get(accountId);
+    return {
+      status: pairing.has(accountId) ? 'matching' as const
+        : since !== undefined ? 'searching' as const
+        : 'idle' as const,
+      ...(since !== undefined ? { since: new Date(since).toISOString() } : {}),
+      /** everyone currently searching (including me) — "3 coaches looking" */
+      waiting: quickQueue.size + pairing.size,
+      ...(error ? { error } : {}),
+    };
+  }
+
   function joinInfo(record: MatchRecord, accountId: string){
     const mine = record.players[accountId]!;
     return {
@@ -398,14 +527,17 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   }
 
   /** The normalized lobby identity (workstream charter): stable fields the
-   *  UI can rely on regardless of auth method. displayName is the handle
-   *  until the ENS workstream provides names — same field, richer source. */
+   *  UI can rely on regardless of auth method. displayName now prefers the
+   *  ENS workstream's resolved name (same field, richer source — exactly the
+   *  hand-off the charter reserved); it falls back to the handle whenever
+   *  identity is off, unresolved, or the account has no wallet. */
   function participantView(a: Account){
     const team = buildTeam(a);
+    const base = publicAccount(a);
     return {
-      ...publicAccount(a),
+      ...base,
       walletAddress: a.wallet ?? null,
-      displayName: a.handle,
+      displayName: (base as { identity?: { displayName?: string } }).identity?.displayName ?? a.handle,
       squadId: team.teamId,
       squadName: a.teamName,
       teamOverall: teamOverall(a),
@@ -425,6 +557,8 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
     // so players free up automatically shortly after the final whistle
     const current = activeMatchFor(me.accountId);
     if (current) await ensureResult(current);
+    // quick match rides the poll: if I am queued, this is where I get paired
+    await tryPair(me);
     const mine = [...challenges.values()];
     // delivery stamp: the moment the TARGET's poll first carries a
     // challenge, it is delivered — the challenger's view flips from
@@ -444,6 +578,7 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         incoming: mine.filter(c => c.to === me.accountId).map(challengeView),
         outgoing: mine.filter(c => c.from === me.accountId).map(challengeView),
       },
+      queue: queueView(me.accountId),
       match: match ? {
         ...joinInfo(match, me.accountId),
         status: Date.now() - Date.parse(match.createdAt) < PREPARING_MS ? 'preparing' : 'live',
@@ -997,6 +1132,29 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         return json(res, 200, { account: publicAccount({ ...me, teamName: clean }) });
       }
 
+      // ---- quick match: join / leave the queue ---------------------------
+      // Idempotent both ways: joining while queued keeps your place in line
+      // (the wait is your position), leaving twice is a clean no-op.
+      if (req.method === 'POST' && url.pathname === '/queue'){
+        sweepQueue();
+        if (activeMatchFor(me.accountId))
+          return json(res, 409, { error: 'you are already in a match' });
+        if (pairing.has(me.accountId))
+          return json(res, 200, { queue: queueView(me.accountId) });
+        if (!quickQueue.has(me.accountId)) quickQueue.set(me.accountId, Date.now());
+        // pair immediately when someone is already waiting — no poll wait
+        await tryPair(me);
+        return json(res, 200, { queue: queueView(me.accountId) });
+      }
+
+      if (req.method === 'DELETE' && url.pathname === '/queue'){
+        // a claimed pair is already becoming a match — too late to bail
+        if (pairing.has(me.accountId))
+          return json(res, 409, { error: 'your match is being created' });
+        quickQueue.delete(me.accountId);
+        return json(res, 200, { queue: queueView(me.accountId) });
+      }
+
       if (req.method === 'POST' && url.pathname === '/challenges'){
         sweepChallenges();
         let to: unknown, rematchOf: unknown;
@@ -1078,43 +1236,17 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           if (activeMatchFor(me.accountId) || activeMatchFor(challenger.accountId))
             return json(res, 409, { error: 'one of you is already in a match' });
 
-          const matchId = `lm-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`;
-          const seed = randomInt(0, 0x100000000);
-          const manifest = buildManifest(matchId, seed, challenger, me);
-          let created: { matchId: string; tokens: Record<string, string>; spectatorToken: string };
+          let record: MatchRecord;
           try {
-            const upstream = await fetch(`${matchUrl}/matches`, {
-              method: 'POST',
-              headers: { authorization: `Bearer ${options.matchServer.createKey}`, 'content-type': 'application/json' },
-              body: JSON.stringify(manifest),
-            });
-            const body = await upstream.json() as typeof created & { error?: string; code?: string };
-            // M2 backpressure: capacity is temporary — surface it plainly
-            // and KEEP the challenge so accepting again just works
-            if (upstream.status === 503 || body.code === 'server_full')
-              return json(res, 503, { error: 'the match servers are full — try again in a minute' });
-            if (upstream.status !== 201)
-              return json(res, 502, { error: `match server rejected the match: ${body.error ?? upstream.status}` });
-            created = body;
-          } catch {
-            return json(res, 502, { error: 'match server unreachable' });
+            record = await createMatchBetween(challenger, me);
+          } catch (err) {
+            // capacity is temporary: the challenge SURVIVES a 503 so
+            // accepting again just works once a slot frees
+            if (err instanceof MatchCreateError) return json(res, err.status, { error: err.message });
+            throw err;
           }
-
           challenges.delete(challenge.id);
-          settledChallenges.set(challenge.id, { outcome: 'accepted', matchId: created.matchId, at: Date.now() });
-          const [homeTeam, awayTeam] = manifest.teams;
-          const record: MatchRecord = {
-            matchId: created.matchId,
-            matchUrl: publicMatchUrl,
-            createdAt: new Date().toISOString(),
-            spectatorToken: created.spectatorToken,
-            players: {
-              [challenger.accountId]: { teamId: homeTeam.teamId, token: created.tokens[homeTeam.teamId]! },
-              [me.accountId]: { teamId: awayTeam.teamId, token: created.tokens[awayTeam.teamId]! },
-            },
-            left: {},
-          };
-          store.saveMatch(record);
+          settledChallenges.set(challenge.id, { outcome: 'accepted', matchId: record.matchId, at: Date.now() });
           return json(res, 201, { match: joinInfo(record, me.accountId) });
         }
       }
