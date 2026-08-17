@@ -438,6 +438,22 @@ export class FobalStack extends Stack {
             this, 'MintSignerSecret', `${envCfg.secretsPrefix}/lobby-server/generator-signer-pk`)
         : null;
 
+      // Email invitations via Resend (arbitrary recipients while the SES
+      // production-access case pends). Gated on -c emailSecrets=1, same
+      // pattern as mintSigner: deploys stay valid until the secrets exist.
+      // Flipping the gate also switches FOBAL_EMAIL_BACKEND to 'resend' —
+      // login codes and invitations ride the same provider. Create first:
+      //   aws secretsmanager create-secret --name <prefix>/lobby-server/resend-api-key --secret-string <re_…>
+      //   aws secretsmanager create-secret --name <prefix>/lobby-server/email-webhook-secret --secret-string <whsec_…>
+      const emailSecrets = this.node.tryGetContext('emailSecrets')
+        ? {
+            apiKey: secretsmanager.Secret.fromSecretNameV2(
+              this, 'ResendApiKeySecret', `${envCfg.secretsPrefix}/lobby-server/resend-api-key`),
+            webhook: secretsmanager.Secret.fromSecretNameV2(
+              this, 'EmailWebhookSecret', `${envCfg.secretsPrefix}/lobby-server/email-webhook-secret`),
+          }
+        : null;
+
       const lobbyTaskRole = new iam.Role(this, 'LobbyTaskRole', {
         roleName: `Fobal-${ROLE}-lobby-server-task-role`,
         assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
@@ -497,6 +513,10 @@ export class FobalStack extends Stack {
                   createKey.secretArn,
                   // fromSecretNameV2 arns lack the random suffix — wildcard it
                   ...(mintSignerSecret ? [`${mintSignerSecret.secretArn}-??????`] : []),
+                  ...(emailSecrets ? [
+                    `${emailSecrets.apiKey.secretArn}-??????`,
+                    `${emailSecrets.webhook.secretArn}-??????`,
+                  ] : []),
                 ],
               }),
             ],
@@ -535,7 +555,7 @@ export class FobalStack extends Stack {
           FOBAL_LOBBY_S3_PREFIX: 'lobby/',
           // login codes are DELIVERED (never returned): SES as fobal.ai.
           // Acceptance scripts read codes via the test-login-key secret.
-          FOBAL_EMAIL_BACKEND: 'ses',
+          FOBAL_EMAIL_BACKEND: emailSecrets ? 'resend' : 'ses',
           FOBAL_EMAIL_FROM: 'lobby@fobal.ai',
           // email invitations link back to the public client
           FOBAL_INVITE_BASE_URL: `https://${envCfg.playHostname}`,
@@ -558,6 +578,10 @@ export class FobalStack extends Stack {
           FOBAL_TEST_LOGIN_KEY: ecs.Secret.fromSecretsManager(lobbyTestLoginKey),
           FOBAL_CREATE_KEY: ecs.Secret.fromSecretsManager(createKey),
           ...(mintSignerSecret ? { FOBAL_GENERATOR_SIGNER_PK: ecs.Secret.fromSecretsManager(mintSignerSecret) } : {}),
+          ...(emailSecrets ? {
+            FOBAL_RESEND_API_KEY: ecs.Secret.fromSecretsManager(emailSecrets.apiKey),
+            FOBAL_EMAIL_WEBHOOK_SECRET: ecs.Secret.fromSecretsManager(emailSecrets.webhook),
+          } : {}),
         },
         portMappings: [{ containerPort: LOBBY_PORT, protocol: ecs.Protocol.TCP }],
         healthCheck: {

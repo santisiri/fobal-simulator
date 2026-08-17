@@ -38,6 +38,22 @@ Development: copy `.env.example`; an unverified Resend dev account can only
 send to its own address — inherently spam-safe. Automated tests NEVER send
 real mail (the provider is faked).
 
+**Deploy activation (CDK)**: the Resend path is gated on `-c emailSecrets=1`
+(the mintSigner pattern — deploy-neutral until the secrets exist, verified
+byte-identical without the flag). Create the two secrets first, Plaintext,
+exact names:
+`fobal/<env>/lobby-server/resend-api-key` (the `re_…` key) and
+`fobal/<env>/lobby-server/email-webhook-secret` (the `whsec_…` secret).
+Flipping the gate switches `FOBAL_EMAIL_BACKEND` to `resend` for BOTH login
+codes and invitations. Once adopted, the flag joins the standing contexts
+(`-c aiSecrets=1 -c mintSigner=1 -c emailSecrets=1`) — omitting it reverts
+the backend to SES on the next deploy (safe, but sandbox rules return).
+
+**Inviter identity**: wallet inviters with a verified ENS name send as that
+name ("santi.eth challenged you to a football match") — the email path
+awaits the identity resolver (it never rejects; a miss degrades to the
+handle, never a raw address).
+
 ## Domain / DNS still required
 
 - **SES path**: nothing new — `fobal.ai` DKIM records are already in DNS;

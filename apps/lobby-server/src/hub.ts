@@ -697,10 +697,20 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         };
         store.saveInvite(invite);
         const inviteUrl = `${inviteBase}/invite.html?t=${token}`;
+        // "SANTI.ETH CHALLENGED YOU": wallet inviters send under their
+        // verified ENS name when one resolves. Unlike the lobby poll (which
+        // must never wait on mainnet), an email send can afford the await —
+        // resolve() never rejects by contract, and a miss degrades to the
+        // handle, never to a raw address.
+        let inviterName = me.handle;
+        if (me.wallet && options.identity){
+          const id = await options.identity.resolve(me.wallet);
+          if (id.verified && id.ensName) inviterName = id.ensName;
+        }
         try {
           const out = await options.emailProvider.sendMatchInvitation({
             to: recipient,
-            inviterName: me.handle,
+            inviterName,
             inviterTeam: me.teamName,
             ...(message ? { message } : {}),
             inviteUrl,
