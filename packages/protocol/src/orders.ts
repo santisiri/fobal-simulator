@@ -179,19 +179,21 @@ const TEAM_EFFECTS: Record<TeamIntent, (intensity?: number) => { kind: 'patch'; 
  *  attributes decide every actual step). The instruction is addressed to
  *  YOUR player; the engine re-validates XI membership and refuses
  *  goalkeepers. */
-const SPATIAL_BINDINGS: Partial<Record<PlayerIntent, { kind: PlayerInstructionKind; ack: string }>> = {
+const SPATIAL_BINDINGS: Partial<Record<PlayerIntent, { kind: PlayerInstructionKind; ack: string; ttlTicks?: number }>> = {
   stay_wide: { kind: 'stay_wide', ack: 'STAY WIDE' },
   cut_inside: { kind: 'stay_central', ack: 'CUT INSIDE' },
   overlap: { kind: 'overlap', ack: 'OVERLAP' },
+  underlap: { kind: 'underlap', ack: 'UNDERLAP' },
   hold_position: { kind: 'hold_position', ack: 'HOLD POSITION' },
-  make_forward_runs: { kind: 'push_forward', ack: 'PUSH FORWARD' },
+  // a run is a spell, not a lifestyle: 900 ticks (~15s of sim), then the
+  // station restores itself — say it again for another burst
+  make_forward_runs: { kind: 'push_forward', ack: 'PUSH FORWARD', ttlTicks: 900 },
   come_short: { kind: 'drop_back', ack: 'COME SHORT' },
 };
 
 /** Still reserved — each with ITS OWN honest reason (a generic "not
  *  supported" teaches the manager nothing). */
 const RESERVED_REASONS: Partial<Record<PlayerIntent, string>> = {
-  underlap: 'the engine runs overlaps, not underlaps yet',
   press_player: "the engine cannot single out a presser yet — try 'mark their number' or press as a team",
   shoot_more: 'per-player shooting tendency is not tunable yet — shoot_on_sight sets it for the team',
   dribble_more: 'per-player dribbling tendency is not tunable yet',
@@ -248,7 +250,10 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
       return {
         ok: true,
         ack: `${target.name.split(/\s+/).pop()!.toUpperCase()} → ${binding.ack} ✓`,
-        wire: { kind: 'player_instruction', playerId: target.playerId, instruction: binding.kind },
+        wire: {
+          kind: 'player_instruction', playerId: target.playerId, instruction: binding.kind,
+          ...(binding.ttlTicks !== undefined ? { ttlTicks: binding.ttlTicks } : {}),
+        },
       };
     }
 

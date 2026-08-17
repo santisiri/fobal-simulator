@@ -14,7 +14,7 @@ architecture contract. Updated: 2026-08-16 (first sweep).
 | Squad / product UI | in progress on `feat/squad-experience` (worktree infallible-merkle) | ⬜ no PR yet | review at PR time |
 | Email invitations | complete per its docs; EmailProvider abstraction + Invitation model + landing page | ⬜ **PR #62 open** | integration review (next in queue) |
 | Voice/LLM — GameCommand taxonomy | was STRANDED uncommitted in a shared worktree; rescued, tested, landed | ⬜ **PR #64 open** | merge FIRST (see order below) |
-| Football AI — tactical execution | per-player engine bindings | ⬜ **PR #63 open — BLOCKED** | reconcile protocol types, then rebase (below) |
+| Football AI — tactical execution | per-player engine bindings + taxonomy wired (compile table lowers 7 player intents onto `player_instruction`; `underlap` binding added; 3 intents remain reserved with specific reasons) | ✅ #63 + #66 on main; binding PR follows | grow bindings (press_player, tendencies) |
 
 ## The one live conflict (resolve architecture before merging)
 

@@ -239,6 +239,15 @@ describe('workstream G — tactical execution', () => {
     engine.run(5);
     expect(lb.slot).toMatchObject(baseSlot);
     expect(engine.tacticsReport().teams[0]!.instructions).toHaveLength(0);
+
+    // underlap = overlap's mirror: forward, but into the half-space
+    send(engine, instruction(P('rhinos', 4), 'underlap'), engine.currentTick + 1);
+    engine.run(5);
+    expect(lb.slot.x).toBeGreaterThan(baseSlot.x);
+    expect(Math.abs(lb.slot.y - 0.5)).toBeLessThan(Math.abs(baseSlot.y - 0.5));
+    send(engine, instruction(P('rhinos', 4), 'clear'), engine.currentTick + 1);
+    engine.run(5);
+    expect(lb.slot).toMatchObject(baseSlot);
   }, 120_000);
 
   test('a formation change clears spatial instructions (marks survive)', () => {

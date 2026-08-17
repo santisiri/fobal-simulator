@@ -160,14 +160,13 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
 
   test('still-reserved intents resolve the name FIRST, then reject with a SPECIFIC reason', () => {
     const typo = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'underlap',
+      version: 1, scope: 'player', intent: 'press_player',
       target: { side: 'own', name: 'Zlatan' },
     }), ctx);
     expect(typo.ok).toBe(false);
     if (!typo.ok) expect(typo.reason).toContain('Zlatan');   // the typo surfaces as a typo
 
     const cases: Array<[string, string]> = [
-      ['underlap', 'overlaps, not underlaps'],
       ['press_player', 'single out a presser'],
       ['shoot_more', 'shoot_on_sight'],
       ['dribble_more', 'not tunable'],
@@ -181,6 +180,28 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
       expect(out.ok, intent).toBe(false);
       if (!out.ok) expect(out.reason, intent).toContain(fragment);
     }
+  });
+
+  test('underlap binds (the engine has the half-space run) and make_forward_runs is a spell with a ttl', () => {
+    const under = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'underlap',
+      target: { side: 'own', name: 'Ferreyra' },
+    }), ctx);
+    expect(under).toMatchObject({ ok: true, wire: { kind: 'player_instruction', instruction: 'underlap' } });
+
+    const runs = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'make_forward_runs',
+      target: { side: 'own', name: 'Njoku' },
+    }), ctx);
+    expect(runs).toMatchObject({
+      ok: true, wire: { kind: 'player_instruction', instruction: 'push_forward', ttlTicks: 900 },
+    });
+    // spatial orders without a ttl carry none — persistence until replaced
+    const wide = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'stay_wide',
+      target: { side: 'own', name: 'Njoku' },
+    }), ctx);
+    if (wide.ok && wide.wire.kind === 'player_instruction') expect(wide.wire.ttlTicks).toBeUndefined();
   });
 
   test('substitutions resolve both refs on OUR side and emit the wire command', () => {

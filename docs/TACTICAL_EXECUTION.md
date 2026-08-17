@@ -44,6 +44,7 @@ commands — the sim cannot tell the difference).
 | `push_forward` | station +0.12 toward the opposition goal | |
 | `drop_back` | station −0.12 toward own goal | |
 | `overlap` | +0.10 forward AND +0.14 wide — the classic outside run | usually sent with a `ttlTicks` |
+| `underlap` | +0.10 forward AND 0.14 toward the half-space — the inside channel run | |
 | `hold_position` | pin the exact formation station | |
 | `mark_opponent` | golden marking machinery bound to THIS player (`team._marker`) + team `markTarget` | CM-role or DEF-line players only |
 | `clear` | restore the station, drop the record | |
@@ -131,12 +132,27 @@ stamina-15 squad: the low-stamina XI is measurably more degraded by the
 | formation change | spatial instructions cleared, mark survives |
 | determinism | live == replay == crash-resume, bit-exact finalStateHash |
 
+## The taxonomy binding (compile table, `packages/protocol/src/orders.ts`)
+
+The language workstream's `GameCommand` player intents lower onto this
+engine vocabulary: `stay_wide→stay_wide`, `cut_inside→stay_central`,
+`overlap→overlap`, `underlap→underlap`, `hold_position→hold_position`,
+`make_forward_runs→push_forward` (with `ttlTicks: 900` — a run is a
+spell, not a lifestyle; the station restores itself, say it again for
+another burst), `come_short→drop_back`, `mark_player→team markTarget`
+("mark their nine" names no marker, so the machine elects one; the
+two-player form — "Moretti, mark their nine" — awaits a richer taxonomy).
+The compile table also answers what it already knows without a round
+trip: instructions for THEIR players and orders to the goalkeeper reject
+at compile.
+
 ## Deliberate limits (grow the enum only as fast as the sim can honor it)
 
-- No `attack_left/right` as a player order — it exists as team
-  `attackSide` (works today). No per-player pressing intensity, no
-  scripted runs-in-behind, no set-piece roles — candidates for v2, each
-  requiring its own engine binding first.
+- Still reserved, each rejecting with its specific reason:
+  `press_player` (per-player pressing intensity has no engine binding —
+  team pressing works), `shoot_more` / `dribble_more` (tendencies are
+  team-level today; per-player needs new engine state). No set-piece
+  roles yet.
 - An instruction the engine cannot express is REJECTED with the real
   reason (surfaced through the voice-ack chip) — never silently
   approximated. The closed enum is the contract with the language

@@ -106,13 +106,13 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
 
   test('still-reserved instructions reject with their SPECIFIC reason, named', async () => {
     const { server, interpret } = await boot({
-      orders: [{ scope: 'player', intent: 'underlap', target: { side: 'own', name: 'Ferreyra' } }],
+      orders: [{ scope: 'player', intent: 'dribble_more', target: { side: 'own', name: 'Ferreyra' } }],
       say: 'ok',
     });
     try {
-      const out = await (await interpret('ferreyra underlap')).json() as OrdersResponse;
+      const out = await (await interpret('ferreyra take them on')).json() as OrdersResponse;
       expect(out.rejected![0]!.reason).toContain('Ferreyra');
-      expect(out.rejected![0]!.reason).toContain('overlaps, not underlaps');
+      expect(out.rejected![0]!.reason).toContain('not tunable');
     } finally { await server.close(); }
   });
 
