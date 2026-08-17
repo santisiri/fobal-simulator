@@ -1,91 +1,109 @@
 # Integration status
 
 Operational snapshot for parallel workstreams. Owner: the integration
-lead session. Read `docs/NEXT_ITERATION_ARCHITECTURE.md` for the
-architecture contract. Updated: 2026-08-16 (first sweep).
+lead session. Architecture contract: `docs/NEXT_ITERATION_ARCHITECTURE.md`.
+Updated: 2026-08-17 (second sweep — full project review).
+
+**Health: main is green.** typecheck clean · 241 passed / 1 skipped
+(a deliberate live-model smoke, gated on `ANTHROPIC_API_KEY`, never in
+CI) · 36 test files · zero open PRs.
 
 ## Workstreams
 
-| Workstream | Status | Integrated? | Next action |
-|---|---|---|---|
-| Player NFT data model | player read API + footballer names shipped | ✅ PR #58 on main | — |
-| Wallet identity (ENS) | resolver + WalletIdentity shipped | ✅ PR #59 on main | — |
-| Lobby / matchmaking | presence states, challenge lifecycle, LobbyService boundary | ✅ PR #60 on main | — |
-| Squad / product UI | in progress on `feat/squad-experience` (worktree infallible-merkle) | ⬜ no PR yet | review at PR time |
-| Email invitations | complete per its docs; EmailProvider abstraction + Invitation model + landing page | ⬜ **PR #62 open** | integration review (next in queue) |
-| Voice/LLM — GameCommand taxonomy | was STRANDED uncommitted in a shared worktree; rescued, tested, landed | ⬜ **PR #64 open** | merge FIRST (see order below) |
-| Football AI — tactical execution | per-player engine bindings + taxonomy wired (compile table lowers 7 player intents onto `player_instruction`; `underlap` binding added; 3 intents remain reserved with specific reasons) | ✅ #63 + #66 on main; binding PR follows | grow bindings (press_player, tendencies) |
+| Workstream | Status | Integrated? |
+|---|---|---|
+| Player NFT data model | player read API, footballer names, `NormalizedPlayer` | ✅ main (#58) |
+| Wallet identity (ENS) | resolver + `WalletIdentity`, degrades to short addresses | ✅ main (#59) |
+| Lobby / matchmaking | presence states, challenge lifecycle, `LobbyService` boundary | ✅ main (#60) |
+| Email invitations | `EmailProvider` seam, `Invitation` ladder, landing page | ✅ main (#62) |
+| Squad / product UI | player cards, detail drawer, pitch view, tx-flow + error UX | ✅ main (#61) |
+| Voice/LLM — GameCommand | closed taxonomy, `PlayerRef` resolution, compile boundary | ✅ main (#64) |
+| Football AI — tactical execution | per-player instructions bound to the engine | ✅ main (#69/#70/#71) |
 
-## The one live conflict (resolve architecture before merging)
+The #63/#64 contract conflict from the first sweep is **resolved**:
+`PlayerInstructionCommand` + `ActiveInstruction` now live in
+`packages/protocol/src/match.ts`, and `compileGameCommand` lowers seven
+player intents onto them (`SPATIAL_BINDINGS`). Remaining reserved intents
+each carry their own honest reason.
 
-**PR #63 imports `PlayerInstructionCommand` and `ActiveInstruction` from
-`@fobal/protocol` — types that exist NOWHERE** (not on main, not in #63's
-own diff, not in #64's taxonomy). They were evidently part of the G
-workstream's stranded work that never reached a branch. #63 and #64 are
-two halves of one contract, built against different drafts of it:
+## Architecture audit — clean
 
-- **#64 (interpretation half)**: `GameCommand` taxonomy — closed enums,
-  `PlayerRef` resolution, `compileGameCommand` lowering onto EXISTING wire
-  commands; player intents beyond `mark_player` are reserved-and-honest.
-- **#63 (execution half)**: engine bindings that give ten of those player
-  intents real on-pitch meaning via formation-station biasing — but
-  carried by a NEW wire command type that was never committed.
+- **One definition per shared concept.** `Account`, `WalletIdentity`,
+  `NormalizedPlayer`, `Invitation`, `PlayerSnapshot`, `GameCommand`,
+  `ActiveInstruction` — each has exactly one home. No duplicates found.
+- **One chain config.** Addresses + chainId + RPC exist only in
+  `infra/cdk/lib/envs.ts`; no hardcoded addresses anywhere in app code.
+- **One web3 stack.** `viem` appears in `identity.ts` and one test.
+  Chain reads/mint hand-roll JSON-RPC + `@noble` by design (documented).
+- **Authority intact.** Interpreters compile to wire commands; the room
+  re-validates on arrival; no client authority, no LLM state mutation,
+  no chain calls in the sim loop.
+- **The north star is proven, not just designed.** `tactics.test.ts`:
+  *"overlap: intent honored for both, but PACE bounds the execution"*,
+  *"a high press punishes a low-stamina squad harder"*, and
+  *"instructed matches replay AND resume bit-exactly"*.
 
-**Resolution (canonical decision):**
-1. Merge **#64 first** — the taxonomy is the canonical interpretation
-   contract and stands alone (reserved intents reject honestly).
-2. Rebase **#63 on top**; the integration lead adds the missing protocol
-   piece TO #63: a `player_instruction` wire command
-   (`PlayerInstructionCommand` + `ActiveInstruction`) in
-   `packages/protocol`, and flips `compileGameCommand`'s reserved player
-   intents to lower onto it — deleting the reserved-rejection path for
-   exactly the intents #63 executes. The compile table is the single
-   place that changes; interpreters and clients are untouched.
-3. `docs/NEXT_ITERATION_ARCHITECTURE.md` G3 section updates when it lands.
+## ⚠️ The one real product-coherence defect: the identity schism
 
-## Merge queue (recommended order)
+**Two disconnected identity systems. A player who onboards loses their
+club the moment they play online.**
 
-1. **#64** — GameCommand taxonomy (contract; tested; standalone)
-2. **#62** — email invitations (independent surface; review pending)
-3. **#63** — tactical execution (after the rebase + protocol reconciliation above)
+| | `apps/web` (front door) | `apps/match-client` (the game) |
+|---|---|---|
+| Identity | `localStorage['fobal.club']` | server `Account` (email/wallet session) |
+| Club name | what the player typed in onboarding | `HANDLE FC`, auto-generated |
+| Squad | deterministic preview squad | server-generated or chain-linked |
+| Knows the other? | never calls the lobby server | **0 references to `fobal.club`** |
+
+Journey today: onboarding → name your club, pick a kit, meet 11 players →
+hub → **PLAY ONLINE** → a plain `<a href="lobby.html">` → sign in *again*
+→ you are now "SANTI FC" with a different squad, and **no link back to
+the hub** (`hub.html`: 0 references in lobby.html).
+
+This is exactly the "disconnected demos" failure the north star forbids.
+Everything else in the product is coherent (vocabulary is consistent —
+SQUAD everywhere; brand is unified since the lobby revamp).
+
+**Recommended fix (smallest coherent step, for whoever owns product UI):**
+make the **server account canonical** and the web club a *view* of it —
+onboarding's club name + kit POST to `/account/team` + `/squad` on first
+sign-in, hub reads the lobby session instead of localStorage, and the
+lobby gains a "← CLUB" link. Onboarding stays the delightful front door;
+it just stops being a separate universe.
+
+## Deploy drift — a redeploy is due
+
+Staging runs image `38b964e`; main is **42 commits ahead**, 31 of them
+touching server/client code (invitations, identity, squad UI, the whole
+G workstream). Nothing on staging exercises player instructions or
+invitations yet. Next integration action: server image + client sync.
 
 ## Shared contracts — where they live
 
 | Concept | Canonical location |
 |---|---|
-| GameCommand / intents / PlayerRef / compile | `packages/protocol/src/orders.ts` (#64) |
-| Player, PlayerStats, TeamSnapshot, TacticalPatch, MatchEvent | `packages/protocol/src/match.ts` |
+| GameCommand, intents, PlayerRef, compile table | `packages/protocol/src/orders.ts` |
+| PlayerInstructionCommand, ActiveInstruction, TacticalPatch, MatchEvent | `packages/protocol/src/match.ts` |
 | NormalizedPlayer (chain read shape) | `apps/lobby-server/src/chain.ts` + `docs/PLAYER_DATA_MODEL.md` |
 | WalletIdentity / IdentityResolver | `apps/lobby-server/src/identity.ts` |
+| Invitation / EmailProvider | `apps/lobby-server/src/store.ts` + `email.ts` |
 | LobbyParticipant / challenge lifecycle | `docs/LOBBY_MATCHMAKING.md` + `apps/match-client/src/lobbyService.js` |
-| Invitation / EmailProvider | PR #62 (`apps/lobby-server/src/email.ts`, `store.ts`) |
-| Chain config (ids, addresses, RPC) | `infra/cdk/lib/envs.ts` `chain` blocks — THE source of truth for deploys; `contracts/deployments/<chainId>.json` for local tooling |
+| Chain config (ids, addresses, RPC) | `infra/cdk/lib/envs.ts` — deploys; `contracts/deployments/<chainId>.json` — local tooling |
 
 ## Standing rules (learned by incident)
 
-- **One agent, one worktree.** Uncommitted work stranded in a shared
-  worktree nearly died twice; everything found there is preserved on
-  `rescue/stranded-g-and-lobby-work`. Commit early, push branches.
-- Deployed artifacts are built from committed main only; failing smokes
-  are reported, never patched locally.
-- Staging deploys carry `-c aiSecrets=1 -c mintSigner=1` — omitting
-  either silently disarms a live feature.
-- The engine stays authoritative: no client authority, no LLM state
-  mutation, no chain calls in the sim loop. (See the architecture doc's
-  standing invariants.)
+- **One agent, one worktree.** Stranded uncommitted work nearly died
+  twice; everything recovered is on `rescue/stranded-g-and-lobby-work`.
+- Deployed artifacts are built from committed main only; a failing smoke
+  is reported, never patched locally.
+- Staging deploys carry `-c aiSecrets=1 -c mintSigner=1`.
+- The engine stays authoritative (see the architecture doc's invariants).
 
-## Environment / deploy drift
+## Open follow-ups (not blockers)
 
-- Staging runs image `38b964e` + client synced at the same commit.
-  Main has since gained #58/#59/#60 (+ open PRs). **A staging redeploy
-  (server image + client sync) is due once the merge queue above lands.**
-- SES production access still pending (AWS case) — email invitations
-  will inherit the sandbox limitation until then.
-
-## Known follow-ups (not blockers)
-
+- The identity schism above — the highest-value product work available.
 - Same-surname ambiguity: `resolvePlayerRef` answers "Moretti or
-  Moretti?" — should carry shirt numbers when surnames collide (G).
-- `production.chain` + prod generator-signer secret = prod activation of
-  chain reads + mint, pending the user's word.
-- P7 two-match public-key stability check (agent errand, still unreported).
+  Moretti?"; should carry shirt numbers when surnames collide.
+- `production.chain` + prod generator-signer secret = prod activation.
+- SES production access (AWS case) — invitations stay sandbox-limited.
+- P7 two-match public-key stability check (agent errand, unreported).
