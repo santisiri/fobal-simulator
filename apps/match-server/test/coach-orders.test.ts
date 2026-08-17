@@ -26,6 +26,7 @@ const fakeClient = (payload: unknown) => ({
 /** manifest with resolvable names on both sides */
 function namedManifest(){
   const manifest = sampleManifest({ matchId: 'orders-1' });
+  manifest.teams[0]!.players[5]!.name = 'Leo Kovač';       // shirt 6, a CM — eligible marker
   manifest.teams[0]!.players[9]!.name = 'Nico Ferreyra';
   manifest.teams[0]!.players[10]!.name = 'Aldo Moretti';
   manifest.teams[1]!.players[8]!.name = 'Karim Öz';      // shirt 9, their striker
@@ -156,6 +157,78 @@ describe('interpret endpoint: taxonomy orders (mocked model)', () => {
       expect(out.orders).toBeUndefined();
       expect(out.patch).toBeUndefined();
       expect(out.say).toBe('good luck out there');
+    } finally { await server.close(); }
+  });
+});
+
+describe('G5 — durations and two references, end to end', () => {
+  test('"Kovač, mark their nine for ten minutes" reaches the instruction book WITH an expiry', async () => {
+    const { WebSocket } = await import('ws');
+    // @ts-expect-error plain-JS browser module, typechecked loosely on purpose
+    const { MatchConnection } = await import('../../match-client/src/net.js');
+    const { server, interpret, token } = await boot({
+      orders: [{
+        scope: 'player', intent: 'mark_player',
+        assignee: { side: 'own', name: 'Kovač' },
+        target: { side: 'opponent', shirtNumber: 9 },
+        durationMinutes: 10,
+      }],
+      say: 'on him for ten',
+    });
+    try {
+      const room = server.rooms.get('orders-1')!;
+      const out = await (await interpret('kovač, mark their nine for ten minutes')).json() as OrdersResponse;
+      expect(out.rejected).toBeUndefined();
+      const order = out.orders![0]!;
+      expect(order.ack).toBe("KOVAČ → MARK #9 ÖZ 10' ✓");
+      expect(order.wire).toMatchObject({
+        kind: 'player_instruction', playerId: 'rhinos-player-06',
+        instruction: 'mark_opponent', targetPlayerId: 'comets-player-09', ttlTicks: 1200,
+      });
+
+      const acks: Array<{ commandId: string; effectiveTick: number }> = [];
+      const rejections: unknown[] = [];
+      const conn = await new MatchConnection({
+        url: `ws://127.0.0.1:${server.port}`, matchId: 'orders-1', token,
+        socketFactory: (url: string) => new WebSocket(url) as never,
+        hooks: {
+          onAck: (a: { commandId: string; effectiveTick: number }) => acks.push(a),
+          onRejected: (r: unknown) => rejections.push(r),
+        },
+      }).connect();
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const poll = () => {
+          if (conn.status === 'live') return resolve();
+          if (Date.now() - start > 5000) return reject(new Error('never went live'));
+          setTimeout(poll, 10);
+        };
+        poll();
+      });
+
+      const w = order.wire as Record<string, unknown>;
+      conn.sendCommand({ kind: 'player_instruction', commandId: 'g5-1', teamId: 'team-rhinos',
+        playerId: w.playerId, instruction: w.instruction,
+        targetPlayerId: w.targetPlayerId, ttlTicks: w.ttlTicks });
+      await new Promise<void>((resolve, reject) => {
+        const start = Date.now();
+        const poll = () => {
+          if (acks.length === 1) return resolve();
+          if (Date.now() - start > 10_000) return reject(new Error('ack never arrived; rejections=' + JSON.stringify(rejections)));
+          setTimeout(poll, 10);
+        };
+        poll();
+      });
+
+      room.advance(acks[0]!.effectiveTick - room.currentTick + 1);
+      const instructions = (room.snapshot().teams[0] as {
+        instructions?: Array<{ playerId: string; instruction: string; targetPlayerId: string | null; expiresAtTick: number | null }>;
+      }).instructions!;
+      const mark = instructions.find(i => i.playerId === 'rhinos-player-06')!;
+      expect(mark).toMatchObject({ instruction: 'mark_opponent', targetPlayerId: 'comets-player-09' });
+      // the spoken ten minutes became a real expiry the engine will honor
+      expect(mark.expiresAtTick).toBeGreaterThan(room.currentTick);
+      conn.close();
     } finally { await server.close(); }
   });
 });

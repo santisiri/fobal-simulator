@@ -225,3 +225,129 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
     expect(PlayerIntent.options).toContain('mark_player');
   });
 });
+
+describe('G5 — spoken durations ("overlap for ten minutes")', () => {
+  // the golden clock runs 30 match-seconds per real second and the engine
+  // steps 60 ticks per real second: one match minute = 120 ticks
+  test('MATCH minutes compile to ttlTicks, and the ack says so', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', name: 'Ferreyra' }, durationMinutes: 10,
+    }), ctx);
+    expect(out).toMatchObject({ ok: true, ack: "FERREYRA → OVERLAP 10' ✓" });
+    if (out.ok && out.wire.kind === 'player_instruction')
+      expect(out.wire.ttlTicks).toBe(1200);
+  });
+
+  test('a spoken duration overrides a binding default spell', () => {
+    const spoken = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'make_forward_runs',
+      target: { side: 'own', name: 'Ferreyra' }, durationMinutes: 2,
+    }), ctx);
+    if (spoken.ok && spoken.wire.kind === 'player_instruction')
+      expect(spoken.wire.ttlTicks).toBe(240);
+
+    const silent = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'make_forward_runs',
+      target: { side: 'own', name: 'Ferreyra' },
+    }), ctx);
+    if (silent.ok && silent.wire.kind === 'player_instruction')
+      expect(silent.wire.ttlTicks).toBe(900);   // the binding's own default
+  });
+
+  test('every legal duration lands inside the protocol ttl range', () => {
+    for (const minutes of [1, 5, 45]){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent: 'stay_wide',
+        target: { side: 'own', name: 'Ferreyra' }, durationMinutes: minutes,
+      }), ctx);
+      expect(out.ok, String(minutes)).toBe(true);
+      if (out.ok && out.wire.kind === 'player_instruction'){
+        expect(out.wire.ttlTicks!, String(minutes)).toBeGreaterThanOrEqual(30);
+        expect(out.wire.ttlTicks!, String(minutes)).toBeLessThanOrEqual(18000);
+      }
+    }
+  });
+
+  test('durations are refused on team tactics (the engine expires instructions, not tactics)', () => {
+    expect(GameCommand.safeParse({ version: 1, scope: 'team', intent: 'press_high', durationMinutes: 5 }).success).toBe(false);
+    expect(GameCommand.safeParse({ version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', name: 'Ferreyra' }, durationMinutes: 60 }).success).toBe(false);   // over a half
+  });
+});
+
+describe('G5 — two references ("Kovač, mark their nine")', () => {
+  test('the marker becomes a per-player assignment carrying BOTH ids', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'own', name: 'Kovač' },
+      target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(out).toMatchObject({ ok: true, ack: 'KOVAČ → MARK #9 DOYLE ✓' });
+    if (out.ok && out.wire.kind === 'player_instruction')
+      expect(out.wire).toMatchObject({
+        playerId: 'own-p9', instruction: 'mark_opponent', targetPlayerId: 'opp-p9',
+      });
+  });
+
+  test('a marking job can be timed too', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'own', name: 'Kovač' },
+      target: { side: 'opponent', shirtNumber: 9 }, durationMinutes: 15,
+    }), ctx);
+    expect(out).toMatchObject({ ok: true, ack: "KOVAČ → MARK #9 DOYLE 15' ✓" });
+    if (out.ok && out.wire.kind === 'player_instruction') expect(out.wire.ttlTicks).toBe(1800);
+  });
+
+  test('NO marker keeps the old team-wide shadow (unchanged behavior)', () => {
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(out).toMatchObject({ ok: true, ack: 'MARK #9 DOYLE ✓' });
+    if (out.ok && out.wire.kind === 'tactical')
+      expect(out.wire.payload.patch).toMatchObject({ markTarget: 'opp-p9', scheme: 'man' });
+  });
+
+  test('the marker must be YOURS, must exist, and must not be the keeper', () => {
+    const theirs = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'opponent', name: 'Weiss' }, target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(theirs.ok).toBe(false);
+    if (!theirs.ok) expect(theirs.reason).toContain('YOUR players');
+
+    const ghost = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'own', name: 'Zlatan' }, target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(ghost.ok).toBe(false);
+    if (!ghost.ok) expect(ghost.reason).toContain('marker:');
+
+    const keeper = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'own', shirtNumber: 1 }, target: { side: 'opponent', shirtNumber: 9 },
+    }), ctx);
+    expect(keeper.ok).toBe(false);
+    if (!keeper.ok) expect(keeper.reason).toContain('keeps his post');
+  });
+
+  test('a forward is refused the job before the round trip (the engine agrees)', () => {
+    const withStriker: TeamSnapshot = {
+      ...own,
+      players: own.players.map((p, i) => i === 10 ? { ...p, role: 'ST' as const } : p),
+    };
+    const out = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'mark_player',
+      assignee: { side: 'own', name: 'Silva' }, target: { side: 'opponent', shirtNumber: 9 },
+    }), { ...ctx, own: withStriker });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toContain('plays too high to man-mark');
+  });
+
+  test('an assignee on a non-marking intent does not validate', () => {
+    expect(GameCommand.safeParse({ version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', name: 'Ferreyra' }, assignee: { side: 'own', name: 'Kovač' } }).success).toBe(false);
+  });
+});

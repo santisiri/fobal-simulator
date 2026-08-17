@@ -19,12 +19,13 @@
 //      Intents the simulation cannot express yet are REJECTED with the real
 //      reason — never silently approximated.
 //
-// Command lifetime semantics (v1): every compiled tactical intent is
-// PERSISTENT-UNTIL-REPLACED — it patches the team's tactical state, and the
-// next order touching the same fields overwrites it (no accumulation, no
-// contradiction pile-up: last order wins per field). Substitutions are
-// INSTANT. Timed instructions ("for the next five minutes") are a
-// documented non-goal until the engine can expire state.
+// Command lifetime semantics: team intents are PERSISTENT-UNTIL-REPLACED —
+// they patch the team's tactical state, and the next order touching the same
+// fields overwrites it (no accumulation, no contradiction pile-up: last order
+// wins per field). Substitutions are INSTANT. Player instructions are one per
+// player (a new one replaces the old) and may be TIMED: a spoken duration
+// ("overlap for ten minutes") compiles to the engine's ttlTicks, after which
+// the player's station restores itself.
 import { z } from 'zod';
 import { Formation, Role } from './core.js';
 import { PlayerInstructionKind, TacticalPatch, TeamSnapshot } from './match.js';
@@ -81,6 +82,14 @@ export const GameCommand = z.object({
   sub: z.object({ out: PlayerRef, in: PlayerRef }).optional(),
   /** optional strength 0..1 for intents that scale (pressing, tempo, …) */
   intensity: z.number().min(0).max(1).optional(),
+  /** G5 — "for the next ten minutes": MATCH minutes (what a manager means
+   *  when he shouts a duration), compiled to the engine's ttlTicks. Player
+   *  scope only: the engine expires per-player instructions, not team
+   *  tactics (those persist until replaced). */
+  durationMinutes: z.number().int().min(1).max(45).optional(),
+  /** G5 — the second reference: WHO carries out a job aimed at `target`.
+   *  "Kovač, mark their nine" → assignee=Kovač (own), target=their 9. */
+  assignee: PlayerRef.optional(),
 }).superRefine((cmd, ctx) => {
   const table: Record<string, z.ZodEnum<[string, ...string[]]>> = {
     team: TeamIntent, player: PlayerIntent, match: MatchIntent,
@@ -93,6 +102,11 @@ export const GameCommand = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'change_formation needs a formation' });
   if (cmd.intent === 'substitution' && !cmd.sub)
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'substitution needs sub.out and sub.in' });
+  if (cmd.durationMinutes !== undefined && cmd.scope !== 'player')
+    ctx.addIssue({ code: z.ZodIssueCode.custom,
+      message: 'durations apply to player instructions; team tactics persist until replaced' });
+  if (cmd.assignee !== undefined && cmd.intent !== 'mark_player')
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'assignee is only meaningful for mark_player' });
 });
 export type GameCommand = z.infer<typeof GameCommand>;
 
@@ -191,6 +205,15 @@ const SPATIAL_BINDINGS: Partial<Record<PlayerIntent, { kind: PlayerInstructionKi
   come_short: { kind: 'drop_back', ack: 'COME SHORT' },
 };
 
+/** G5 — spoken durations. A manager shouting "for ten minutes" means MATCH
+ *  minutes; the engine expires instructions in ticks. The golden clock runs
+ *  TIME_SCALE = 30 match-seconds per real second and the engine steps at
+ *  60 ticks per real second, so one match minute = 60/30 * 60 = 120 ticks.
+ *  Clamped into the protocol's own ttl range (30..18000). */
+const TICKS_PER_MATCH_MINUTE = 120;
+const ttlFromMinutes = (minutes: number): number =>
+  Math.min(18000, Math.max(30, Math.round(minutes * TICKS_PER_MATCH_MINUTE)));
+
 /** Still reserved — each with ITS OWN honest reason (a generic "not
  *  supported" teaches the manager nothing). */
 const RESERVED_REASONS: Partial<Record<PlayerIntent, string>> = {
@@ -229,9 +252,44 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
         return { ok: false, reason: 'marking targets an OPPONENT — say their number or name' };
       const target = resolvePlayerRef(cmd.target!, ctx);
       if (!target.ok) return { ok: false, reason: target.reason };
+      const targetSurname = target.name.split(/\s+/).pop()!.toUpperCase();
+
+      // G5 — two references: "Kovač, mark their nine" names the MARKER too,
+      // so the job becomes a per-player assignment the instruction book
+      // records (who is shadowing whom), not just a team-level target.
+      if (cmd.assignee){
+        if (cmd.assignee.side !== 'own')
+          return { ok: false, reason: 'the marker is one of YOUR players — name your own' };
+        const marker = resolvePlayerRef(cmd.assignee, ctx);
+        if (!marker.ok) return { ok: false, reason: `marker: ${marker.reason}` };
+        const markerSurname = marker.name.split(/\s+/).pop()!.toUpperCase();
+        // mirror the engine's marking rules as a FAST front door (it stays
+        // the authority): the keeper never leaves his post, and golden's
+        // marking branch only engages midfielders and defenders — a forward
+        // would claim the assignment and dead-lock it
+        const markerRole = ctx.own.players.find(p => p.playerId === marker.playerId)?.role;
+        if (markerRole === 'GK')
+          return { ok: false, reason: `${markerSurname}: the goalkeeper keeps his post` };
+        if (markerRole === 'ST' || markerRole === 'LW' || markerRole === 'RW')
+          return { ok: false, reason: `${markerSurname} plays too high to man-mark — give it to a midfielder or defender` };
+        const ttlTicks = cmd.durationMinutes !== undefined ? ttlFromMinutes(cmd.durationMinutes) : undefined;
+        return {
+          ok: true,
+          ack: `${markerSurname} → MARK #${target.shirtNumber} ${targetSurname}`
+            + (cmd.durationMinutes ? ` ${cmd.durationMinutes}'` : '') + ' ✓',
+          wire: {
+            kind: 'player_instruction', playerId: marker.playerId,
+            instruction: 'mark_opponent', targetPlayerId: target.playerId,
+            ...(ttlTicks !== undefined ? { ttlTicks } : {}),
+          },
+        };
+      }
+
+      // one reference: the whole team shadows him (the engine's team-level
+      // marking machine) — unchanged behavior
       return {
         ok: true,
-        ack: `MARK #${target.shirtNumber} ${target.name.split(/\s+/).pop()!.toUpperCase()} ✓`,
+        ack: `MARK #${target.shirtNumber} ${targetSurname} ✓`,
         wire: { kind: 'tactical', payload: { type: 'patch', patch: { markTarget: target.playerId, scheme: 'man' } } },
       };
     }
@@ -247,12 +305,17 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
       const role = ctx.own.players.find(p => p.playerId === target.playerId)?.role;
       if (role === 'GK')
         return { ok: false, reason: `${target.name.split(/\s+/).pop()}: the goalkeeper keeps his post` };
+      // G5: a spoken duration WINS over the binding's default spell length
+      const ttlTicks = cmd.durationMinutes !== undefined
+        ? ttlFromMinutes(cmd.durationMinutes)
+        : binding.ttlTicks;
       return {
         ok: true,
-        ack: `${target.name.split(/\s+/).pop()!.toUpperCase()} → ${binding.ack} ✓`,
+        ack: `${target.name.split(/\s+/).pop()!.toUpperCase()} → ${binding.ack}`
+          + (cmd.durationMinutes ? ` ${cmd.durationMinutes}'` : '') + ' ✓',
         wire: {
           kind: 'player_instruction', playerId: target.playerId, instruction: binding.kind,
-          ...(binding.ttlTicks !== undefined ? { ttlTicks: binding.ttlTicks } : {}),
+          ...(ttlTicks !== undefined ? { ttlTicks } : {}),
         },
       };
     }
