@@ -234,4 +234,35 @@ describe('email invitations', () => {
     for (const jargon of ['wallet', 'blockchain', 'NFT', 'crypto', 'web3', 'token'])
       expect(html.toLowerCase()).not.toContain(jargon.toLowerCase());
   });
+
+  test('a wallet inviter with a verified ENS name sends as that name', async () => {
+    const { secp256k1 } = await import('@noble/curves/secp256k1');
+    const { keccak_256 } = await import('@noble/hashes/sha3');
+    const PRIV = Buffer.from('2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6', 'hex');
+    const pub = secp256k1.getPublicKey(PRIV, false);
+    const ADDRESS = `0x${Buffer.from(keccak_256(pub.subarray(1)).slice(-20)).toString('hex')}`;
+    const personalSign = (message: string): string => {
+      const body = Buffer.from(message, 'utf8');
+      const digest = keccak_256(Buffer.concat([
+        Buffer.from(`\x19Ethereum Signed Message:\n${body.length}`, 'utf8'), body]));
+      const sig = secp256k1.sign(digest, PRIV);
+      return `0x${sig.toCompactHex()}${(27 + sig.recovery!).toString(16)}`;
+    };
+    const identity = {
+      // the email path AWAITS resolve (unlike the poll's peek-only rule)
+      async resolve(address: string){
+        return { address, displayName: 'santi.eth', ensName: 'santi.eth', verified: true, source: 'ens' as const };
+      },
+      peek(){ return null; },
+    };
+    const { post, provider, close } = await boot({ identity: identity as never });
+    try {
+      const { body: { message } } = await post('/auth/wallet', { address: ADDRESS });
+      const verify = await post('/auth/wallet/verify', { address: ADDRESS, signature: personalSign(message) });
+      expect(verify.status).toBe(200);
+      const sent = await post('/invites', { email: 'rival@example.com' }, verify.body.token);
+      expect(sent.status).toBe(201);
+      expect(provider.sent[0]!.inviterName).toBe('santi.eth');
+    } finally { await close(); }
+  });
 });

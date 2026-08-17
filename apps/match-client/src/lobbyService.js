@@ -218,6 +218,13 @@ export function createLobbyService({
       await poll();
     },
 
+    /** Scouting card for any coach in the roster: identity + form + kit +
+     *  the XI as name/role/shirt/overall (never the full rating sheet —
+     *  that reveals itself on the pitch). */
+    async inspect(accountId){
+      return (await api(`/coaches/${accountId}`)).coach;
+    },
+
     // ---- squad / identity ----
     async getSquad(){ return api('/squad'); },
     async saveSquad(body){ return api('/squad', { method: 'POST', body }); },

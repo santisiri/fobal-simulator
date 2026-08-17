@@ -150,6 +150,20 @@
     #connStatus span:not(.cdot) { display: none; }
     #playerCard { right: 8px; left: 8px; width: auto; top: 56px; }
   }
+
+  /* workstream G dev inspector (?inspector=1) — dev tooling, hidden in
+     normal play; production UX never renders it */
+  #inspector { position: fixed; top: 52px; right: 10px; width: 340px; max-height: 70vh;
+    overflow-y: auto; background: rgba(7,11,18,0.94); border: 1px solid rgba(70,200,150,0.4);
+    border-radius: 8px; padding: 10px; font: 10px/1.5 "JetBrains Mono", monospace;
+    color: #cfe6d8; z-index: 60; display: none; }
+  #inspector.on { display: block; }
+  #inspector h3 { margin: 0 0 6px; font-size: 10px; letter-spacing: 2px; color: #2be08f; }
+  #inspector .rec { border-top: 1px solid rgba(70,200,150,0.18); padding: 6px 0; }
+  #inspector .in { color: #e8eef5; }
+  #inspector .ok { color: #2be08f; }
+  #inspector .bad { color: #ffb0a8; }
+  #inspector .lat { color: #9fb2c8; }
 </style>
 </head>
 <body>
@@ -422,6 +436,43 @@
     // debug handles (harmless in production, invaluable in a console)
     window.__conn = conn;
     window.__puppet = puppet;
+
+    // workstream G — the developer command inspector (?inspector=1): every
+    // pipeline pass renders input -> orders -> validation -> latency, and
+    // server acks stamp the end-to-end time per command
+    if (new URLSearchParams(location.search).has('inspector')){
+      const panel = document.getElementById('inspector');
+      const log = document.getElementById('inspectorLog');
+      panel.classList.add('on');
+      const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const pendingAcks = new Map();   // commandId -> { el, sentAt }
+      const baseAck = conn.hooks.onAck;
+      conn.hooks.onAck = (msg) => {
+        const p = pendingAcks.get(msg.commandId);
+        if (p){
+          p.el.innerHTML += ` <span class="lat">ack ${Date.now() - p.sentAt}ms (tick ${msg.effectiveTick})</span>`;
+          pendingAcks.delete(msg.commandId);
+        }
+        baseAck?.(msg);
+      };
+      puppet.inspectorHook = (rec) => {
+        const el = document.createElement('div');
+        el.className = 'rec';
+        const lat = rec.latency
+          ? Object.entries(rec.latency).map(([k, v]) => `${k} ${v}ms`).join(' \u00b7 ')
+          : '';
+        el.innerHTML = [
+          rec.transcript ? `<div class="in">\ud83c\udf99 ${esc(rec.transcript)}</div>` : '',
+          ...rec.orders.map(o => `<div class="ok">\u2192 ${esc(o.scope)}/${esc(o.intent)} \u00b7 ${esc(o.ack)}</div>`),
+          ...rec.rejected.map(r => `<div class="bad">\u2717 ${esc(r.intent ?? '?')}: ${esc(r.reason)}</div>`),
+          rec.patch ? `<div class="ok">patch ${esc(Object.keys(rec.patch).join(','))}</div>` : '',
+          lat ? `<div class="lat">${lat}</div>` : '',
+        ].filter(Boolean).join('');
+        for (const id of rec.commandIds) pendingAcks.set(id, { el, sentAt: Date.now() });
+        log.prepend(el);
+        while (log.children.length > 20) log.lastChild.remove();
+      };
+    }
   });
 
   // lobby handoff: lobby.html (B1) redirects here with ?ws=…&match=…&token=…
@@ -478,5 +529,6 @@
     })();
   }
 </script>
+<div id="inspector"><h3>COMMAND INSPECTOR</h3><div id="inspectorLog"></div></div>
 </body>
 </html>

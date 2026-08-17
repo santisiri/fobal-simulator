@@ -554,55 +554,91 @@ export class GoldenPuppet {
    *  and — when voice-originated — ack tracking until the server confirms. */
   dispatchInterpretation(conn, out, { fromVoice = false } = {}){
     const game = this.win.game;
-    // workstream G: one utterance can carry SEVERAL commands — compiled
-    // taxonomy orders (wire-ready from the hub: team patches, player
-    // instructions, substitutions) plus the free-form patch, with
-    // coach_text as the last-resort fallback. N commands, N acks.
-    const sends = [];
-    const acks = [];
-    for (const order of out.orders ?? []){
-      if (!order?.wire) continue;
-      sends.push(order.wire);
-      if (order.ack) acks.push(order.ack);
-    }
-    if (out.patch && Object.keys(out.patch).length)
-      sends.push({ kind: 'tactical', payload: { type: 'patch', patch: out.patch } });
-    if (!sends.length && out.coachText)
-      sends.push({ kind: 'tactical', payload: { type: 'coach_text', text: String(out.coachText).slice(0, 280) } });
     if (out.say){
       // the assistant coach answers in the speaker's language — golden
       // announcer + the same feed line the golden LLM coach writes
       game.announce('COACH \u25b8 ' + out.say.slice(0, 90), 3.5);
       game.commentate('raw', { text: 'COACH: ' + out.say.slice(0, 180) });
     }
-    // the compiler's honest rejections and ask-backs ("Moretti or Costa?",
-    // "he is your keeper") always reach the feed; voice also puts the
-    // first one on the chip when nothing at all went out
-    for (const r of out.rejected ?? [])
-      game.commentate('raw', { text: 'BENCH: ' + String(r.reason ?? '').slice(0, 160) });
-    if (!sends.length){
-      if (fromVoice){
-        this._voiceT0 = null; this._captureMs = null;
-        const reason = out.rejected?.[0]?.reason;
-        this.voiceState(reason ? 'failed' : 'noop',
-          reason ?? out.say ?? 'heard \u2014 nothing tactical in that');
+
+    // Workstream G \u2014 compiled taxonomy orders from the server: each
+    // becomes its own wire command with its own short ack. The server
+    // compiled them deterministically against the manifest; the room
+    // validates each again on arrival.
+    const sent = [];   // { id, ack }
+    if (Array.isArray(out.orders)){
+      for (const order of out.orders){
+        const wire = order.wire ?? {};
+        const id = `order-${Date.now()}-${sent.length}`;
+        let cmd = null;
+        if (wire.kind === 'tactical' && wire.payload)
+          cmd = { kind: 'tactical', commandId: id, teamId: conn.teamId, payload: wire.payload };
+        else if (wire.kind === 'substitution')
+          cmd = { kind: 'substitution', commandId: id, teamId: conn.teamId,
+            playerOut: wire.playerOut, playerIn: wire.playerIn };
+        else if (wire.kind === 'player_instruction')
+          cmd = { kind: 'player_instruction', commandId: id, teamId: conn.teamId,
+            playerId: wire.playerId, instruction: wire.instruction,
+            ...(wire.targetPlayerId ? { targetPlayerId: wire.targetPlayerId } : {}),
+            ...(wire.ttlTicks ? { ttlTicks: wire.ttlTicks } : {}) };
+        if (!cmd) continue;
+        conn.sendCommand(cmd);
+        const ack = String(order.ack ?? order.intent).slice(0, 60);
+        sent.push({ id, ack });
+        game.announce(ack, 2.6);
+        game.commentate('raw', { text: 'ORDER: ' + ack });
       }
+    }
+    // honest refusals: ambiguity questions, reserved intents, unknown
+    // names \u2014 short, in the manager's face, never silent
+    if (Array.isArray(out.rejected)){
+      for (const r of out.rejected){
+        game.announce(('\u2717 ' + r.reason).slice(0, 80), 3.2);
+        game.commentate('raw', { text: 'ORDER REFUSED: ' + (r.intent ? r.intent + ' \u2014 ' : '') + r.reason });
+      }
+    }
+
+    let payload = null;
+    if (out.patch && Object.keys(out.patch).length) payload = { type: 'patch', patch: out.patch };
+    else if (!sent.length && out.coachText)
+      payload = { type: 'coach_text', text: String(out.coachText).slice(0, 280) };
+
+    if (payload){
+      const id = `voice-${Date.now()}`;
+      conn.sendCommand({ kind: 'tactical', commandId: id, teamId: conn.teamId, payload });
+      sent.push({ id, ack: this.summarizeInterpretation(out, payload) });
+      if (payload.type === 'coach_text' && !fromVoice) game.announce('COACH \u25b8 sent to the bench', 1.8);
+    }
+
+    // dev inspector (workstream G): one record per pipeline pass; the
+    // index.html ?inspector=1 panel renders these
+    this.inspectorHook?.({
+      at: Date.now(), fromVoice,
+      transcript: out.transcript ?? null,
+      orders: (out.orders ?? []).map(o => ({ intent: o.intent, scope: o.scope, ack: o.ack })),
+      rejected: out.rejected ?? [],
+      patch: out.patch ?? null, say: out.say ?? null,
+      latency: out.latency ?? null,
+      commandIds: sent.map(s => s.id),
+    });
+
+    if (!sent.length){
+      if (fromVoice){ this._voiceT0 = null; this._captureMs = null; }
+      if (fromVoice) this.voiceState(out.rejected?.length ? 'failed' : 'noop',
+        out.rejected?.[0]?.reason ?? out.say ?? 'heard \u2014 nothing tactical in that');
       return;
     }
-    const base = `voice-${Date.now()}`;
-    const ids = sends.map((_, i) => (i ? `${base}-${i}` : base));
-    const summary = acks.length
-      ? acks.join(' \u00b7 ')
-      : this.summarizeInterpretation(out, sends[0].payload ?? sends[0]);
     if (fromVoice){
-      this.pendingVoiceAck = { ids: new Set(ids), summary, t0: this._voiceT0 ?? null };
+      // the chip goes green only when EVERY command is acked; any
+      // rejection flips it red. t0 is the G4 voice-to-ack clock.
+      this.pendingVoiceAck = {
+        ids: new Set(sent.map(s => s.id)),
+        summary: sent.map(s => s.ack).join(' \u00b7 '),
+        t0: this._voiceT0 ?? null,
+      };
       this._voiceT0 = null; this._captureMs = null;   // one utterance, one clock
-      this.voiceState('sent', summary);
+      this.voiceState('sent', this.pendingVoiceAck.summary);
     }
-    sends.forEach((wire, i) =>
-      conn.sendCommand({ ...wire, commandId: ids[i], teamId: conn.teamId }));
-    if (!fromVoice && sends.some(s => s.payload?.type === 'coach_text'))
-      game.announce('COACH \u25b8 sent to the bench', 1.8);
   }
 
   /** C2 — route coach text through the server's LLM interpreter, falling
@@ -689,7 +725,7 @@ export class GoldenPuppet {
           if (p.ids.size === 0){
             // G4: voice-to-ack, capture-stop to the LAST server ack — the
             // end-to-end number only the client can measure
-            const ms = p.t0 !== null ? Math.round(performance.now() - p.t0) : null;
+            const ms = p.t0 != null ? Math.round(performance.now() - p.t0) : null;
             if (ms !== null) console.log(JSON.stringify({ msg: 'voice_to_ack', ms }));
             this.voiceState('applied', ms !== null ? `${p.summary} \u00b7 ${(ms / 1000).toFixed(1)}s` : p.summary);
             this.pendingVoiceAck = null;
@@ -809,7 +845,6 @@ export class GoldenPuppet {
   submitVoiceTranscript(text){
     this._fromVoice = true;
     this._voiceT0 = this._voiceT0 ?? performance.now();   // G4 (SR path)
-    this._captureMs = this._captureMs ?? null;
     const game = this.win.game;
     if (!game.coachOpen) game.openCoach();
     game.coachText = String(text ?? '').trim().slice(0, 280);

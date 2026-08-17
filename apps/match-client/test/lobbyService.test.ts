@@ -196,6 +196,39 @@ describe('LobbyService — two clients', () => {
     } finally { await r.close(); }
   });
 
+  test('scouting: A inspects B — identity, form, XI overalls, and NEVER the rating sheet', async () => {
+    const r = await rig();
+    try {
+      const A = svc(r.base), B = svc(r.base);
+      await emailLogin(A, 'a@fobal.ai');
+      await emailLogin(B, 'b@fobal.ai');
+      const bId = (await until(() => A.state.participants[0], 'roster')).accountId;
+
+      const card = await A.inspect(bId);
+      expect(card).toMatchObject({
+        displayName: 'b', squadName: 'B FC', status: 'available', chainTeam: false,
+      });
+      expect(card.squad.players).toHaveLength(11);
+      expect(card.squad.formation).toBeTruthy();
+      for (const p of card.squad.players){
+        expect(p.name.length).toBeGreaterThan(1);
+        expect(p.overall).toBeGreaterThan(20);
+        expect(p.overall).toBeLessThanOrEqual(100);
+        expect(p.shirtNumber).toBeGreaterThan(0);
+        // the deliberate withholding: strength, not the spreadsheet
+        expect(p).not.toHaveProperty('ratings');
+      }
+      expect(card.squad.players.some((p: { role: string }) => p.role === 'GK')).toBe(true);
+
+      // kit colors surface once the scouted coach saves them
+      await B.saveSquad({ colors: { primary: '#a855f7', secondary: '#f8fafc' } });
+      const dressed = await A.inspect(bId);
+      expect(dressed.kit).toMatchObject({ primary: '#a855f7' });
+
+      await expect(A.inspect('acc-00000000')).rejects.toThrow(/unknown coach/);
+    } finally { await r.close(); }
+  });
+
   test('wallet login works through the service; switching accounts ends the session', async () => {
     const r = await rig();
     try {
