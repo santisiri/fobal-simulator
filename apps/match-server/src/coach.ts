@@ -52,6 +52,10 @@ const INTERPRETATION_SCHEMA = {
             additionalProperties: false,
           },
           intensity: NUM,
+          // G5: "for ten minutes" — MATCH minutes, player scope only
+          durationMinutes: { type: 'integer' },
+          // G5: the marker in "Kovač, mark their nine" (mark_player only)
+          assignee: REF,
         },
         required: ['scope', 'intent'],
         additionalProperties: false,
@@ -105,6 +109,10 @@ export interface CoachInterpretation {
 const SYSTEM = `You are the tactical interpreter for a football management game. A coach speaks an instruction — in ANY language, in natural sideline speech (slang, fragments, self-corrections, "go go go") — and you translate it into the game's command vocabulary.
 
 PREFER "orders": the closed football taxonomy. Team intents set the whole team's approach (press_high, drop_deep, counterattack, attack_left, play_direct, waste_time, park_the_bus, …). Player intents address ONE player (mark_player, overlap, stay_wide, …) — identify the player by a "target" REFERENCE: side ('own' = the coach's player, 'opponent' = theirs) plus the name you heard and/or a shirt number. NEVER invent players; if the coach names someone, pass the name through exactly as heard — the game resolves it against the real roster, and asks back when it is ambiguous. Match intents: change_formation (with formation), substitution (with sub.out/sub.in references). A multi-part instruction ("press high and mark their nine") becomes MULTIPLE orders. If the coach self-corrects ("no, actually drop back"), emit only the FINAL intention.
+
+TWO REFERENCES: when the coach names WHO does a marking job — "Kovač, mark their nine", "have Silva pick up their striker" — put the marker in "assignee" (side 'own') and the man being marked in "target" (side 'opponent'). With no marker named ("mark their nine"), leave assignee out and the whole team shadows him.
+
+DURATIONS: when the coach bounds an instruction in time — "overlap for the next ten minutes", "hold that shape until the half" — set "durationMinutes" in MATCH minutes (1..45; "until the half" ≈ the minutes left in it). Player orders only; a duration spoken over a team instruction is dropped, so leave it out there.
 
 Use "patch" ONLY for comparative or fine-grained numeric language the taxonomy cannot carry ("press a bit harder", "slightly deeper line") — numeric settings range 0..1, adjusted RELATIVE to currentTactics. Enum settings: formation (442|433|352), scheme (zonal|man|trap), style (direct|possession|counter|mixed), attackSide (left|right|both).
 

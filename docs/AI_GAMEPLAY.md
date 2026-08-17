@@ -32,9 +32,10 @@ means the same thing in every match. Comparative language ("press a BIT
 harder") flows through the interpreter's free-form numeric patch instead,
 relative to current tactics.
 
-**PLAYER (11 intents — 7 bind, 4 reserved)**: `mark_player` compiles to
-the engine's man-marking assignment (`markTarget` + `scheme:'man'`). Six
-spatial intents lower onto the engine's `PlayerInstruction` layer
+**PLAYER (11 intents — 8 bind, 3 reserved)**: `mark_player` compiles to a
+marking assignment (team-wide, or per-player when a marker is named — see
+G5 below). Seven spatial intents lower onto the engine's
+`PlayerInstruction` layer
 (`packages/engine/src/tactics.ts` — station biasing, one active
 instruction per player, replacement semantics, attributes decide every
 step; see `docs/TACTICAL_EXECUTION.md`):
@@ -44,24 +45,45 @@ step; see `docs/TACTICAL_EXECUTION.md`):
 | `stay_wide` | `stay_wide` | `FERREYRA → STAY WIDE ✓` |
 | `cut_inside` | `stay_central` | `… → CUT INSIDE ✓` |
 | `overlap` | `overlap` | `… → OVERLAP ✓` |
+| `underlap` | `underlap` | `… → UNDERLAP ✓` |
 | `hold_position` | `hold_position` | `… → HOLD POSITION ✓` |
-| `make_forward_runs` | `push_forward` | `… → PUSH FORWARD ✓` |
+| `make_forward_runs` | `push_forward` (900-tick burst) | `… → PUSH FORWARD ✓` |
 | `come_short` | `drop_back` | `… → COME SHORT ✓` |
 
 Spatial orders address YOUR player (an opponent-side target is refused
 with direction), and the goalkeeper keeps his post — checked at compile
 for a fast answer, enforced again by the engine.
 
-Four remain reserved, each with ITS OWN honest reason: `underlap` (the
-engine runs overlaps, not underlaps yet), `press_player` (the engine
-cannot single out a presser — use marking or press as a team),
-`shoot_more`/`dribble_more` (per-player behavior tendencies are not
-tunable yet). A typo'd name still surfaces as a NAME error before any
+Three remain reserved, each with ITS OWN honest reason: `press_player`
+(the engine cannot single out a presser — use marking or press as a
+team), `shoot_more`/`dribble_more` (per-player behavior tendencies are
+not tunable yet). A typo'd name still surfaces as a NAME error before any
 "unsupported" talk.
 
 **MATCH (2 intents — both bind)**: `change_formation` (442|433|352),
 `substitution` (compiles to the existing wire substitution; the engine
 stays the authority on bench membership and sub limits).
+
+### Durations and two references (G5)
+
+`durationMinutes` (1..45, **match** minutes — what a manager means when he
+shouts one) compiles to the engine's `ttlTicks`. The golden clock runs 30
+match-seconds per real second and the engine steps 60 ticks per real
+second, so **one match minute = 120 ticks**; a spoken duration overrides
+a binding's default spell (`make_forward_runs` is a 900-tick burst unless
+you say otherwise), and the ack carries it: `FERREYRA → OVERLAP 10' ✓`.
+Durations are player-scope only — the engine expires instructions, not
+team tactics, so the schema refuses them on team intents rather than
+pretending.
+
+`assignee` is the second reference: *"Kovač, mark their nine"* names the
+MARKER (own side) alongside the man marked (`target`, opponent side), and
+compiles to a per-player `mark_opponent` instruction carrying both ids —
+so the instruction book records who is shadowing whom. Say it without a
+marker (*"mark their nine"*) and the old team-wide shadow still applies.
+The front door mirrors the engine's marking rules for a fast answer: the
+keeper never leaves his post, and forwards are turned down (golden's
+marking branch only engages midfielders and defenders).
 
 ## GameCommand schema
 
@@ -123,9 +145,10 @@ no ball state, no sim internals.
 - **Cancellation** = issue the counter-order; for player instructions,
   `hold_position` effectively re-pins the station, and a formation change
   clears every spatial instruction (new shape, new stations).
-- **Timed instructions**: the engine supports `ttlTicks` expiry on player
-  instructions; the taxonomy does not surface durations yet ("overlap for
-  five minutes" is interpreted as persistent) — a candidate G5 extension.
+- **Timed** (G5): a spoken duration compiles to `ttlTicks` — "overlap for
+  ten minutes" expires on the tick boundary and the station restores
+  itself. Team tactics have no expiry (the schema refuses durations
+  there).
 
 ## Attributes decide execution
 
@@ -192,9 +215,10 @@ pipeline.
 
 - 4 of 11 player intents remain reserved (underlap, press_player,
   shoot_more, dribble_more) — each rejection names its own reason.
-- Spoken durations are not honored yet: the engine's `ttlTicks` exists,
-  but the taxonomy has no duration field, so every spatial instruction is
-  persistent-until-replaced.
+- Durations are capped at 45 match minutes and rounded to whole minutes;
+  "until we score" and other conditional bounds are not expressible.
+- One marking assignment per team (the engine's single marking machine):
+  a second "mark their seven" replaces the first marker's record.
 - One `markTarget` per team (the engine's model) — "mark their nine AND
   their seven" keeps the last.
 - Ambiguity between two players sharing a surname produces a degenerate
