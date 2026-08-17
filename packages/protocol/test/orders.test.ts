@@ -121,18 +121,65 @@ describe('compileGameCommand (the simulation integration boundary)', () => {
 
   test('reserved player intents resolve the name FIRST, then reject honestly', () => {
     const typo = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'overlap',
+      version: 1, scope: 'player', intent: 'press_player',
       target: { side: 'own', name: 'Zlatan' },
     }), ctx);
     expect(typo.ok).toBe(false);
     if (!typo.ok) expect(typo.reason).toContain('Zlatan');   // the typo surfaces as a typo
 
     const reserved = compileGameCommand(GameCommand.parse({
-      version: 1, scope: 'player', intent: 'overlap',
+      version: 1, scope: 'player', intent: 'press_player',
       target: { side: 'own', name: 'Ferreyra' },
     }), ctx);
     expect(reserved.ok).toBe(false);
     if (!reserved.ok) expect(reserved.reason).toContain('Ferreyra: ');   // honest, named rejection
+  });
+
+  test('spatial player intents bind: taxonomy → the engine\'s player_instruction wire', () => {
+    // intent → wire instruction, per the spatial-truth table (not synonyms)
+    const table: Array<[string, string]> = [
+      ['stay_wide', 'stay_wide'],
+      ['cut_inside', 'stay_central'],
+      ['overlap', 'overlap'],
+      ['hold_position', 'hold_position'],
+      ['make_forward_runs', 'push_forward'],
+      ['come_short', 'drop_back'],
+    ];
+    for (const [intent, instruction] of table){
+      const out = compileGameCommand(GameCommand.parse({
+        version: 1, scope: 'player', intent,
+        target: { side: 'own', name: 'Ferreyra' },
+      }), ctx);
+      expect(out.ok, intent).toBe(true);
+      if (out.ok){
+        expect(out.wire).toMatchObject({
+          kind: 'player_instruction', playerId: 'own-p4', instruction,
+        });
+        expect(out.ack).toContain('FERREYRA');
+      }
+    }
+    // overlap is a run, not a posture — it expires on its own
+    const run = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'overlap',
+      target: { side: 'own', shirtNumber: 4 },
+    }), ctx);
+    if (run.ok && run.wire.kind === 'player_instruction') expect(run.wire.ttlTicks).toBe(600);
+  });
+
+  test('spatial instructions address YOUR players; the keeper holds his line', () => {
+    const theirs = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'stay_wide',
+      target: { side: 'opponent', name: 'Weiss' },
+    }), ctx);
+    expect(theirs.ok).toBe(false);
+    if (!theirs.ok) expect(theirs.reason).toContain('your own players');
+
+    const keeper = compileGameCommand(GameCommand.parse({
+      version: 1, scope: 'player', intent: 'make_forward_runs',
+      target: { side: 'own', name: 'Peña' },
+    }), ctx);
+    expect(keeper.ok).toBe(false);
+    if (!keeper.ok) expect(keeper.reason).toContain('keeper');
   });
 
   test('substitutions resolve both refs on OUR side and emit the wire command', () => {

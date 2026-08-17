@@ -554,26 +554,55 @@ export class GoldenPuppet {
    *  and — when voice-originated — ack tracking until the server confirms. */
   dispatchInterpretation(conn, out, { fromVoice = false } = {}){
     const game = this.win.game;
-    let payload = null;
-    if (out.patch && Object.keys(out.patch).length) payload = { type: 'patch', patch: out.patch };
-    else if (out.coachText) payload = { type: 'coach_text', text: String(out.coachText).slice(0, 280) };
+    // workstream G: one utterance can carry SEVERAL commands — compiled
+    // taxonomy orders (wire-ready from the hub: team patches, player
+    // instructions, substitutions) plus the free-form patch, with
+    // coach_text as the last-resort fallback. N commands, N acks.
+    const sends = [];
+    const acks = [];
+    for (const order of out.orders ?? []){
+      if (!order?.wire) continue;
+      sends.push(order.wire);
+      if (order.ack) acks.push(order.ack);
+    }
+    if (out.patch && Object.keys(out.patch).length)
+      sends.push({ kind: 'tactical', payload: { type: 'patch', patch: out.patch } });
+    if (!sends.length && out.coachText)
+      sends.push({ kind: 'tactical', payload: { type: 'coach_text', text: String(out.coachText).slice(0, 280) } });
     if (out.say){
       // the assistant coach answers in the speaker's language — golden
       // announcer + the same feed line the golden LLM coach writes
       game.announce('COACH \u25b8 ' + out.say.slice(0, 90), 3.5);
       game.commentate('raw', { text: 'COACH: ' + out.say.slice(0, 180) });
     }
-    if (!payload){
-      if (fromVoice) this.voiceState('noop', out.say ?? 'heard \u2014 nothing tactical in that');
+    // the compiler's honest rejections and ask-backs ("Moretti or Costa?",
+    // "he is your keeper") always reach the feed; voice also puts the
+    // first one on the chip when nothing at all went out
+    for (const r of out.rejected ?? [])
+      game.commentate('raw', { text: 'BENCH: ' + String(r.reason ?? '').slice(0, 160) });
+    if (!sends.length){
+      if (fromVoice){
+        this._voiceT0 = null; this._captureMs = null;
+        const reason = out.rejected?.[0]?.reason;
+        this.voiceState(reason ? 'failed' : 'noop',
+          reason ?? out.say ?? 'heard \u2014 nothing tactical in that');
+      }
       return;
     }
-    const id = `voice-${Date.now()}`;
+    const base = `voice-${Date.now()}`;
+    const ids = sends.map((_, i) => (i ? `${base}-${i}` : base));
+    const summary = acks.length
+      ? acks.join(' \u00b7 ')
+      : this.summarizeInterpretation(out, sends[0].payload ?? sends[0]);
     if (fromVoice){
-      this.pendingVoiceAck = { id, summary: this.summarizeInterpretation(out, payload) };
-      this.voiceState('sent', this.pendingVoiceAck.summary);
+      this.pendingVoiceAck = { ids: new Set(ids), summary, t0: this._voiceT0 ?? null };
+      this._voiceT0 = null; this._captureMs = null;   // one utterance, one clock
+      this.voiceState('sent', summary);
     }
-    conn.sendCommand({ kind: 'tactical', commandId: id, teamId: conn.teamId, payload });
-    if (payload.type === 'coach_text' && !fromVoice) game.announce('COACH \u25b8 sent to the bench', 1.8);
+    sends.forEach((wire, i) =>
+      conn.sendCommand({ ...wire, commandId: ids[i], teamId: conn.teamId }));
+    if (!fromVoice && sends.some(s => s.payload?.type === 'coach_text'))
+      game.announce('COACH \u25b8 sent to the bench', 1.8);
   }
 
   /** C2 — route coach text through the server's LLM interpreter, falling
@@ -605,7 +634,12 @@ export class GoldenPuppet {
       const base = conn.url.replace(/^ws/, 'http').replace(/\/+$/, '');
       const res = await fetch(`${base}/matches/${conn.matchId}/coach/voice`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${conn.token}`, 'content-type': blob.type || 'audio/webm' },
+        headers: {
+          authorization: `Bearer ${conn.token}`,
+          'content-type': blob.type || 'audio/webm',
+          // G4: capture stage of the voice budget, measured where it happens
+          ...(this._captureMs ? { 'x-fobal-voice-capture-ms': String(this._captureMs) } : {}),
+        },
         body: blob,
         signal: AbortSignal.timeout(25_000),
       });
@@ -649,15 +683,23 @@ export class GoldenPuppet {
       const prevAck = conn.hooks.onAck;
       conn.hooks.onAck = (m) => {
         if (prevAck) prevAck(m);
-        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
-          this.voiceState('applied', this.pendingVoiceAck.summary);
-          this.pendingVoiceAck = null;
+        const p = this.pendingVoiceAck;
+        if (p?.ids?.has(m.commandId)){
+          p.ids.delete(m.commandId);
+          if (p.ids.size === 0){
+            // G4: voice-to-ack, capture-stop to the LAST server ack — the
+            // end-to-end number only the client can measure
+            const ms = p.t0 !== null ? Math.round(performance.now() - p.t0) : null;
+            if (ms !== null) console.log(JSON.stringify({ msg: 'voice_to_ack', ms }));
+            this.voiceState('applied', ms !== null ? `${p.summary} \u00b7 ${(ms / 1000).toFixed(1)}s` : p.summary);
+            this.pendingVoiceAck = null;
+          }
         }
       };
       const prevRej = conn.hooks.onRejected;
       conn.hooks.onRejected = (m) => {
         if (prevRej) prevRej(m);
-        if (this.pendingVoiceAck && m.commandId === this.pendingVoiceAck.id){
+        if (this.pendingVoiceAck?.ids?.has(m.commandId)){
           this.voiceState('failed', m.message ?? 'the bench rejected it');
           this.pendingVoiceAck = null;
         }
@@ -676,6 +718,9 @@ export class GoldenPuppet {
           rec.onstop = () => {
             for (const t of stream.getTracks()) t.stop();
             this.recorder = null;
+            // G4 stamps: capture length, and t0 for the voice-to-ack clock
+            this._voiceT0 = performance.now();
+            this._captureMs = this._captureStart ? Math.round(this._voiceT0 - this._captureStart) : null;
             const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
             if (blob.size < 1200){ this.voiceState('idle'); return; }   // a tap, not talk
             void this.voiceViaStt(conn, blob).then(handled => {
@@ -688,6 +733,7 @@ export class GoldenPuppet {
             });
           };
           rec.start();
+          this._captureStart = performance.now();   // G4
           this.recorder = rec;
         } catch {
           // mic permission denied for MediaRecorder — try the SR path
@@ -762,6 +808,8 @@ export class GoldenPuppet {
    *  after the microphone is exactly the typed coach-console path. */
   submitVoiceTranscript(text){
     this._fromVoice = true;
+    this._voiceT0 = this._voiceT0 ?? performance.now();   // G4 (SR path)
+    this._captureMs = this._captureMs ?? null;
     const game = this.win.game;
     if (!game.coachOpen) game.openCoach();
     game.coachText = String(text ?? '').trim().slice(0, 280);

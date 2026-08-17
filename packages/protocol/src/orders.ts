@@ -173,10 +173,27 @@ const TEAM_EFFECTS: Record<TeamIntent, (intensity?: number) => { kind: 'patch'; 
   cross_more: () => t({ crossing: 0.85, width: 0.75 }, 'GET CROSSES IN'),
 };
 
-/** Player intents that bind TODAY. Everything else in PlayerIntent is
- *  reserved: it validates (so interpreters, tests, and logs speak the full
- *  language now) and rejects honestly at compile. */
-const RESERVED_REASON = 'not on the pitch yet — the squad only takes marking orders for now';
+/** Player intents that bind to the engine's per-player instruction state
+ *  (G3, tactics.ts). The mapping is spatial truth, not synonyms: an intent
+ *  the wire cannot express stays RESERVED and rejects honestly — the
+ *  vocabulary grows only as fast as the simulation can honor it. */
+const PLAYER_BINDINGS: Partial<Record<PlayerIntent, {
+  instruction: 'stay_wide' | 'stay_central' | 'push_forward' | 'drop_back' | 'overlap' | 'hold_position';
+  ack: string;
+  /** short-lived runs expire on their own (600 ticks ≈ 10 real seconds) */
+  ttlTicks?: number;
+}>> = {
+  stay_wide: { instruction: 'stay_wide', ack: 'WIDE' },
+  cut_inside: { instruction: 'stay_central', ack: 'INSIDE' },
+  overlap: { instruction: 'overlap', ack: 'OVERLAP', ttlTicks: 600 },
+  hold_position: { instruction: 'hold_position', ack: 'HOLD' },
+  make_forward_runs: { instruction: 'push_forward', ack: 'PUSH ON' },
+  come_short: { instruction: 'drop_back', ack: 'COME SHORT' },
+};
+
+/** Reserved player intents: named in the taxonomy, validated, honestly
+ *  rejected until the engine grows the state they need. */
+const RESERVED_REASON = 'not on the pitch yet — the squad cannot take that order';
 
 // ---------------------------------------------------------------------------
 // compileGameCommand — the simulation integration boundary
@@ -191,7 +208,10 @@ export type CompiledOrder =
   | { ok: true; ack: string;
       wire:
         | { kind: 'tactical'; payload: { type: 'patch'; patch: TacticalPatch } }
-        | { kind: 'substitution'; playerOut: string; playerIn: string } }
+        | { kind: 'substitution'; playerOut: string; playerIn: string }
+        | { kind: 'player_instruction'; playerId: string;
+            instruction: 'stay_wide' | 'stay_central' | 'push_forward' | 'drop_back' | 'overlap' | 'hold_position';
+            ttlTicks?: number } }
   | { ok: false; reason: string };
 
 export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): CompiledOrder {
@@ -212,11 +232,34 @@ export function compileGameCommand(cmd: GameCommand, ctx: CompileContext): Compi
         wire: { kind: 'tactical', payload: { type: 'patch', patch: { markTarget: target.playerId, scheme: 'man' } } },
       };
     }
-    // reserved player instructions: resolve the target anyway so name errors
-    // surface now (a typo should not masquerade as "unsupported")
+    // spatial instructions address YOUR OWN players — resolve first so a
+    // typo surfaces as a name problem, not a side problem
+    if (cmd.target!.side !== 'own')
+      return { ok: false, reason: 'you can only instruct your own players — marking is the exception' };
     const target = resolvePlayerRef(cmd.target!, ctx);
     if (!target.ok) return { ok: false, reason: target.reason };
-    return { ok: false, reason: `${target.name.split(/\s+/).pop()}: ${RESERVED_REASON}` };
+    const surname = target.name.split(/\s+/).pop()!;
+
+    const binding = PLAYER_BINDINGS[cmd.intent as PlayerIntent];
+    if (!binding)
+      return { ok: false, reason: `${surname}: ${RESERVED_REASON}` };
+
+    // the engine refuses non-clear instructions for the keeper — say it
+    // here, at ask time, instead of surfacing a server rejection later
+    const role = ctx.own.players.find(p => p.playerId === target.playerId)?.role;
+    if (role === 'GK')
+      return { ok: false, reason: `${surname} is your keeper — he holds his line` };
+
+    return {
+      ok: true,
+      ack: `${surname.toUpperCase()} ${binding.ack} ✓`,
+      wire: {
+        kind: 'player_instruction',
+        playerId: target.playerId,
+        instruction: binding.instruction,
+        ...(binding.ttlTicks ? { ttlTicks: binding.ttlTicks } : {}),
+      },
+    };
   }
 
   // match scope
