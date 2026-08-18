@@ -7,15 +7,23 @@
 // palette index is already in the seed — so these tables are gated by a
 // measured perceptual test rather than by taste.
 //
-// Gate (matches the thresholds the analysis was calibrated against, CIE76):
-//   BG    pairwise dE >= 18, and the ramp must span L* 12..72
-//   SKIN  pairwise dE >= 22, and an L* span >= 55
-//   HAIR  pairwise dE >= 15
-// dE2000 is reported alongside for information; the pass/fail thresholds are
-// dE76 because that is the metric the 330x-collapse measurement used.
+// THE GATE (validatePalettes below). Two kinds of palette, two different
+// tests — conflating them is why the first hand-picked attempt failed:
+//   RAMPS (skin, hair) are ordered families, so only ADJACENT steps must
+//     separate. An all-pairs gate on an 8-step ramp is unsatisfiable: it
+//     would need an L* span of 150+ on a 100-point axis.
+//       SKIN  adjacent dE76 >= 10, L* span >= 55
+//       HAIR  adjacent dE76 >= 8,  L* span >= 55
+//   CATEGORICAL sets (background, accent) are unordered, so EVERY pair must
+//     clear the bar — achievable only by spending hue, not just lightness.
+//       BG      pairwise dE76 >= 18, L* span >= 40
+//       ACCENT  pairwise dE76 >= 18, L* span >= 55
+// Thresholds are dE76 because that is the metric the 330x-collapse
+// measurement used; dE2000 is implemented below for information.
 
-/** [base, shade, light] — every skin tone carries its own shadow and
- *  highlight so the face has planes instead of being a flat silhouette. */
+/** Skin: the solved base ramp. Each tone derives its own [base, shade,
+ *  light] triplet (see SKIN, under), so a face has planes instead of
+ *  reading as a flat silhouette. */
 // SOLVED (tools/solve-palettes.mjs): 8 tones on a skin locus, even in Lab,
 // adjacent dE76 = 10.2, L* span 71. Shade/light are derived per tone.
 export const SKIN_BASE = [
