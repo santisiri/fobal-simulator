@@ -6,6 +6,7 @@
 // part rects in a fixed layer order.
 import { SKIN, HAIR as HAIR_COL, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
 import { CANVAS, FACE, SLOT, HEADS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HEADWEAR } from '../spec/parts.js';
+import { CUM, DENOM, pickFromCum, assertWeights } from '../spec/weights.js';
 
 // ------------------------------------------------------------------ lanes
 // Solidity: s0 = keccak256(abi.encode(DOMAIN_V2, dna, appearance));
@@ -19,72 +20,30 @@ function fnv(str) {
 }
 const lane = (seed, tag) => fnv(`${seed}|${tag}`);
 
-/** Weighted pick over a cumulative table totalling 4096 (the Solidity form).
- *  SILHOUETTE classes must keep max/min <= 6 — see assertWeights(). */
-function cdfPick(seed, tag, weights) {
-  const total = weights.reduce((a, b) => a + b, 0);
-  let r = lane(seed, tag) % total;
-  for (let i = 0; i < weights.length; i++) { if (r < weights[i]) return i; r -= weights[i]; }
-  return weights.length - 1;
-}
-const flat = (n, w = 100) => Array.from({ length: n }, () => w);
+/** Selection walks the SAME cumulative-4096 table the Solidity composer
+ *  will walk (spec/weights.js), so JS and chain cannot disagree about which
+ *  part a seed picks. Defining the weights in two places is precisely the
+ *  drift this slice exists to remove. */
+const cdfPick = (seed, tag, cls) => pickFromCum(CUM[cls], lane(seed, tag) % DENOM);
 
-/** 6:1 cap on every silhouette-bearing class — the adversarial review's
- *  measurement: uniform gives 0.3% siblings, a 36:1 collectible curve gives
- *  20.95%, which is v1's failure rate. Rarity lives only in flat channels. */
-const WEIGHTS = {
-  head:     flat(HEADS.length),
-  eyes:     flat(EYES.length),
-  brows:    flat(BROWS.length),
-  nose:     flat(NOSES.length),
-  mouth:    flat(MOUTHS.length),
-  // hair: bald/shaved slightly rarer than mid styles, ratio 3:1 (<= 6)
-  hair:     [40, 45, 90, 100, 110, 100, 95, 80, 90, 95, 70, 60, 55, 40, 65, 60, 50, 85, 70, 55, 70, 75, 80, 75],
-  beard:    [220, 120, 90, 85, 70, 110, 95, 60],
-  headwear: [900, 90, 70, 80, 60, 40, 45, 35, 55, 60],
-  hairColor: [130, 120, 110, 100, 90, 80, 70, 60, 70],
-  skin:     flat(SKIN.length),
-  bg:       flat(BG.length),
-  accent:   flat(ACCENT.length),
-  iris:     flat(IRIS.length),
-};
-
-/** The 6:1 cap applies to PRESENT variants only. Index 0 of hair/beard/
- *  headwear is "None" — the absence of a feature, not a variant competing to
- *  be seen — and football wants most heads bare, so exempting it is correct.
- *  What the cap actually protects against is an authored piece so rare that
- *  nobody ever sees it while it still costs bytecode. */
-const HAS_NONE = { hair: true, beard: true, headwear: true, head: false };
-export function assertWeights() {
-  const bad = [], rows = [];
-  for (const k of ['head', 'hair', 'headwear', 'beard']) {
-    const present = HAS_NONE[k] ? WEIGHTS[k].slice(1) : WEIGHTS[k];
-    const ratio = Math.max(...present) / Math.min(...present);
-    const nonePct = HAS_NONE[k]
-      ? ((WEIGHTS[k][0] / WEIGHTS[k].reduce((a, b) => a + b, 0)) * 100).toFixed(0) + '%'
-      : '—';
-    rows.push({ class: k, presentRatio: +ratio.toFixed(2), none: nonePct });
-    if (ratio > 6) bad.push(`${k} present-variant ratio ${ratio.toFixed(1)} > 6`);
-  }
-  return { pass: bad.length === 0, bad, rows };
-}
+export { assertWeights };
 
 // ------------------------------------------------------------- traits
 export function traitsOf(seed) {
   const t = {
-    head:      cdfPick(seed, 'HEAD', WEIGHTS.head),
-    skin:      cdfPick(seed, 'SKIN', WEIGHTS.skin),
-    eyes:      cdfPick(seed, 'EYES', WEIGHTS.eyes),
-    brows:     cdfPick(seed, 'BROWS', WEIGHTS.brows),
-    nose:      cdfPick(seed, 'NOSE', WEIGHTS.nose),
-    mouth:     cdfPick(seed, 'MOUTH', WEIGHTS.mouth),
-    hair:      cdfPick(seed, 'HAIR', WEIGHTS.hair),
-    hairColor: cdfPick(seed, 'HAIRC', WEIGHTS.hairColor),
-    beard:     cdfPick(seed, 'BEARD', WEIGHTS.beard),
-    headwear:  cdfPick(seed, 'HEADWEAR', WEIGHTS.headwear),
-    bg:        cdfPick(seed, 'BG', WEIGHTS.bg),
-    accent:    cdfPick(seed, 'ACCENT', WEIGHTS.accent),
-    iris:      cdfPick(seed, 'IRIS', WEIGHTS.iris),
+    head:      cdfPick(seed, 'HEAD', 'head'),
+    skin:      cdfPick(seed, 'SKIN', 'skin'),
+    eyes:      cdfPick(seed, 'EYES', 'eyes'),
+    brows:     cdfPick(seed, 'BROWS', 'brows'),
+    nose:      cdfPick(seed, 'NOSE', 'nose'),
+    mouth:     cdfPick(seed, 'MOUTH', 'mouth'),
+    hair:      cdfPick(seed, 'HAIR', 'hair'),
+    hairColor: cdfPick(seed, 'HAIRC', 'hairColor'),
+    beard:     cdfPick(seed, 'BEARD', 'beard'),
+    headwear:  cdfPick(seed, 'HEADWEAR', 'headwear'),
+    bg:        cdfPick(seed, 'BG', 'bg'),
+    accent:    cdfPick(seed, 'ACCENT', 'accent'),
+    iris:      cdfPick(seed, 'IRIS', 'iris'),
   };
   // ---- CONSTRAINT PASS (total: every branch resolves, nothing reverts)
   const hw = HEADWEAR[t.headwear];

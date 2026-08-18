@@ -1,0 +1,205 @@
+{
+  "version": 1,
+  "canvas": 32,
+  "bias": 32,
+  "denom": 4096,
+  "classes": {
+    "HEADS": {
+      "parts": 6,
+      "bytes": 470,
+      "names": [
+        "Narrow",
+        "Oval",
+        "Round",
+        "Square",
+        "Broad",
+        "Angular"
+      ],
+      "cum": null
+    },
+    "EYES": {
+      "parts": 10,
+      "bytes": 232,
+      "names": [
+        "Neutral",
+        "Narrow",
+        "Wide",
+        "Sleepy",
+        "Focused",
+        "Smiling",
+        "Intense",
+        "Deep-set",
+        "Close-set",
+        "Wide-set"
+      ],
+      "cum": [
+        415,
+        824,
+        1233,
+        1642,
+        2051,
+        2460,
+        2869,
+        3278,
+        3687,
+        4096
+      ]
+    },
+    "BROWS": {
+      "parts": 8,
+      "bytes": 141,
+      "names": [
+        "Straight",
+        "Thick",
+        "Arched",
+        "Angry",
+        "Raised",
+        "Thin",
+        "Furrowed",
+        "Slit"
+      ],
+      "cum": [
+        512,
+        1024,
+        1536,
+        2048,
+        2560,
+        3072,
+        3584,
+        4096
+      ]
+    },
+    "NOSES": {
+      "parts": 3,
+      "bytes": 31,
+      "names": [
+        "Small",
+        "Broad",
+        "Long"
+      ],
+      "cum": null
+    },
+    "MOUTHS": {
+      "parts": 10,
+      "bytes": 127,
+      "names": [
+        "Neutral",
+        "Slight Smile",
+        "Broad Smile",
+        "Smirk",
+        "Open",
+        "Stern",
+        "Gritted",
+        "Tired",
+        "Shouting",
+        "Pursed"
+      ],
+      "cum": null
+    },
+    "BEARDS": {
+      "parts": 8,
+      "bytes": 96,
+      "names": [
+        "None",
+        "Stubble",
+        "Moustache",
+        "Goatee",
+        "Chinstrap",
+        "Short Beard",
+        "Full Beard",
+        "Long Beard"
+      ],
+      "cum": null
+    },
+    "HAIR": {
+      "parts": 24,
+      "bytes": 389,
+      "names": [
+        "Bald",
+        "Shaved",
+        "Buzz",
+        "Crop",
+        "Short",
+        "Side Part",
+        "Swept",
+        "Quiff",
+        "Messy",
+        "Curly",
+        "Afro",
+        "High Top",
+        "Flat Top",
+        "Mohawk",
+        "Dreads",
+        "Braids",
+        "Cornrows",
+        "Long",
+        "Ponytail",
+        "Topknot",
+        "Undercut",
+        "Receding",
+        "Widow Peak",
+        "Wavy"
+      ],
+      "cum": [
+        93,
+        198,
+        408,
+        641,
+        906,
+        1139,
+        1360,
+        1546,
+        1756,
+        1977,
+        2140,
+        2280,
+        2408,
+        2501,
+        2652,
+        2792,
+        2908,
+        3106,
+        3269,
+        3397,
+        3560,
+        3735,
+        3921,
+        4096
+      ]
+    },
+    "HEADWEAR": {
+      "parts": 10,
+      "bytes": 127,
+      "names": [
+        "None",
+        "Headband",
+        "Sweatband",
+        "Cap",
+        "Beanie",
+        "Keeper Cap",
+        "Bucket Hat",
+        "Scrum Cap",
+        "Visor",
+        "Bandana"
+      ],
+      "cum": [
+        2574,
+        2830,
+        3029,
+        3257,
+        3428,
+        3542,
+        3670,
+        3769,
+        3925,
+        4096
+      ]
+    }
+  },
+  "totalBytes": 1613,
+  "gates": {
+    "palettes": true,
+    "weights": true,
+    "maxBlobBytes": 24575
+  }
+}

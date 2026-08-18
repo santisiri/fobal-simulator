@@ -60,3 +60,47 @@ jobs:
             -c prodWildcardCertificateArn=arn:aws:acm:sa-east-1:368426158592:certificate/00000000-0000-0000-0000-000000000000 \
             -c aiSecrets=1 \
             -c imageTag=ci
+
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # the generated art is a CROSS-LANGUAGE CONTRACT: the browser preview,
+      # the Solidity decoder and these fixtures must all be the same bytes.
+      # Regenerating and diffing is what stops them drifting apart.
+      - name: art codegen is current (gates + round-trip run inside)
+        run: |
+          node packages/art/tools/gen-art.mjs
+          git diff --exit-code -- packages/art/gen \
+            || { echo "::error::packages/art/gen is stale — run node packages/art/tools/gen-art.mjs and commit"; exit 1; }
+      - name: install foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: forge deps
+        working-directory: contracts
+        run: |
+          forge install --no-git foundry-rs/forge-std@v1.16.2
+          forge install --no-git OpenZeppelin/openzeppelin-contracts@v5.4.0
+      # EIP-170 must be gated on build --sizes: `forge test` silently relaxes
+      # the limit and will happily run bytecode mainnet would reject.
+      - name: build + EIP-170 margin gate
+        working-directory: contracts
+        run: |
+          forge build --sizes | tee /tmp/sizes.txt
+          # column 5 is the RUNTIME margin; anchoring on '^| Fobal' avoids
+          # matching source lines that merely mention a contract name
+          awk -F'|' '/^\| *Fobal/ && NF>=6 {
+              name=$2; gsub(/^ +| +$/,"",name);
+              m=$5;    gsub(/[ ,]/,"",m);
+              if (m+0 < 2048) { print "::error::" name " runtime margin " m "B < 2048B"; bad=1 }
+            } END { exit bad+0 }' /tmp/sizes.txt
+      - name: forge test
+        working-directory: contracts
+        run: forge test -vv
