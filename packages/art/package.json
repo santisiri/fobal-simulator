@@ -1,0 +1,11 @@
+{
+  "name": "@fobal/art",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "FOBAL on-chain player art v2 — the spec, the reference renderer, and the P0 visual gates. Everything here is the source of truth that tools/gen-art.mjs will serialise into SSTORE2 blobs for the Solidity composer.",
+  "scripts": {
+    "sheets": "node tools/contact-sheet.mjs",
+    "palettes": "node tools/solve-palettes.mjs"
+  }
+}
