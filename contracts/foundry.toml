@@ -10,7 +10,11 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 verbosity = 2
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+fs_permissions = [
+  { access = "read-write", path = "./deployments" },
+  # generated art blobs: the cross-language fixture the decode tests read
+  { access = "read", path = "../packages/art/gen" },
+]
 
 remappings = [
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
