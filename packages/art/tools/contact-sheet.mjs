@@ -6,7 +6,8 @@
 // strip, and the harder case, because team colour stops helping), and a
 // silhouette-only sheet with colour removed entirely.
 import { writeFileSync } from 'node:fs';
-import { renderPlayer, traitsOf, assertWeights, HAIR, HEADWEAR, BEARDS, HEADS, EYES, MOUTHS } from '../src/render.js';
+import { renderPlayer, traitsOf, seedOf, assertWeights, HAIR, HEADWEAR, BEARDS, HEADS, EYES, MOUTHS } from '../src/render.js';
+import { keccak_256 } from '@noble/hashes/sha3';
 import { validatePalettes } from '../spec/palettes.js';
 
 const TEAMS = [
@@ -37,9 +38,16 @@ const css = `
 `;
 const page = (title, body) => `<!doctype html><meta charset="utf-8"><title>${title}</title><style>${css}</style>${body}`;
 
-const seedOf = (i) => `fobal-v2-${i * 7919 + 104729}`;
+/** identities in the SAME shape the chain stores: a 32-byte dna and a
+ *  uint256 appearance, hashed exactly as FobalPlayer would supply them */
+const idOf = (i) => {
+  const bytes = keccak_256(new TextEncoder().encode(`fobal-v2-${i}`));
+  const dna = '0x' + [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { dna, appearance: (BigInt(dna) >> 96n) & 0xffffffffn };
+};
+const traitsAt = (i) => { const { dna, appearance } = idOf(i); return traitsOf(seedOf(dna, appearance)); };
 const cell = (i, team, size = 48, pos = 2) =>
-  `<div class="c${size}">${renderPlayer({ seed: seedOf(i), kit: team, position: pos })}</div>`;
+  `<div class="c${size}">${renderPlayer({ ...idOf(i), kit: team, position: pos })}</div>`;
 
 // ---- gates
 const pal = validatePalettes();
@@ -85,12 +93,12 @@ writeFileSync(new URL('../out/teams.html', import.meta.url), page('FOBAL v2 — 
 <p class="sub">Detail review only. The gate is gate.html at 48px.</p>${squads}`));
 
 // ---- 5. transfer test + size ladder
-const tSeed = seedOf(415);
+const tId = idOf(415);
 let transfer = '';
 for (const team of TEAMS)
-  transfer += `<div><div class="c120">${renderPlayer({ seed: tSeed, kit: team })}</div><div class="mono">${team.name}</div></div>`;
+  transfer += `<div><div class="c120">${renderPlayer({ ...tId, kit: team })}</div><div class="mono">${team.name}</div></div>`;
 const ladder = [48, 96, 120].map(px =>
-  `<div><div class="c${px === 120 ? 120 : px}" style="width:${px}px;height:${px}px">${renderPlayer({ seed: tSeed, kit: TEAMS[0] })}</div><div class="mono">${px}px</div></div>`).join('');
+  `<div><div class="c${px === 120 ? 120 : px}" style="width:${px}px;height:${px}px">${renderPlayer({ ...tId, kit: TEAMS[0] })}</div><div class="mono">${px}px</div></div>`).join('');
 writeFileSync(new URL('../out/transfer.html', import.meta.url), page('FOBAL v2 — transfer', `
 <h1>Transfer test — one identity, six clubs</h1>
 <p class="sub">The face is token state and immutable; the kit is team state. A transfer changes the jersey, not the player.</p>
@@ -104,8 +112,8 @@ for (const [label, list, key] of [['Hair', HAIR, 'hair'], ['Headwear', HEADWEAR,
   list.forEach((part, idx) => {
     // find a seed whose trait matches, so every variant is actually shown
     let found = null;
-    for (let i = 0; i < 40000 && !found; i++) if (traitsOf(seedOf(i))[key] === idx) found = i;
-    row += `<div><div class="c96">${found !== null ? renderPlayer({ seed: seedOf(found), kit: TEAMS[0] }) : ''}</div><div class="mono">${part.name}</div></div>`;
+    for (let i = 0; i < 40000 && found === null; i++) if (traitsAt(i)[key] === idx) found = i;
+    row += `<div><div class="c96">${found !== null ? renderPlayer({ ...idOf(found), kit: TEAMS[0] }) : ''}</div><div class="mono">${part.name}</div></div>`;
   });
   strat += `<h2>${label} — every variant</h2><div class="row">${row}</div>`;
 }
@@ -114,7 +122,7 @@ writeFileSync(new URL('../out/strata.html', import.meta.url), page('FOBAL v2 —
 <p class="sub">Collision hunting: clipping, layering faults, and variants that read identically.</p>${strat}`));
 
 // ---- diversity measurement (the sibling metric the reviews used)
-const sig = (i) => { const t = traitsOf(seedOf(i)); return `${t.bg}|${t.hair}|${t.hairColor}|${t.skin}|${t.headwear}`; };
+const sig = (i) => { const t = traitsAt(i); return `${t.bg}|${t.hair}|${t.hairColor}|${t.skin}|${t.headwear}`; };
 const seen = new Map();
 for (let i = 0; i < 100; i++) seen.set(sig(i), (seen.get(sig(i)) ?? 0) + 1);
 const siblings = [...seen.values()].filter(v => v > 1).reduce((a, v) => a + v, 0);

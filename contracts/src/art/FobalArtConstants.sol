@@ -20,6 +20,9 @@ library FobalArtConstants {
     uint256 internal constant HAIR_COUNT = 24;
     uint256 internal constant HEADWEAR_COUNT = 10;
 
+    uint256 internal constant HEADWEAR_COVERS_MASK = 760;
+    uint256 internal constant HEADWEAR_BAND_MASK = 262;
+
     function cumHead() internal pure returns (uint16[6] memory) {
         return [uint16(686), uint16(1368), uint16(2050), uint16(2732), uint16(3414), uint16(4096)];
     }
@@ -62,6 +65,8 @@ library FobalArtConstants {
 
     // palettes, packed 3 bytes per colour
     bytes internal constant SKIN_BASE = hex"fedfd1eac0aed3a28dba86719e6c59805444613f32432a23";
+    bytes internal constant SKIN_SHADE = hex"bea295b08c7ca077658f64527b52416641325132253c231b";
+    bytes internal constant SKIN_LIGHT = hex"fee7daf1d3c4e2bfaed2ad9cc09c8cac8d7f987f73857169";
     bytes internal constant HAIR_COLOR = hex"141010312d29514b42746c5e988f7bbeb399e6d9b8b8481f9aa3ab";
     bytes internal constant BG_COLOR = hex"281a1e6da3989c6d73335b754c56369296ba9d9370002312";
     bytes internal constant ACCENT_COLOR = hex"e8e2d41b1b1fd8342ce0a02a2f8f4e2f6fd08a5cf6e8712f";

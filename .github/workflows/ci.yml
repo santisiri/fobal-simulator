@@ -77,8 +77,8 @@ jobs:
       - name: art codegen is current (gates + round-trip run inside)
         run: |
           node packages/art/tools/gen-art.mjs
-          git diff --exit-code -- packages/art/gen \
-            || { echo "::error::packages/art/gen is stale — run node packages/art/tools/gen-art.mjs and commit"; exit 1; }
+          git diff --exit-code -- packages/art/gen contracts/src/art/FobalArtConstants.sol \
+            || { echo "::error::generated art is stale — run node packages/art/tools/gen-art.mjs and commit"; exit 1; }
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
