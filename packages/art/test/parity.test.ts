@@ -16,7 +16,8 @@ import { encodeClass, decodePart, partCount, BIAS, BLOB_VERSION } from '../src/b
 // @ts-expect-error
 import { validatePalettes } from '../spec/palettes.js';
 // @ts-expect-error
-import { renderPlayer, traitsOf } from '../src/render.js';
+import { renderPlayer, traitsOf, seedOf, freeAgentKit } from '../src/render.js';
+import { keccak_256 } from '@noble/hashes/sha3';
 
 const KIT = { primary: '2f6fd0', secondary: 'f2f4f8', accent: 'f2f4f8', pattern: 2 };
 
@@ -76,16 +77,46 @@ describe('rendering from blob bytes', () => {
     }
   });
 
+  /** identities in the shape FobalPlayer stores them */
+  const idOf = (i: number) => {
+    const bytes = keccak_256(new TextEncoder().encode(`parity-${i}`));
+    const dna = '0x' + [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+    return { dna, appearance: (BigInt(dna) >> 96n) & 0xffffffffn };
+  };
+
   test('renders are deterministic and stable across repeated calls', () => {
     for (let i = 0; i < 50; i++) {
-      const seed = `parity-${i}`;
-      expect(renderPlayer({ seed, kit: KIT })).toBe(renderPlayer({ seed, kit: KIT }));
+      const id = idOf(i);
+      expect(renderPlayer({ ...id, kit: KIT })).toBe(renderPlayer({ ...id, kit: KIT }));
     }
   });
 
-  test('a seed selects the same traits every time (the chain relies on this)', () => {
+  test('identity is a pure function of (dna, appearance)', () => {
     for (let i = 0; i < 50; i++) {
-      expect(traitsOf(`parity-${i}`)).toEqual(traitsOf(`parity-${i}`));
+      const { dna, appearance } = idOf(i);
+      expect(traitsOf(seedOf(dna, appearance))).toEqual(traitsOf(seedOf(dna, appearance)));
+    }
+  });
+
+  test('the free-agent kit is derived from the seed, not from any team', () => {
+    const { dna, appearance } = idOf(7);
+    const k = freeAgentKit(seedOf(dna, appearance));
+    expect(k.pattern).toBeGreaterThanOrEqual(0);
+    expect(k.pattern).toBeLessThan(7);
+    expect(k.primary).toMatch(/^[0-9a-f]{6}$/);
+  });
+
+  /** THE CROSS-LANGUAGE GUARD: the fixtures the Solidity test replays must
+   *  match what this renderer produces right now, or the forge parity test is
+   *  asserting against a stale file and proves nothing. */
+  test('committed fixtures match the current renderer output', () => {
+    const fx = JSON.parse(readFileSync(new URL('../gen/fixtures/render.json', import.meta.url), 'utf8'));
+    expect(fx.dna.length).toBeGreaterThanOrEqual(64);
+    for (let i = 0; i < fx.dna.length; i++) {
+      const svg = renderPlayer({ dna: fx.dna[i], appearance: BigInt(fx.appearance[i]) });
+      const hash = '0x' + [...keccak_256(new TextEncoder().encode(svg))]
+        .map((b: number) => b.toString(16).padStart(2, '0')).join('');
+      expect(hash, `fixture ${i} is stale — re-run gen-art.mjs`).toBe(fx.svgHash[i]);
     }
   });
 });
@@ -129,16 +160,18 @@ describe('palette gate', () => {
 
 describe('generated artefacts agree with the spec', () => {
   const gen = (f: string) => readFileSync(new URL(`../gen/${f}`, import.meta.url), 'utf8');
+  const sol = () => readFileSync(
+    new URL('../../../contracts/src/art/FobalArtConstants.sol', import.meta.url), 'utf8');
 
   test('Solidity constants carry the same class sizes and weight tables', () => {
-    const sol = gen('FobalArtConstants.sol');
+    const solSrc = sol();
     for (const [name, parts] of Object.entries(CLASSES) as [string, any[]][]) {
-      expect(sol).toContain(`${name.toUpperCase()}_COUNT = ${parts.length};`);
+      expect(solSrc).toContain(`${name.toUpperCase()}_COUNT = ${parts.length};`);
     }
-    expect(sol).toContain(`WEIGHT_DENOM = ${DENOM};`);
-    expect(sol).toContain(`BIAS = ${BIAS};`);
+    expect(solSrc).toContain(`WEIGHT_DENOM = ${DENOM};`);
+    expect(solSrc).toContain(`BIAS = ${BIAS};`);
     // spot-check a full table round-trips into Solidity syntax
-    expect(sol).toContain(CUM.hair.map((v: number) => `uint16(${v})`).join(', '));
+    expect(solSrc).toContain(CUM.hair.map((v: number) => `uint16(${v})`).join(', '));
   });
 
   test('the web module carries the same part data (no hand-port drift)', () => {

@@ -121,7 +121,9 @@ export const MOUTHS = [
 const jawTop = FACE.bottom - 6;
 export const BEARDS = [
   { name: 'None', rects: [] },
-  { name: 'Stubble',    rects: [rect(FACE.cx - 6, jawTop + 1, 12, 5, SLOT.HAIRD)], opacity: 0.4 },
+  // no SVG opacity anywhere: a translucent group cannot be encoded as
+  // blob data, so "lighter" is expressed as a palette slot instead
+  { name: 'Stubble',    rects: [rect(FACE.cx - 5, jawTop + 2, 10, 4, SLOT.HAIRD)] },
   { name: 'Moustache',  rects: [rect(FACE.cx - 3, M - 2, 6, 1, SLOT.HAIR)] },
   { name: 'Goatee',     rects: [rect(FACE.cx - 2, M + 2, 4, 2, SLOT.HAIR)] },
   { name: 'Chinstrap',  rects: [rect(FACE.cx - 7, jawTop, 2, 6, SLOT.HAIR), rect(FACE.cx + 5, jawTop, 2, 6, SLOT.HAIR), rect(FACE.cx - 5, FACE.bottom - 2, 10, 2, SLOT.HAIR)] },
@@ -137,7 +139,7 @@ const T = FACE.top;
 const cap = (h, extra = []) => [rect(FACE.cx - 8, T - 1, 16, h, SLOT.HAIR), ...extra];
 export const HAIR = [
   { name: 'Bald',        rects: [] },
-  { name: 'Shaved',      rects: [rect(FACE.cx - 7, T - 1, 14, 3, SLOT.HAIRD)], opacity: 0.55 },
+  { name: 'Shaved',      rects: [rect(FACE.cx - 7, T - 1, 14, 3, SLOT.HAIRD)] },
   { name: 'Buzz',        rects: cap(3) },
   { name: 'Crop',        rects: cap(4) },
   { name: 'Short',       rects: [...cap(4), rect(FACE.cx - 8, T + 3, 2, 3, SLOT.HAIR), rect(FACE.cx + 6, T + 3, 2, 3, SLOT.HAIR)] },

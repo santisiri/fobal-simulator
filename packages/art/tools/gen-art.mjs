@@ -3,7 +3,7 @@
 //   packages/art/spec/*  ->  gen/blobs/*.bin   SSTORE2 payloads
 //                            gen/blobs/*.hex   the same, for forge fixtures
 //                            gen/manifest.json class table + gate numbers
-//                            gen/FobalArtConstants.sol  Solidity constants
+//                            ../../contracts/src/art/FobalArtConstants.sol
 //                            gen/parts.web.js  the web module (retires the
 //                                              hand-maintained port in P5)
 //
@@ -16,8 +16,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { CLASSES, CANVAS, FACE, SLOT } from '../spec/parts.js';
 import { CUM, RAW, DENOM, assertWeights } from '../spec/weights.js';
-import { validatePalettes, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
+import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
+import { renderPlayer, seedOf, traitsOf, freeAgentKit } from '../src/render.js';
+import { keccak_256 } from '@noble/hashes/sha3';
 
 const A = new URL('..', import.meta.url);
 const blobDir = new URL('./gen/blobs/', A);
@@ -77,6 +79,11 @@ const solLines = [
 ];
 for (const [name, meta] of Object.entries(manifest.classes))
   solLines.push(`    uint256 internal constant ${name.toUpperCase()}_COUNT = ${meta.parts};`);
+// headwear tag bitmasks — the constraint pass reads these, so they are
+// generated from the same spec rather than restated by hand in Solidity
+const maskOf = (tag) => CLASSES.HEADWEAR.reduce((m, p, i) => (p.tags ?? []).includes(tag) ? m | (1 << i) : m, 0);
+solLines.push('', `    uint256 internal constant HEADWEAR_COVERS_MASK = ${maskOf('covers')};`,
+  `    uint256 internal constant HEADWEAR_BAND_MASK = ${maskOf('band')};`);
 solLines.push('');
 for (const [k, cum] of Object.entries(CUM))
   solLines.push(`    function cum${k[0].toUpperCase()}${k.slice(1)}() internal pure returns (uint16[${cum.length}] memory) {`,
@@ -86,12 +93,18 @@ const hexArr = (name, arr) =>
   `    bytes internal constant ${name} = hex"${arr.join('')}";`;
 solLines.push(
   '    // palettes, packed 3 bytes per colour',
-  hexArr('SKIN_BASE', SKIN_BASE), hexArr('HAIR_COLOR', HAIR), hexArr('BG_COLOR', BG), hexArr('ACCENT_COLOR', ACCENT),
+  hexArr('SKIN_BASE', SKIN_BASE),
+  // shade/light are PRECOMPUTED here: JS mixes them with floating point and
+  // Solidity must never attempt to reproduce that rounding
+  hexArr('SKIN_SHADE', SKIN.map(t => t[1])), hexArr('SKIN_LIGHT', SKIN.map(t => t[2])),
+  hexArr('HAIR_COLOR', HAIR), hexArr('BG_COLOR', BG), hexArr('ACCENT_COLOR', ACCENT),
   hexArr('IRIS_COLOR', IRIS),
   `    bytes3 internal constant INK = hex"${INK}";`,
   `    bytes3 internal constant EYE_WHITE = hex"${EYE_WHITE}";`,
   '}', '');
-writeFileSync(new URL('./FobalArtConstants.sol', genDir), solLines.join('\n'));
+// written straight into the contracts tree — its only consumer. A second
+// copy under gen/ would be one more thing that can silently drift.
+writeFileSync(new URL('../../contracts/src/art/FobalArtConstants.sol', A), solLines.join('\n'));
 
 // ---- the web module (generated; P5 deletes the hand-written port)
 const web = [
@@ -110,6 +123,25 @@ const web = [
 ].join('\n');
 writeFileSync(new URL('./parts.web.js', genDir), web);
 
+// ---- parity fixtures: (dna, appearance) -> expected SVG hash. The forge
+// test replays these through the Solidity renderer and compares hashes, so
+// any divergence between the two implementations fails a build.
+const FIXTURE_N = 64;
+const fx = { dna: [], appearance: [], svgHash: [], traits: [] };
+for (let i = 0; i < FIXTURE_N; i++) {
+  const dnaBytes = keccak_256(new TextEncoder().encode(`fobal-fixture-${i}`));
+  const dna = '0x' + [...dnaBytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  const appearance = (BigInt(dna) >> 96n) & 0xffffffffn;
+  const svg = renderPlayer({ dna, appearance });
+  const t = traitsOf(seedOf(dna, appearance));
+  fx.dna.push(dna);
+  fx.appearance.push(appearance.toString());
+  fx.svgHash.push('0x' + [...keccak_256(new TextEncoder().encode(svg))].map(b => b.toString(16).padStart(2, '0')).join(''));
+  fx.traits.push([t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard, t.headwear, t.bg, t.accent, t.iris].join(','));
+}
+mkdirSync(new URL('./gen/fixtures/', A), { recursive: true });
+writeFileSync(new URL('./gen/fixtures/render.json', A), JSON.stringify(fx, null, 1));
+
 manifest.totalBytes = totalBytes;
 manifest.gates = { palettes: pal.pass, weights: wts.pass, maxBlobBytes: MAX_BLOB };
 writeFileSync(new URL('./gen/manifest.json', A), JSON.stringify(manifest, null, 2));
@@ -118,5 +150,6 @@ console.log('class            parts   bytes');
 for (const [k, m] of Object.entries(manifest.classes))
   console.log(`  ${k.padEnd(14)} ${String(m.parts).padStart(3)}  ${String(m.bytes).padStart(6)}`);
 console.log(`  ${'TOTAL'.padEnd(14)}      ${String(totalBytes).padStart(6)} B of art data`);
+console.log(`fixtures: ${FIXTURE_N} seeds -> gen/fixtures/render.json`);
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'} · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

@@ -9,41 +9,68 @@ import { CANVAS, FACE, SLOT, HEADS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HE
 import { CUM, DENOM, pickFromCum, assertWeights } from '../spec/weights.js';
 
 // ------------------------------------------------------------------ lanes
-// Solidity: s0 = keccak256(abi.encode(DOMAIN_V2, dna, appearance));
-//           lane = uint256(keccak256(abi.encode(s0, LANE_TAG)))
-// The seed excludes tokenId on purpose — the same (dna, appearance) must
-// render the same player forever, wherever it is read from.
-function fnv(str) {
-  let h = 0x811c9dc5;
-  for (const c of str) { h ^= c.codePointAt(0); h = Math.imul(h, 0x01000193); }
-  return h >>> 0;
+// KECCAK, not a convenience hash: byte-identical output is impossible
+// unless JS and Solidity derive lanes the same way. The Solidity is
+//   s0   = keccak256(abi.encodePacked(DOMAIN, dna, appearance))
+//   lane = uint256(keccak256(abi.encodePacked(s0, TAG)))
+// and this is the same computation over the same bytes.
+//
+// The seed excludes tokenId on purpose: the same (dna, appearance) must
+// render the same player forever, wherever it is read from — which is also
+// why a token can be re-rendered by a new renderer without re-identifying.
+import { keccak_256 } from '@noble/hashes/sha3';
+
+export const DOMAIN = keccak_256(new TextEncoder().encode('fobal.art.v2'));
+
+const u256 = (v) => {
+  const out = new Uint8Array(32);
+  let x = BigInt(v);
+  for (let i = 31; i >= 0 && x > 0n; i--) { out[i] = Number(x & 0xffn); x >>= 8n; }
+  return out;
+};
+const hexToBytes32 = (hex) => u256(BigInt(hex));
+const cat = (...parts) => {
+  const n = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+const toBig = (bytes) => bytes.reduce((a, b) => (a << 8n) | BigInt(b), 0n);
+
+/** s0 for a player. `dna` is a 0x-prefixed 32-byte hex string and
+ *  `appearance` a uint256 — exactly what FobalPlayer.playerView returns. */
+export function seedOf(dna, appearance) {
+  return keccak_256(cat(DOMAIN, hexToBytes32(dna), u256(appearance)));
 }
-const lane = (seed, tag) => fnv(`${seed}|${tag}`);
+
+const TAG = new TextEncoder();
+const lane = (s0, tag) => toBig(keccak_256(cat(s0, TAG.encode(tag))));
 
 /** Selection walks the SAME cumulative-4096 table the Solidity composer
  *  will walk (spec/weights.js), so JS and chain cannot disagree about which
  *  part a seed picks. Defining the weights in two places is precisely the
  *  drift this slice exists to remove. */
-const cdfPick = (seed, tag, cls) => pickFromCum(CUM[cls], lane(seed, tag) % DENOM);
+const cdfPick = (s0, tag, cls) => pickFromCum(CUM[cls], Number(lane(s0, tag) % BigInt(DENOM)));
 
 export { assertWeights };
 
 // ------------------------------------------------------------- traits
-export function traitsOf(seed) {
+export function traitsOf(s0) {
   const t = {
-    head:      cdfPick(seed, 'HEAD', 'head'),
-    skin:      cdfPick(seed, 'SKIN', 'skin'),
-    eyes:      cdfPick(seed, 'EYES', 'eyes'),
-    brows:     cdfPick(seed, 'BROWS', 'brows'),
-    nose:      cdfPick(seed, 'NOSE', 'nose'),
-    mouth:     cdfPick(seed, 'MOUTH', 'mouth'),
-    hair:      cdfPick(seed, 'HAIR', 'hair'),
-    hairColor: cdfPick(seed, 'HAIRC', 'hairColor'),
-    beard:     cdfPick(seed, 'BEARD', 'beard'),
-    headwear:  cdfPick(seed, 'HEADWEAR', 'headwear'),
-    bg:        cdfPick(seed, 'BG', 'bg'),
-    accent:    cdfPick(seed, 'ACCENT', 'accent'),
-    iris:      cdfPick(seed, 'IRIS', 'iris'),
+    head:      cdfPick(s0, 'HEAD', 'head'),
+    skin:      cdfPick(s0, 'SKIN', 'skin'),
+    eyes:      cdfPick(s0, 'EYES', 'eyes'),
+    brows:     cdfPick(s0, 'BROWS', 'brows'),
+    nose:      cdfPick(s0, 'NOSE', 'nose'),
+    mouth:     cdfPick(s0, 'MOUTH', 'mouth'),
+    hair:      cdfPick(s0, 'HAIR', 'hair'),
+    hairColor: cdfPick(s0, 'HAIRC', 'hairColor'),
+    beard:     cdfPick(s0, 'BEARD', 'beard'),
+    headwear:  cdfPick(s0, 'HEADWEAR', 'headwear'),
+    bg:        cdfPick(s0, 'BG', 'bg'),
+    accent:    cdfPick(s0, 'ACCENT', 'accent'),
+    iris:      cdfPick(s0, 'IRIS', 'iris'),
   };
   // ---- CONSTRAINT PASS (total: every branch resolves, nothing reverts)
   const hw = HEADWEAR[t.headwear];
@@ -72,6 +99,19 @@ function resolvePalette(t, kit) {
 // expressed structurally.
 export const KIT_PATTERNS = ['Solid', 'Sleeves', 'Stripes', 'Hoops', 'Halves', 'Sash', 'Chevron'];
 
+/** P3 renders players as FREE AGENTS: the kit is derived from the seed, so
+ *  the renderer needs no team lookup at all and can be proven standalone.
+ *  P4 replaces this with a registry read; the face is untouched either way,
+ *  which is the whole point of keeping the two composers separate. */
+export function freeAgentKit(s0) {
+  return {
+    primary: ACCENT[Number(lane(s0, 'KIT1') % 8n)],
+    secondary: ACCENT[Number(lane(s0, 'KIT2') % 8n)],
+    accent: ACCENT[Number(lane(s0, 'KIT3') % 8n)],
+    pattern: Number(lane(s0, 'KITP') % 7n),
+  };
+}
+
 function kitRects(kit, accentSlot) {
   const y = 24, out = [];
   out.push([0, y - 1, CANVAS, 1, SLOT.INK]);                       // shoulder line
@@ -93,11 +133,8 @@ function kitRects(kit, accentSlot) {
 }
 
 // -------------------------------------------------------------- compose
-const emit = (rects, pal, opacity) => {
-  const body = rects.map(([x, y, w, h, slot]) =>
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#${pal[slot]}"/>`).join('');
-  return opacity ? `<g opacity="${opacity}">${body}</g>` : body;
-};
+const emit = (rects, pal) => rects.map(([x, y, w, h, slot]) =>
+  `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#${pal[slot]}"/>`).join('');
 
 /** THE FACE COMPOSER — takes no kit parameter, by design. */
 export function faceRects(t) {
@@ -110,18 +147,24 @@ export function faceRects(t) {
   return out;
 }
 
-export function renderPlayer({ seed, kit, position = 2 }) {
-  const t = traitsOf(seed);
+/** @param dna 0x-prefixed 32-byte hex, @param appearance uint256 — the two
+ *  immutable identity fields FobalPlayer stores at mint. */
+export function renderPlayer({ dna, appearance, kit, position = 2 }) {
+  const s0 = seedOf(dna, appearance);
+  const t = traitsOf(s0);
+  kit = kit ?? freeAgentKit(s0);
   const gkKit = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
   const worn = position === 0 ? gkKit : kit;
   const pal = resolvePalette(t, worn);
   const layers = [
-    `<rect width="${CANVAS}" height="${CANVAS}" fill="#${BG[t.bg]}"/>`,
+    // every rect is emitted in the same uniform shape, including this one:
+    // an attribute the reference omits is an attribute Solidity has to guess
+    `<rect x="0" y="0" width="${CANVAS}" height="${CANVAS}" fill="#${BG[t.bg]}"/>`,
     emit(kitRects(worn, SLOT.ACCENT), pal),
     emit([[13, 21, 6, 3, SLOT.SHADE]], pal),                        // neck
     emit(faceRects(t), pal),
-    emit(BEARDS[t.beard].rects, pal, BEARDS[t.beard].opacity),
-    emit(HAIR[t.hair].rects, pal, HAIR[t.hair].opacity),
+    emit(BEARDS[t.beard].rects, pal),
+    emit(HAIR[t.hair].rects, pal),
     emit(HEADWEAR[t.headwear].rects, pal),
   ];
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" `
