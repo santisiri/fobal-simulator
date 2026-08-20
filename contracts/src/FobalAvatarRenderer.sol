@@ -26,8 +26,11 @@ contract FobalAvatarRenderer is IFobalRenderer {
 
     string public constant VERSION = "avatar-v1";
 
-    // 16-entry palettes; traits are 4-bit indices. Backgrounds, skin tones,
-    // hair and kit colors are chosen to read well at 24x24.
+    // EIGHT-entry palettes (24 bytes each, 3 per colour); traits are 4-bit
+    // indices reduced with % 8, so half of every nibble's range is folded
+    // away. This is one of the measured causes of v1's sibling effect and is
+    // corrected in the v2 renderer (contracts/src/art/), which reads full
+    // 4-bit indices against wider, perceptually-separated palettes.
     bytes constant BG = hex"1b243220303f28323c2d24381f363033272b1e2a443a3226"; // 8x3 bytes
     bytes constant SKIN = hex"f2c9a4e0ac69c686428d55245c3317f8d9c0a86b3c713f17";
     bytes constant HAIR = hex"1a15125b3a1dc8a24a9c2b1f2e2e34e8e4da763fb81f6b3a";

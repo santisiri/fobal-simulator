@@ -1,5 +1,22 @@
 # Player NFT data model
 
+> **Updated for art v2.** The storage model below is unchanged — v2 did not
+> touch `FobalPlayer`, which is not upgradeable and did not need to be. What
+> changed is who draws the picture and where the jersey comes from. See
+> `packages/art/README.md` for the art pipeline and
+> `docs/ART_ROLLOUT.md` for the deployment sequence.
+>
+> - **Identity** is still exactly `(dna, appearance, name)`, immutable at mint.
+> - **The jersey is NOT token state.** It comes from `FobalSquadRegistry`
+>   (which club a player is at) and `FobalKitRegistry` (that club's colours).
+>   Presentation only: outside the deterministic match state hash, outside
+>   the signed `MatchResult`, irrelevant to settlement.
+> - **A transfer changes the jersey, not the face** — and a sale changes
+>   neither, because club membership is explicit state rather than a side
+>   effect of ownership.
+> - `tokenURI` remains 100% on-chain, now served through
+>   `FobalRendererRouter` so a bad renderer can never take metadata down.
+
 The canonical description of what a Fobal player IS, where each field
 lives, how names are generated, and how a frontend reads a complete
 player profile. Outcome of the player-data workstream audit: **the chain
