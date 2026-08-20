@@ -127,17 +127,36 @@ writeFileSync(new URL('./parts.web.js', genDir), web);
 // test replays these through the Solidity renderer and compares hashes, so
 // any divergence between the two implementations fails a build.
 const FIXTURE_N = 64;
-const fx = { dna: [], appearance: [], svgHash: [], traits: [] };
+const hashOf = (str) => '0x' + [...keccak_256(new TextEncoder().encode(str))]
+  .map(b => b.toString(16).padStart(2, '0')).join('');
+const fx = {
+  dna: [], appearance: [], svgHash: [], traits: [],
+  // an EXPLICIT kit per fixture, so P4's club-kit path is proven byte-exact
+  // too — not just the free-agent one
+  kitPrimary: [], kitSecondary: [], kitAccent: [], kitPattern: [], svgKitHash: [],
+};
 for (let i = 0; i < FIXTURE_N; i++) {
   const dnaBytes = keccak_256(new TextEncoder().encode(`fobal-fixture-${i}`));
   const dna = '0x' + [...dnaBytes].map(b => b.toString(16).padStart(2, '0')).join('');
   const appearance = (BigInt(dna) >> 96n) & 0xffffffffn;
-  const svg = renderPlayer({ dna, appearance });
   const t = traitsOf(seedOf(dna, appearance));
   fx.dna.push(dna);
   fx.appearance.push(appearance.toString());
-  fx.svgHash.push('0x' + [...keccak_256(new TextEncoder().encode(svg))].map(b => b.toString(16).padStart(2, '0')).join(''));
+  fx.svgHash.push(hashOf(renderPlayer({ dna, appearance })));
   fx.traits.push([t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard, t.headwear, t.bg, t.accent, t.iris].join(','));
+  // deterministic club kit, spanning every pattern across the fixture set
+  const kh = BigInt(hashOf(`kit-${i}`));
+  const kit = {
+    primary: Number((kh >> 8n) & 0xffffffn).toString(16).padStart(6, '0'),
+    secondary: Number((kh >> 40n) & 0xffffffn).toString(16).padStart(6, '0'),
+    accent: Number((kh >> 72n) & 0xffffffn).toString(16).padStart(6, '0'),
+    pattern: i % 7,
+  };
+  fx.kitPrimary.push(String(parseInt(kit.primary, 16)));
+  fx.kitSecondary.push(String(parseInt(kit.secondary, 16)));
+  fx.kitAccent.push(String(parseInt(kit.accent, 16)));
+  fx.kitPattern.push(String(kit.pattern));
+  fx.svgKitHash.push(hashOf(renderPlayer({ dna, appearance, kit })));
 }
 mkdirSync(new URL('./gen/fixtures/', A), { recursive: true });
 writeFileSync(new URL('./gen/fixtures/render.json', A), JSON.stringify(fx, null, 1));
