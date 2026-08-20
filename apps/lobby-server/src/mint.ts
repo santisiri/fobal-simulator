@@ -267,7 +267,12 @@ export function validateSeeds(seeds: PlayerSeedInput[], budget: number): void {
       throw new MintError(400, `player ${i + 1}: skills has bits above lane 12`);
     if (sum > budget)
       throw new MintError(400, `player ${i + 1}: power ${sum} exceeds the ${budget} budget`);
-    toBig(seed.appearance, `player ${i + 1} appearance`);
+    // PlayerCodec.APPEARANCE_MASK — the contract reverts above this
+    // (FobalPlayer.sol: InvalidSeed("appearance")), so catching it here is
+    // the difference between a 400 and the user paying gas for a revert
+    const appearance = toBig(seed.appearance, `player ${i + 1} appearance`);
+    if (appearance > 0xffffffffn)
+      throw new MintError(400, `player ${i + 1}: appearance has bits above the 32-bit mask`);
   }
 }
 

@@ -57,3 +57,32 @@ explicitly secondary.
 
 Machine gates, both green: palette separation (dE76 — ramps on adjacent
 steps, categorical sets on all pairs) and the 6:1 silhouette weight ratio.
+
+## The three implementations, and which is which (P5)
+
+Art existed in three places and had already drifted. It is now one
+implementation with one generated copy per runtime:
+
+| where | what it is | kept honest by |
+|---|---|---|
+| `packages/art/src/render.js` | the REFERENCE. Every change starts here. | the palette + weight gates |
+| `contracts/src/art/*` | the chain. Reads the same SSTORE2 bytes. | `RendererV2Parity.t.sol` + `KitParity.t.sol` assert byte-identity over 64 fixtures |
+| `apps/web/public/js/avatar.js` | the browser. **Generated**, never hand-edited — it inlines its own keccak because apps/web has no bundler. | `apps/web/test/parity.test.ts` compares its bytes to the reference AND to the hashes the Solidity test uses |
+
+The hand-maintained port that used to live in the browser had invented a
+goalkeeper kit the chain never had, and masked `appearance` to 24 bits so no
+accessory could ever appear — while onboarding told users they were seeing
+"the exact art the chain mints". Generating it is what makes that claim true.
+
+**A fourth renderer exists and is deliberately untouched**: the golden
+reference `index.html` draws its own 16x16 in-match player sprites. That file
+is byte-frozen — the characterization goldens hash its source — and those
+sprites serve a different purpose (a player at match scale, seen in motion,
+not a portrait). It is out of scope by design, not by oversight.
+
+## Regenerating
+
+    node packages/art/tools/gen-art.mjs
+
+writes the SSTORE2 blobs, the Solidity constants, the parity fixtures and the
+browser module. CI regenerates and diffs, so a stale artefact fails the build.

@@ -95,7 +95,10 @@ export function generateSquad({ clubName, kit, tier = 0.5 }) {
     // where the avatar renderer needs a bigint)
     const dna = '0x' + [...`${clubName}:${i}:fobal`].reduce(
       (h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, '0').repeat(8);
-    const appearance = Number(BigInt(dna) & 0xffffffn);
+    // 32 bits, matching PlayerCodec.APPEARANCE_MASK. This was 24 bits, so
+    // trait slots 6 and 7 were always zero and the preview could never show
+    // an accessory the chain would mint.
+    const appearance = Number(BigInt(dna) & 0xffffffffn);
     const s = skillsFor(slot.pos, rnd, tier);
     const name = uniqueName();
     return {
