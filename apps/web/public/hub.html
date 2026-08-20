@@ -138,7 +138,7 @@
 
 <script type="module">
   import { requireClub, clubOverall, crestInitials, clubRecord } from './js/club.js';
-  import { avatarSvg } from './js/avatar.js';
+  import { avatarSvgDressed } from './js/avatar.js';
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -172,7 +172,7 @@
   const strip = $('strip');
   strip.innerHTML = club.squad.players.map(p => `
     <div class="p" title="${esc(p.name)} · ${p.role}">
-      ${avatarSvg({ appearance: p.appearance, dna: BigInt(p.dna), position: p.position, kit })}
+      ${avatarSvgDressed({ appearance: BigInt(p.appearance), dna: p.dna, position: p.position }, kit)}
       <div class="nm">${esc(p.name.split(' ')[1] || p.name)}</div>
       <div class="ov">${p.overall}</div>
     </div>`).join('');

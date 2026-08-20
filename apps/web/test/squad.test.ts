@@ -6,7 +6,7 @@ import { describe, expect, test } from 'vitest';
 // @ts-expect-error — plain ESM browser module, no types
 import { generateSquad, ratingFace, overall } from '../public/js/squad.js';
 // @ts-expect-error — plain ESM browser module, no types
-import { avatarSvg } from '../public/js/avatar.js';
+import { avatarSvgDressed } from '../public/js/avatar.js';
 // @ts-expect-error — plain ESM browser module, no types
 import { clubOverall, crestInitials } from '../public/js/club.js';
 
@@ -62,25 +62,41 @@ describe('starter squad generation', () => {
 });
 
 describe('on-chain avatar port', () => {
-  test('renders a deterministic 15-rect SVG identical for identical inputs', () => {
+  test('renders a deterministic, well-formed SVG', () => {
     const { players } = generateSquad({ clubName: 'Fobal FC', kit });
     const p = players[9];
-    const svg = avatarSvg({ appearance: p.appearance, dna: BigInt(p.dna), position: p.position, kit });
+    const id = { appearance: BigInt(p.appearance), dna: p.dna, position: p.position };
+    const svg = avatarSvgDressed(id, kit);
     expect(svg.startsWith('<svg')).toBe(true);
     expect(svg.endsWith('</svg>')).toBe(true);
-    expect((svg.match(/<rect/g) || []).length).toBe(15); // matches the contract renderer
-    const again = avatarSvg({ appearance: p.appearance, dna: BigInt(p.dna), position: p.position, kit });
-    expect(again).toBe(svg);
+    // structural, not a magic count: the old `toBe(15)` was seed luck and
+    // would break on any part-data edit while proving nothing about fidelity.
+    // Real fidelity is asserted in apps/web/test/parity.test.ts, which
+    // compares these bytes to the reference renderer the chain mirrors.
+    expect((svg.match(/<rect/g) || []).length).toBeGreaterThan(20);
+    expect(svg).not.toContain('NaN');
+    expect(svg).not.toContain('undefined');
+    expect(avatarSvgDressed(id, kit)).toBe(svg);
   });
 
-  test('the keeper gets the distinct keeper kit, outfielders get the club kit', () => {
+  test('the keeper and an outfielder are dressed differently', () => {
     const { players } = generateSquad({ clubName: 'Fobal FC', kit });
     const gk = players.find((p: any) => p.position === 0)!;
     const outfield = players.find((p: any) => p.position === 3)!;
-    const gkSvg = avatarSvg({ appearance: gk.appearance, dna: BigInt(gk.dna), position: 0, kit });
-    const ofSvg = avatarSvg({ appearance: outfield.appearance, dna: BigInt(outfield.dna), position: 3, kit });
-    expect(gkSvg).toContain('e0c04a'); // keeper amber
-    expect(ofSvg.toLowerCase()).toContain('22c55e'); // club primary on the shirt
+    const gkSvg = avatarSvgDressed({ appearance: BigInt(gk.appearance), dna: gk.dna, position: 0 }, kit);
+    const ofSvg = avatarSvgDressed({ appearance: BigInt(outfield.appearance), dna: outfield.dna, position: 3 }, kit);
+    expect(gkSvg).not.toBe(ofSvg);
+    expect(ofSvg.toLowerCase()).toContain(kit.primary.replace('#', '').toLowerCase());
+  });
+
+  test('appearance uses the full 32-bit mask the contract validates', () => {
+    const { players } = generateSquad({ clubName: 'Accessory FC', kit });
+    for (const p of players) {
+      expect(p.appearance).toBeLessThanOrEqual(0xffffffff);
+      expect(Number.isInteger(p.appearance)).toBe(true);
+    }
+    // a 24-bit mask would pin every generated squad to slot-6/7 zero
+    expect(players.some((p: any) => p.appearance > 0xffffff)).toBe(true);
   });
 });
 

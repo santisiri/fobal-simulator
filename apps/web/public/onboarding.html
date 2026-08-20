@@ -183,7 +183,7 @@
     <div class="meet">
       <span class="label green">03 · Team sheet</span>
       <h1 class="display" id="meetTitle">Meet your team.</h1>
-      <p class="muted sub">Eleven NFTs, dealt onto the pitch in a 4-3-3. Tap any footballer to read their card. Every avatar here is the exact art the chain mints.</p>
+      <p class="muted sub">Eleven NFTs, dealt onto the pitch in a 4-3-3. Tap any footballer to read their card. Every avatar here is drawn by the same code, from the same data, as the art the chain mints.</p>
       <div class="reveal">
         <div class="pitchwrap">
           <div class="pitch">
@@ -210,7 +210,7 @@
 
 <script type="module">
   import { generateSquad, ratingFace } from './js/squad.js';
-  import { avatarSvg } from './js/avatar.js';
+  import { avatarSvgDressed } from './js/avatar.js';
 
   const $ = id => document.getElementById(id);
   const state = { name: '', kit: { primary: '#22c55e', secondary: '#0d1428' }, squad: null };
@@ -297,7 +297,7 @@
       el.className = 'token';
       el.style.left = p.x + '%';
       el.style.top = (100 - p.y) + '%';
-      el.innerHTML = avatarSvg({ appearance: p.appearance, dna: BigInt(p.dna), position: p.position, kit: state.kit })
+      el.innerHTML = avatarSvgDressed({ appearance: BigInt(p.appearance), dna: p.dna, position: p.position }, state.kit)
         + `<span class="nm">${esc(p.name.split(' ')[1] || p.name)}</span>`;
       el.tabIndex = 0;
       el.setAttribute('role', 'button');
@@ -321,7 +321,7 @@
     $('pcard').innerHTML = `
       <div class="kitbar" style="background:linear-gradient(90deg, ${state.kit.primary}, ${state.kit.secondary})"></div>
       <div class="top">
-        <img class="av" src="${'data:image/svg+xml;utf8,' + encodeURIComponent(avatarSvg({ appearance: p.appearance, dna: BigInt(p.dna), position: p.position, kit: state.kit }))}" alt="">
+        <img class="av" src="${'data:image/svg+xml;utf8,' + encodeURIComponent(avatarSvgDressed({ appearance: BigInt(p.appearance), dna: p.dna, position: p.position }, state.kit))}" alt="">
         <div class="who"><div class="nm">${esc(p.name)}</div><div class="meta">#${p.shirt} · ${p.role} · ${esc(state.name)}</div></div>
         <div class="ovr"><div class="v">${p.overall}</div><div class="l">OVR</div></div>
       </div>
