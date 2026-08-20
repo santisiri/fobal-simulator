@@ -3,7 +3,10 @@ pragma solidity 0.8.28;
 
 /// @notice Shared canonical types for the Fobal player collection.
 library FobalTypes {
-    /// @dev One storage slot. 14 bytes spare for future schema evolution.
+    /// @dev One storage slot. The fields below occupy 14 bytes, leaving
+    /// EIGHTEEN spare for future schema evolution — verified by reading the
+    /// packed word directly, not by counting the comment. (An earlier version
+    /// of this line reported the used bytes as if they were the free ones.)
     struct PlayerCore {
         uint32 generation;
         uint32 xp;

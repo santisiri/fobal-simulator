@@ -48,10 +48,18 @@ Storage per token (tightly packed):
 - `skills uint256` — schema 1 packs 12 skills × 8 bits (0–100 each);
   indices 0..11 = pace, finishing, passing, dribbling, defending, physical,
   stamina, vision, technique, aggression, composure, goalkeeping.
-- `appearance uint256` — immutable packed visual traits (bg, skin, hair color,
-  hair style, face, eyes, accessory, shirt palette; low 32 bits used, rest
-  reserved).
+- `appearance uint256` — immutable packed visual traits, nibble-packed in the
+  low 32 bits. **`PlayerCodec` is the normative table** and this list mirrors
+  it: `0` background, `1` skin, `2` hairColor, `3` hairStyle, `4` eyes,
+  `5` shirt palette, `6` accessory, `7` reserved. (This entry previously
+  listed a "face" slot that does not exist, which shifted every slot after
+  it; the codec and the renderer always agreed with each other.)
 - `CareerStats` — one slot: 7 × u32 monotonic counters.
+- **Kit and club are NOT token state.** A player's jersey comes from
+  `FobalSquadRegistry` (which club) and `FobalKitRegistry` (that club's
+  colours). It is presentation only: outside the deterministic match state
+  hash, outside the signed `MatchResult`, and irrelevant to settlement. A
+  transfer changes the jersey; nothing about it can change a face.
 - `name string` — short, set at mint.
 
 Privileged surfaces (all role-gated, all narrow):
