@@ -1,9 +1,14 @@
 // Renders the silhouette audit (tools/silhouette-lib.mjs) as a page you can
 // look at. The audit itself is a build gate inside gen-art.mjs; this exists so
 // a failure names the colliding pair and shows you the two masks.
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { auditAll, auditSummary, mask, originOf, LISTS } from './silhouette-lib.mjs';
 import { anchorsOf, HEAD_SPECS } from '../spec/parts.js';
+
+// out/ is gitignored, so on a clean checkout it does not exist and the write
+// below throws ENOENT — which is how this passed locally and failed in CI.
+const OUT = new URL('../out/', import.meta.url);
+mkdirSync(OUT, { recursive: true });
 
 const svgOf = (m) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges">`
   + `<rect width="32" height="32" fill="#f2f4f8"/>`
@@ -26,7 +31,7 @@ for (const r of auditSummary()) {
     ? 'FAIL\n  ' + r.collisions.join('\n  ')
     : `PASS — closest pair ${r.worst.name} ~ ${r.worst.nearest} at Δ${r.worst.delta}px (on ${r.worst.head})`}`);
 }
-writeFileSync(new URL('../out/silhouette.html', import.meta.url),
+writeFileSync(new URL('silhouette.html', OUT),
   `<!doctype html><meta charset="utf-8"><title>FOBAL — silhouette audit</title><style>
   body{margin:0;background:#0a0f18;color:#e8eef5;font:13px ui-sans-serif,system-ui;padding:22px}
   h1{font-size:19px}h2{font-size:11px;letter-spacing:2.4px;text-transform:uppercase;color:#7f8ea8;margin:26px 0 9px}

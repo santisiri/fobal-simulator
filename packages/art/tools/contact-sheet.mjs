@@ -5,11 +5,14 @@
 // smoothing. Two mandatory variants follow: one squad in ONE kit (the hub
 // strip, and the harder case, because team colour stops helping), and a
 // silhouette-only sheet with colour removed entirely.
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { renderPlayer, traitsOf, seedOf, assertWeights, anchorsOf,
   HAIR, HEADWEAR, BEARDS, HEADS, EYES, MOUTHS, NOSES, BROWS, EARS, NECKS, BUILDS, COLLARS } from '../src/render.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { validatePalettes } from '../spec/palettes.js';
+
+// out/ is gitignored: create it rather than assuming a previous run made it
+mkdirSync(new URL('../out/', import.meta.url), { recursive: true });
 
 const TEAMS = [
   { name: 'SKY CITY FC',   primary: '2f6fd0', secondary: 'f2f4f8', accent: 'f2f4f8', pattern: 2 },
