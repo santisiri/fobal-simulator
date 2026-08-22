@@ -189,7 +189,10 @@ md += `## 5 · Gates
 |---|---|---|
 | palette separation | CIE ΔE76; ramps on adjacent steps, categorical sets on all pairs | \`spec/palettes.js\` |
 | 6:1 weight cap | no silhouette-bearing variant more than 6x another | \`spec/weights.js\` |
-| silhouette separation | colour stripped, every pair of hair/headwear/beard masks compared | \`tools/silhouette-lib.mjs\` |
+| silhouette separation | colour stripped, every pair of hair/headwear/beard masks compared **on every head** | \`tools/silhouette-lib.mjs\` |
+| kit fits the torso | all 28 (build, pattern) pairs, exhaustively | \`assertKitFits()\` |
+| shading inside the skull | every shading pixel covered by its own head | \`assertShadingInsideHead()\` |
+| one connected figure | no painted pixel detached from the body | \`tools/connectivity.mjs\` |
 | blob round trip | every encoded part decodes back to its source rects | \`tools/gen-art.mjs\` |
 | web field coverage | the browser data carries every authored field | \`tools/gen-art.mjs\` |
 | byte parity | 64 fixtures, JS vs Solidity, hash for hash | \`contracts/test/unit/RendererParity.t.sol\` |

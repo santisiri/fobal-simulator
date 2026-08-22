@@ -140,19 +140,75 @@ export function freeAgentKit(s0) {
 }
 
 /** Patterns sized for EIGHT rows: 3px stripes and 2px hoops, never 1px
- *  alternation, which is noise at 48px. Drawn inside the build's torso box. */
+ *  alternation, which is noise at 48px.
+ *
+ *  Counts and offsets are DERIVED FROM THE TORSO WIDTH, not fixed. Four
+ *  stripes at a 6px pitch assume a wide torso; on the Slim build the fourth
+ *  landed three pixels clear of the shoulder, as a detached block of kit
+ *  colour floating on the background. The byte-parity harness could not see
+ *  it, because both renderers were equally wrong — which is why
+ *  assertKitFits() below enumerates all 28 (build, pattern) pairs instead. */
 function kitPattern(kit, x0, w) {
   const y = 25, out = [];
+  const half = w >> 1;
   switch (kit.pattern) {
     case 1: out.push([x0, y, 3, 7, SLOT.KIT2], [x0 + w - 3, y, 3, 7, SLOT.KIT2]); break;
-    case 2: for (let i = 0; i < 4; i++) out.push([x0 + 2 + i * 6, y, 3, 7, SLOT.KIT2]); break;
+    case 2: {
+      // as many WHOLE 3px stripes at a 6px pitch as the torso holds, centred
+      const n = Math.floor(w / 6), off = (w - (6 * n - 3)) >> 1;
+      for (let i = 0; i < n; i++) out.push([x0 + off + i * 6, y, 3, 7, SLOT.KIT2]);
+      break;
+    }
     case 3: out.push([x0, y + 1, w, 2, SLOT.KIT2], [x0, y + 5, w, 2, SLOT.KIT2]); break;
-    case 4: out.push([x0 + (w >> 1), y, w - (w >> 1), 7, SLOT.KIT2]); break;
-    case 5: for (let i = 0; i < 7; i++) out.push([x0 + 3 + i * 2, y + i, 5, 1, SLOT.KIT2]); break;
-    case 6: for (let i = 0; i < 4; i++) out.push([x0 + (w >> 1) - 4 + i, y + 1 + i, 4, 1, SLOT.KIT2],
-      [x0 + (w >> 1) + i, y + 1 + i, 4, 1, SLOT.KIT2]); break;
+    case 4: out.push([x0 + half, y, w - half, 7, SLOT.KIT2]); break;
+    case 5: {
+      // the sash spans 12 columns of travel plus its own 5px width; start it
+      // so the LAST row still lands on the shirt
+      const start = w >= 17 ? (w - 17) >> 1 : 0;
+      for (let i = 0; i < 7; i++) out.push([x0 + start + i * 2, y + i, 5, 1, SLOT.KIT2]);
+      break;
+    }
+    case 6: for (let i = 0; i < 4; i++) out.push([x0 + half - 4 + i, y + 1 + i, 4, 1, SLOT.KIT2],
+      [x0 + half + i, y + 1 + i, 4, 1, SLOT.KIT2]); break;
   }
   return out;
+}
+
+/** GATE. A head's shading mask must never paint outside that head. Sizing the
+ *  under-chin shadow from its own guess at the jaw taper put two skin-shade
+ *  pixels on the background below the sharpest jaw, so the chin appeared to
+ *  flare outward instead of tapering. Both now read one jaw formula. */
+export function assertShadingInsideHead() {
+  const bad = [];
+  for (let h = 0; h < HEADS.length; h++) {
+    const inHead = new Set();
+    for (const [x, y, w, ht] of HEADS[h].rects) {
+      for (let j = y; j < y + ht; j++) for (let i = x; i < x + w; i++) inHead.add(j * 64 + i);
+    }
+    for (const [x, y, w, ht] of SHADING[h].rects) {
+      for (let j = y; j < y + ht; j++) for (let i = x; i < x + w; i++) {
+        if (!inHead.has(j * 64 + i)) bad.push(`${HEADS[h].name}: shading pixel (${i},${j}) is outside the skull`);
+      }
+    }
+  }
+  return { pass: bad.length === 0, bad };
+}
+
+/** GATE. Every pattern, on every build, must paint inside its own torso —
+ *  exhaustive over all 28 pairs, so it is a proof rather than a sample. */
+export function assertKitFits() {
+  const bad = [];
+  BUILDS.forEach((b, bi) => {
+    const [tx, , tw] = b.rects[1];
+    for (let pattern = 0; pattern < KIT_PATTERNS.length; pattern++) {
+      for (const [x, , w] of kitPattern({ pattern }, tx, tw)) {
+        if (x < tx || x + w > tx + tw) {
+          bad.push(`${b.name} + ${KIT_PATTERNS[pattern]}: rect x${x}..${x + w - 1} leaves torso ${tx}..${tx + tw - 1}`);
+        }
+      }
+    }
+  });
+  return { pass: bad.length === 0, bad };
 }
 
 // -------------------------------------------------------------- compose
@@ -175,7 +231,7 @@ function place(className, part, a, pal) {
     case 'nose':     return emit(rects, pal, a.noseX, a.noseY);
     case 'mouth':    return emit(rects, pal, a.noseX, a.mouthY);
     case 'chin':     return emit(rects, pal, a.noseX, a.chinY);
-    case 'top':      return emit(clampToSkull(rects, a), pal, a.noseX, a.top);
+    case 'top':      return emit(clampToSkull(rects, a, cfg.clamp), pal, a.noseX, a.top);
     default:         return emit(rects, pal);
   }
 }
@@ -185,14 +241,25 @@ function place(className, part, a, pal) {
  *  from one stored copy. */
 const mirror = (rects, boxW) => rects.map(([x, y, w, h, s]) => [boxW - x - w, y, w, h, s]);
 
-/** Item 11 — hair follows head geometry. Hair is authored against the WIDEST
- *  skull; on a narrow one the overhang would be 25% of the head. Clipping to
- *  the skull ±2 makes one authored cap fit six heads. Rects that vanish are
- *  dropped, which is why a zero-width rect can never reach the SVG. */
-function clampToSkull(rects, a) {
-  const lo = a.headX - a.noseX - 2, hi = a.headX + a.headW - a.noseX + 2;   // local space
+/** Item 11 — hair follows head geometry. Caps are authored against the
+ *  WIDEST skull; on a narrow one the overhang would be a quarter of the head.
+ *
+ *  The rule is not "clip everything to the skull". Hair that SITS ON the head
+ *  is sized to it; hair that HANGS BESIDE it — a ponytail, dreadlocks, a scrum
+ *  cap's ear flaps — is meant to be outside the outline, and clipping it
+ *  deleted those parts entirely on the narrow skull. Ponytail collapsed onto
+ *  Short, and Scrum Cap onto Keeper Cap, at a silhouette distance of zero.
+ *
+ *  So: a rect is clipped only if it OVERLAPS the skull. One that lies wholly
+ *  outside is left alone, and lands flush against the clipped cap. Rects that
+ *  clip to nothing are dropped, so a zero-width rect never reaches the SVG. */
+export function clampToSkull(rects, a, margin) {
+  if (!margin) return rects;
+  const skullLo = a.headX - a.noseX, skullHi = a.headX + a.headW - a.noseX;
+  const lo = skullLo - margin, hi = skullHi + margin;
   const out = [];
   for (const [x, y, w, h, s] of rects) {
+    if (x + w <= skullLo || x >= skullHi) { out.push([x, y, w, h, s]); continue; }  // hangs free
     const x0 = x < lo ? lo : x, x1 = x + w > hi ? hi : x + w;
     if (x1 > x0) out.push([x0, y, x1 - x0, h, s]);
   }

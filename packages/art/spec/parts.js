@@ -32,8 +32,8 @@ export const ANCHOR = {
   NOSES:    { at: 'nose',     mirror: false },
   MOUTHS:   { at: 'mouth',    mirror: false },
   BEARDS:   { at: 'chin',     mirror: false },
-  HAIR:     { at: 'top',      mirror: false },
-  HEADWEAR: { at: 'top',      mirror: false },
+  HAIR:     { at: 'top',      mirror: false, clamp: 2 },
+  HEADWEAR: { at: 'top',      mirror: false, clamp: 2 },
   NECKS:    { at: 'absolute', mirror: false },
   BUILDS:   { at: 'absolute', mirror: false },
   COLLARS:  { at: 'absolute', mirror: false },
@@ -44,17 +44,24 @@ const r = (x, y, w, h, pal) => [x, y, w, h, pal];
 // ============================================================ HEADS
 // Absolute. Six structurally different skulls: width AND chin height AND jaw
 // taper all move, so the silhouette differs before any feature is drawn.
+const JAW_ROWS = 4;
+/** How far row `i` of the jaw is pulled in on each side. The shading mask
+ *  MUST use this too: computing the under-chin shadow from its own
+ *  approximation put two skin-shade pixels outside the Tapered silhouette. */
+const jawInsetAt = (spec, i) => Math.round((i + 1) * spec.jaw);
+const jawWidthAt = (spec, w, i) => Math.max(2, w - jawInsetAt(spec, i) * 2);
+
 const buildHead = (spec) => {
   const a = anchorsOf(HEAD_SPECS.indexOf(spec));
   const out = [];
   const x = a.headX, w = a.headW, top = HEAD_TOP, chin = a.chinY;
-  const jawRows = 4;
+  const jawRows = JAW_ROWS;
   const flatH = chin - top - jawRows;
   out.push(r(x - 1, top - 1, w + 2, flatH + 1, SLOT.INK));      // skull outline
   out.push(r(x, top, w, flatH, SLOT.SKIN));
   for (let i = 0; i < jawRows; i++) {                            // tapering jaw
-    const inset = Math.round((i + 1) * spec.jaw);
-    const jw = Math.max(2, w - inset * 2);
+    const inset = jawInsetAt(spec, i);
+    const jw = jawWidthAt(spec, w, i);
     out.push(r(x + inset - 1, top + flatH + i, jw + 2, 1, SLOT.INK));
     if (i < jawRows - 1) out.push(r(x + inset, top + flatH + i, jw, 1, SLOT.SKIN));
   }
@@ -79,8 +86,13 @@ const buildShading = (spec) => {
   const cheekY = a.eyeY + 3, cheekInset = Math.round(spec.jaw) + 1;
   out.push(r(x + cheekInset, cheekY, 2, 2, SLOT.SHADE));
   out.push(r(x + w - cheekInset - 2, cheekY, 2, 2, SLOT.SHADE));
-  const jawInset = Math.round(2 * spec.jaw);
-  out.push(r(x + jawInset + 1, chin - 1, w - jawInset * 2 - 2, 1, SLOT.SHADE)); // under-chin
+  // The under-chin shadow belongs on the last SKIN row. Painting it on
+  // chin-1 erased the ink chin outline, and sizing it from its own guess at
+  // the taper pushed it OUTSIDE the silhouette on the sharpest jaw.
+  const lastSkin = JAW_ROWS - 2;
+  const inset = jawInsetAt(spec, lastSkin);
+  const jw = jawWidthAt(spec, w, lastSkin);
+  if (jw > 2) out.push(r(x + inset + 1, chin - 2, jw - 2, 1, SLOT.SHADE));
   return out;
 };
 export const SHADING = HEAD_SPECS.map(s => ({ name: s.name + ' shading', rects: buildShading(s) }));
@@ -224,10 +236,14 @@ export const HEADWEAR = [
 ];
 
 // ============================================================ NECKS (absolute)
+// Necks start at 19, not 21. A head's last painted row is chinY - 1, and the
+// Round skull's chin is 20 — so a neck starting at 21 left row 20 as raw
+// background and the head floated detached from the body. Necks are drawn
+// BEFORE the head, so the extra rows are simply covered on the taller skulls.
 export const NECKS = [
-  { name: 'Narrow', rects: [r(14, 21, 4, 4, SLOT.SHADE), r(15, 22, 2, 3, SLOT.SKIN)] },
-  { name: 'Normal', rects: [r(13, 21, 6, 4, SLOT.SHADE), r(14, 22, 4, 3, SLOT.SKIN)] },
-  { name: 'Thick',  rects: [r(12, 21, 8, 4, SLOT.SHADE), r(13, 22, 6, 3, SLOT.SKIN)] },
+  { name: 'Narrow', rects: [r(14, 19, 4, 6, SLOT.SHADE), r(15, 20, 2, 5, SLOT.SKIN)] },
+  { name: 'Normal', rects: [r(13, 19, 6, 6, SLOT.SHADE), r(14, 20, 4, 5, SLOT.SKIN)] },
+  { name: 'Thick',  rects: [r(12, 19, 8, 6, SLOT.SHADE), r(13, 20, 6, 5, SLOT.SKIN)] },
 ];
 
 // ============================================================ BUILDS (absolute)

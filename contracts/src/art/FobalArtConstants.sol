@@ -63,6 +63,8 @@ library FobalArtConstants {
     bytes internal constant CLASS_ATTACH = hex"00000301020405060707000000";
     /// @dev mirror-box width per class; 0 means the part is drawn once
     bytes internal constant CLASS_MIRROR = hex"00000404040000000000000000";
+    /// @dev skull-clamp margin per class; 0 means the class is never clipped
+    bytes internal constant CLASS_CLAMP = hex"00000000000000000202000000";
 
     // ---- weight tables: 2 bytes per entry, indexed by CLS_* below
     uint256 internal constant CLS_HEAD = 0;

@@ -20,7 +20,8 @@ import { auditAll } from './silhouette-lib.mjs';
 import { CUM, RAW, DENOM, assertWeights } from '../spec/weights.js';
 import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
-import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, mouthEligible } from '../src/render.js';
+import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, mouthEligible, assertKitFits, assertShadingInsideHead } from '../src/render.js';
+import { assertConnected } from './connectivity.mjs';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 
@@ -68,6 +69,18 @@ if (!wts.pass) fail.push(`weight gate failed: ${wts.bad.join('; ')}`);
 // pixels apart are one part with two names, and must not reach a deploy.
 const sil = auditAll();
 for (const rep of sil) for (const c of rep.collisions) fail.push(`silhouette ${rep.label}: ${c}`);
+// Every pattern on every build, exhaustively: 28 pairs, so a proof.
+const kit = assertKitFits();
+for (const b of kit.bad) fail.push(`kit geometry: ${b}`);
+const shade = assertShadingInsideHead();
+for (const b of shade.bad.slice(0, 10)) fail.push(`shading: ${b}`);
+// And the property a byte-parity harness structurally cannot see — a mistake
+// made identically in both renderers is invisible to it. A player must be ONE
+// connected figure; anything else is paint floating on the background.
+const conn = assertConnected(200);
+for (const b of [...new Set(conn.bad.map((x) => x.replace(/^seed \d+ /, '')))].slice(0, 10)) {
+  fail.push(`detached paint: ${b}`);
+}
 
 // ---- encode every class, and prove the round trip immediately
 const manifest = { version: BLOB_VERSION, canvas: CANVAS, bias: BIAS, denom: DENOM, classes: {} };
@@ -89,7 +102,9 @@ for (const [name, parts] of Object.entries(CLASSES)) {
     parts: parts.length,
     bytes: blob.length,
     names: parts.map(p => p.name),
-    cum: CUM[name.toLowerCase()] ?? null,
+    // CUM keys are singular where the class name is plural ('NOSES' -> 'nose'),
+    // so a bare toLowerCase() reported six classes as having no weight table.
+    cum: CUM[name.toLowerCase()] ?? CUM[name.toLowerCase().replace(/s$/, '')] ?? null,
   };
   totalBytes += blob.length;
 }
@@ -151,7 +166,9 @@ solLines.push('',
   `    bytes internal constant CLASS_ATTACH = hex"${classOrder.map(c => b2(ATTACH[ANCHOR[c].at])).join('')}";`,
   '    /// @dev mirror-box width per class; 0 means the part is drawn once',
   `    bytes internal constant CLASS_MIRROR = hex"${classOrder.map(c =>
-      b2(!ANCHOR[c].mirror ? 0 : c === 'EARS' ? EAR_W : EYE_W)).join('')}";`);
+      b2(!ANCHOR[c].mirror ? 0 : c === 'EARS' ? EAR_W : EYE_W)).join('')}";`,
+  '    /// @dev skull-clamp margin per class; 0 means the class is never clipped',
+  `    bytes internal constant CLASS_CLAMP = hex"${classOrder.map(c => b2(ANCHOR[c].clamp ?? 0)).join('')}";`);
 // ---- cumulative weight tables, PACKED. One accessor replaces a family of
 // fixed-size adapters that had to be edited by hand every time a class
 // changed length — which is precisely the drift this generator exists to end.
@@ -409,5 +426,7 @@ console.log(`fixtures: ${FIXTURE_N} seeds -> gen/fixtures/render.json`);
 console.log(`          ${rectFx.x.length} rects across ${Object.keys(CLASSES).length} classes -> gen/fixtures/rects.json`);
 console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 4).padStart(5)} B (4 ints x ${HEAD_SPECS.length} heads; 10 more anchors derived)`);
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`
-  + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'} · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
+  + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'}`
+  + ` · kit-fits ${kit.pass ? 'PASS' : 'FAIL'} · shading-inside ${shade.pass ? 'PASS' : 'FAIL'} · connectivity ${conn.pass ? 'PASS' : 'FAIL'} (${conn.checked} renders)`
+  + ` · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

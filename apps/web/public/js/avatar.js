@@ -117,7 +117,7 @@ const IRIS = ["3b2a1c","2a3d52","3d5240","5a4632"];
 const CUM = {"head":[686,1368,2050,2732,3414,4096],"eyes":[686,1368,2050,2732,3414,4096],"brows":[686,1368,2050,2732,3414,4096],"nose":[586,1171,1756,2341,2926,3511,4096],"mouth":[586,1171,1756,2341,2926,3511,4096],"ears":[1501,3277,4096],"build":[921,2254,3380,4096],"collar":[1187,2264,3234,4096],"hair":[106,371,674,939,1191,1403,1642,1894,2080,2239,2385,2491,2663,2822,2954,3180,3366,3512,3698,3897,4096],"beard":[1063,1641,2074,2483,2820,3350,3807,4096],"headwear":[2936,3275,3543,3739,3882,4096],"hairColor":[645,1237,1779,2272,2716,3110,3455,3751,4096],"skin":[512,1024,1536,2048,2560,3072,3584,4096],"bg":[512,1024,1536,2048,2560,3072,3584,4096],"accent":[512,1024,1536,2048,2560,3072,3584,4096],"iris":[1024,2048,3072,4096]};
 const DENOM = 4096;
 const SLOT = {"INK":0,"SKIN":1,"SHADE":2,"LIGHT":3,"HAIR":4,"HAIRD":5,"WHITE":6,"IRIS":7,"ACCENT":8,"KIT1":9,"KIT2":10,"KIT3":11};
-const ANCHOR = {"HEADS":{"at":"absolute","mirror":false},"SHADING":{"at":"absolute","mirror":false},"EARS":{"at":"ears","mirror":true},"EYES":{"at":"eyes","mirror":true},"BROWS":{"at":"brows","mirror":true},"NOSES":{"at":"nose","mirror":false},"MOUTHS":{"at":"mouth","mirror":false},"BEARDS":{"at":"chin","mirror":false},"HAIR":{"at":"top","mirror":false},"HEADWEAR":{"at":"top","mirror":false},"NECKS":{"at":"absolute","mirror":false},"BUILDS":{"at":"absolute","mirror":false},"COLLARS":{"at":"absolute","mirror":false}};
+const ANCHOR = {"HEADS":{"at":"absolute","mirror":false},"SHADING":{"at":"absolute","mirror":false},"EARS":{"at":"ears","mirror":true},"EYES":{"at":"eyes","mirror":true},"BROWS":{"at":"brows","mirror":true},"NOSES":{"at":"nose","mirror":false},"MOUTHS":{"at":"mouth","mirror":false},"BEARDS":{"at":"chin","mirror":false},"HAIR":{"at":"top","mirror":false,"clamp":2},"HEADWEAR":{"at":"top","mirror":false,"clamp":2},"NECKS":{"at":"absolute","mirror":false},"BUILDS":{"at":"absolute","mirror":false},"COLLARS":{"at":"absolute","mirror":false}};
 
 // ---- the anchor resolver, verbatim from spec/anchors.js
 // Per-head face architecture.
@@ -196,7 +196,7 @@ function anchorsOf(headIndex) {
 }
 
 const HEADS = [{"name":"Oval","rects":[[8,3,16,14,0],[9,4,14,13,1],[9,17,14,1,0],[10,17,12,1,1],[10,18,12,1,0],[11,18,10,1,1],[11,19,10,1,0],[12,19,8,1,1],[12,20,8,1,0]],"tags":[]},{"name":"Long","rects":[[9,3,14,15,0],[10,4,12,14,1],[10,18,12,1,0],[11,18,10,1,1],[11,19,10,1,0],[12,19,8,1,1],[11,20,10,1,0],[12,20,8,1,1],[12,21,8,1,0]],"tags":[]},{"name":"Round","rects":[[8,3,17,13,0],[9,4,15,12,1],[8,16,17,1,0],[9,16,15,1,1],[9,17,15,1,0],[10,17,13,1,1],[9,18,15,1,0],[10,18,13,1,1],[9,19,15,1,0]],"tags":[]},{"name":"Square","rects":[[7,3,18,14,0],[8,4,16,13,1],[7,17,18,1,0],[8,17,16,1,1],[7,18,18,1,0],[8,18,16,1,1],[8,19,16,1,0],[9,19,14,1,1],[8,20,16,1,0]],"tags":[]},{"name":"Heavy Jaw","rects":[[7,3,18,15,0],[8,4,16,14,1],[7,18,18,1,0],[8,18,16,1,1],[7,19,18,1,0],[8,19,16,1,1],[7,20,18,1,0],[8,20,16,1,1],[7,21,18,1,0]],"tags":[]},{"name":"Tapered","rects":[[8,3,17,14,0],[9,4,15,13,1],[10,17,13,1,0],[11,17,11,1,1],[11,18,11,1,0],[12,18,9,1,1],[13,19,7,1,0],[14,19,5,1,1],[14,20,5,1,0]],"tags":[]}];
-const SHADING = [{"name":"Oval shading","rects":[[10,4,12,1,3],[21,5,2,12,2],[9,5,1,3,2],[11,15,2,2,2],[19,15,2,2,2],[12,20,8,1,2]],"tags":[]},{"name":"Long shading","rects":[[11,4,10,1,3],[20,5,2,13,2],[10,5,1,3,2],[12,15,2,2,2],[18,15,2,2,2],[13,21,6,1,2]],"tags":[]},{"name":"Round shading","rects":[[10,4,13,1,3],[22,5,2,11,2],[9,5,1,3,2],[10,15,2,2,2],[21,15,2,2,2],[11,19,11,1,2]],"tags":[]},{"name":"Square shading","rects":[[9,4,14,1,3],[22,5,2,12,2],[8,5,1,3,2],[9,15,2,2,2],[21,15,2,2,2],[9,20,14,1,2]],"tags":[]},{"name":"Heavy Jaw shading","rects":[[9,4,14,1,3],[22,5,2,13,2],[8,5,1,3,2],[9,14,2,2,2],[21,14,2,2,2],[9,21,14,1,2]],"tags":[]},{"name":"Tapered shading","rects":[[10,4,13,1,3],[22,5,2,12,2],[9,5,1,3,2],[12,14,2,2,2],[19,14,2,2,2],[13,20,7,1,2]],"tags":[]}];
+const SHADING = [{"name":"Oval shading","rects":[[10,4,12,1,3],[21,5,2,12,2],[9,5,1,3,2],[11,15,2,2,2],[19,15,2,2,2],[13,19,6,1,2]],"tags":[]},{"name":"Long shading","rects":[[11,4,10,1,3],[20,5,2,13,2],[10,5,1,3,2],[12,15,2,2,2],[18,15,2,2,2],[13,20,6,1,2]],"tags":[]},{"name":"Round shading","rects":[[10,4,13,1,3],[22,5,2,11,2],[9,5,1,3,2],[10,15,2,2,2],[21,15,2,2,2],[11,18,11,1,2]],"tags":[]},{"name":"Square shading","rects":[[9,4,14,1,3],[22,5,2,12,2],[8,5,1,3,2],[9,15,2,2,2],[21,15,2,2,2],[10,19,12,1,2]],"tags":[]},{"name":"Heavy Jaw shading","rects":[[9,4,14,1,3],[22,5,2,13,2],[8,5,1,3,2],[9,14,2,2,2],[21,14,2,2,2],[9,20,14,1,2]],"tags":[]},{"name":"Tapered shading","rects":[[10,4,13,1,3],[22,5,2,12,2],[9,5,1,3,2],[12,14,2,2,2],[19,14,2,2,2],[15,19,3,1,2]],"tags":[]}];
 const EARS = [{"name":"Small","rects":[[2,1,2,2,1],[1,1,1,2,0],[2,2,1,1,2]],"tags":[]},{"name":"Normal","rects":[[2,0,2,4,1],[1,1,1,3,0],[2,0,2,1,0],[2,1,1,2,2]],"tags":[]},{"name":"Protruding","rects":[[1,0,3,5,1],[0,1,1,3,0],[1,0,3,1,0],[1,4,3,1,0],[1,1,1,3,2]],"tags":[]}];
 const EYES = [{"name":"Neutral","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,0]],"tags":[]},{"name":"Deep-set","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,2],[0,-2,4,1,2]],"tags":[]},{"name":"Wide","rects":[[0,-1,4,3,6],[1,0,2,2,7],[0,-2,4,1,0]],"tags":[]},{"name":"Narrow","rects":[[0,0,4,1,6],[1,0,2,1,7],[0,-1,4,1,0]],"tags":[]},{"name":"Heavy Lid","rects":[[0,1,4,1,6],[1,1,2,1,7],[0,-1,4,2,0]],"tags":[]},{"name":"Round","rects":[[0,-1,4,3,6],[1,-1,2,3,7],[0,-2,4,1,0]],"tags":[]}];
 const BROWS = [{"name":"Flat","rects":[[0,0,4,1,4]],"tags":[]},{"name":"Heavy","rects":[[0,-1,4,2,4]],"tags":[]},{"name":"Raised","rects":[[0,-1,4,1,4]],"tags":[]},{"name":"Angry","rects":[[0,0,2,1,4],[2,1,2,1,4]],"tags":[]},{"name":"Arched","rects":[[0,1,1,1,4],[1,0,3,1,4]],"tags":[]},{"name":"Thick Low","rects":[[0,0,4,1,4],[1,1,3,1,4]],"tags":[]}];
@@ -205,7 +205,7 @@ const MOUTHS = [{"name":"Neutral","w":4,"rects":[[-2,0,4,1,0]],"tags":[]},{"name
 const BEARDS = [{"name":"None","rects":[],"tags":[]},{"name":"Stubble","rects":[[-6,-5,2,4,5],[4,-5,2,4,5],[-5,-2,10,2,5]],"tags":[]},{"name":"Moustache","rects":[[-3,-4,6,1,4],[-4,-4,1,2,4],[3,-4,1,2,4]],"tags":[]},{"name":"Goatee","rects":[[-3,-4,6,1,4],[-2,-2,4,3,4]],"tags":[]},{"name":"Chinstrap","rects":[[-7,-6,2,7,4],[5,-6,2,7,4],[-5,0,10,1,4]],"tags":[]},{"name":"Short Beard","rects":[[-3,-4,6,1,4],[-7,-5,2,5,4],[5,-5,2,5,4],[-5,-2,10,2,4],[-4,0,8,1,4]],"tags":[]},{"name":"Full Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,1,4],[-4,1,8,1,4],[-3,2,6,1,5]],"tags":[]},{"name":"Long Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,2,4],[-4,2,8,2,4],[-3,4,6,1,4],[-2,5,4,1,5]],"tags":[]}];
 const HAIR = [{"name":"Bald","rects":[],"tags":[]},{"name":"Buzz","rects":[[-9,-1,18,3,4]],"tags":[]},{"name":"Short","rects":[[-9,-1,18,4,4],[-9,3,2,3,4],[7,3,2,3,4]],"tags":[]},{"name":"Side Part","rects":[[-9,-1,18,4,4],[-9,-1,7,6,4],[-2,3,1,1,5]],"tags":[]},{"name":"Swept","rects":[[-9,-1,18,4,4],[3,-3,7,4,4]],"tags":[]},{"name":"Quiff","rects":[[-9,-1,18,3,4],[-4,-5,8,4,4]],"tags":[]},{"name":"Messy","rects":[[-9,-1,18,4,4],[-7,-4,3,3,4],[-1,-5,4,4,4],[5,-3,3,3,4]],"tags":[]},{"name":"Curly","rects":[[-9,-1,18,5,4],[-10,1,3,5,4],[7,1,3,5,4],[-5,-3,10,3,4]],"tags":[]},{"name":"Afro","rects":[[-11,-5,22,10,4],[-12,-1,3,7,4],[9,-1,3,7,4]],"tags":[]},{"name":"High Top","rects":[[-9,-1,18,3,4],[-6,-8,12,7,4]],"tags":[]},{"name":"Flat Top","rects":[[-9,-1,18,3,4],[-8,-6,16,5,4]],"tags":[]},{"name":"Mohawk","rects":[[-2,-7,5,9,4],[-8,-1,16,2,5]],"tags":[]},{"name":"Dreads","rects":[[-9,-1,18,4,4],[-10,3,2,7,4],[-8,3,2,11,4],[6,3,2,7,4],[8,3,2,11,4]],"tags":[]},{"name":"Braids","rects":[[-9,-1,18,4,4],[-9,3,2,4,5],[-6,3,2,4,5],[4,3,2,4,5],[7,3,2,4,5],[-9,7,2,5,4],[7,7,2,5,4]],"tags":[]},{"name":"Cornrows","rects":[[-9,-1,18,6,5],[-9,-1,2,6,4],[-6,-1,2,6,4],[-3,-1,2,6,4],[0,-1,2,6,4],[3,-1,2,6,4],[6,-1,2,6,4]],"tags":[]},{"name":"Long","rects":[[-9,-1,18,4,4],[-10,3,3,13,4],[7,3,3,13,4]],"tags":[]},{"name":"Ponytail","rects":[[-9,-1,18,4,4],[8,2,3,9,4],[9,9,3,5,4]],"tags":[]},{"name":"Topknot","rects":[[-9,-1,18,4,4],[-2,-5,5,4,4]],"tags":[]},{"name":"Undercut","rects":[[-7,-4,14,7,4],[-9,3,18,2,5]],"tags":[]},{"name":"Receding","rects":[[-6,-1,12,3,4],[-9,1,3,4,4],[6,1,3,4,4]],"tags":[]},{"name":"Wavy","rects":[[-9,-1,18,4,4],[-9,-3,6,2,4],[-4,-4,7,2,4],[2,-3,7,2,4]],"tags":[]}];
 const HEADWEAR = [{"name":"None","rects":[],"tags":[]},{"name":"Headband","rects":[[-9,2,18,2,8],[-9,3,18,1,11],[6,1,3,4,8]],"tags":["band"]},{"name":"Sweatband","rects":[[-9,1,18,3,8],[-9,2,18,1,9],[-2,1,4,1,9]],"tags":["band"]},{"name":"Keeper Cap","rects":[[-8,-3,16,4,10],[-8,-3,16,1,11],[-10,1,20,1,10],[-9,2,18,1,10],[-9,3,18,1,2]],"tags":["covers"]},{"name":"Scrum Cap","rects":[[-8,-3,16,7,8],[-8,0,16,1,9],[-10,1,2,6,8],[8,1,2,6,8],[-10,6,2,1,0],[8,6,2,1,0]],"tags":["covers"]},{"name":"Bandana","rects":[[-9,-1,18,4,8],[-9,2,18,1,11],[7,2,3,3,8],[9,4,2,3,8]],"tags":["covers"]}];
-const NECKS = [{"name":"Narrow","rects":[[14,21,4,4,2],[15,22,2,3,1]],"tags":[]},{"name":"Normal","rects":[[13,21,6,4,2],[14,22,4,3,1]],"tags":[]},{"name":"Thick","rects":[[12,21,8,4,2],[13,22,6,3,1]],"tags":[]}];
+const NECKS = [{"name":"Narrow","rects":[[14,19,4,6,2],[15,20,2,5,1]],"tags":[]},{"name":"Normal","rects":[[13,19,6,6,2],[14,20,4,5,1]],"tags":[]},{"name":"Thick","rects":[[12,19,8,6,2],[13,20,6,5,1]],"tags":[]}];
 const BUILDS = [{"name":"Slim","rects":[[6,24,20,1,0],[7,25,18,7,9]],"tags":[]},{"name":"Normal","rects":[[4,24,24,1,0],[5,25,22,7,9]],"tags":[]},{"name":"Broad","rects":[[2,24,28,1,0],[3,25,26,7,9]],"tags":[]},{"name":"Very Broad","rects":[[1,23,30,1,0],[2,24,28,8,9]],"tags":[]}];
 const COLLARS = [{"name":"Crew","rects":[[12,24,8,2,8],[13,24,6,1,0]],"tags":[]},{"name":"V-Neck","rects":[[12,24,8,1,8],[13,25,6,1,8],[14,26,4,1,0]],"tags":[]},{"name":"Contrast V","rects":[[11,24,10,1,11],[13,25,6,2,11],[14,25,4,1,0]],"tags":[]},{"name":"Polo","rects":[[11,24,10,2,11],[13,24,6,1,0],[11,26,2,1,11],[19,26,2,1,11]],"tags":[]}];
 const pickFromCum = (cum, r) => { for (let i = 0; i < cum.length; i++) if (r < cum[i]) return i; return cum.length - 1; };
@@ -345,19 +345,75 @@ function freeAgentKit(s0) {
 }
 
 /** Patterns sized for EIGHT rows: 3px stripes and 2px hoops, never 1px
- *  alternation, which is noise at 48px. Drawn inside the build's torso box. */
+ *  alternation, which is noise at 48px.
+ *
+ *  Counts and offsets are DERIVED FROM THE TORSO WIDTH, not fixed. Four
+ *  stripes at a 6px pitch assume a wide torso; on the Slim build the fourth
+ *  landed three pixels clear of the shoulder, as a detached block of kit
+ *  colour floating on the background. The byte-parity harness could not see
+ *  it, because both renderers were equally wrong — which is why
+ *  assertKitFits() below enumerates all 28 (build, pattern) pairs instead. */
 function kitPattern(kit, x0, w) {
   const y = 25, out = [];
+  const half = w >> 1;
   switch (kit.pattern) {
     case 1: out.push([x0, y, 3, 7, SLOT.KIT2], [x0 + w - 3, y, 3, 7, SLOT.KIT2]); break;
-    case 2: for (let i = 0; i < 4; i++) out.push([x0 + 2 + i * 6, y, 3, 7, SLOT.KIT2]); break;
+    case 2: {
+      // as many WHOLE 3px stripes at a 6px pitch as the torso holds, centred
+      const n = Math.floor(w / 6), off = (w - (6 * n - 3)) >> 1;
+      for (let i = 0; i < n; i++) out.push([x0 + off + i * 6, y, 3, 7, SLOT.KIT2]);
+      break;
+    }
     case 3: out.push([x0, y + 1, w, 2, SLOT.KIT2], [x0, y + 5, w, 2, SLOT.KIT2]); break;
-    case 4: out.push([x0 + (w >> 1), y, w - (w >> 1), 7, SLOT.KIT2]); break;
-    case 5: for (let i = 0; i < 7; i++) out.push([x0 + 3 + i * 2, y + i, 5, 1, SLOT.KIT2]); break;
-    case 6: for (let i = 0; i < 4; i++) out.push([x0 + (w >> 1) - 4 + i, y + 1 + i, 4, 1, SLOT.KIT2],
-      [x0 + (w >> 1) + i, y + 1 + i, 4, 1, SLOT.KIT2]); break;
+    case 4: out.push([x0 + half, y, w - half, 7, SLOT.KIT2]); break;
+    case 5: {
+      // the sash spans 12 columns of travel plus its own 5px width; start it
+      // so the LAST row still lands on the shirt
+      const start = w >= 17 ? (w - 17) >> 1 : 0;
+      for (let i = 0; i < 7; i++) out.push([x0 + start + i * 2, y + i, 5, 1, SLOT.KIT2]);
+      break;
+    }
+    case 6: for (let i = 0; i < 4; i++) out.push([x0 + half - 4 + i, y + 1 + i, 4, 1, SLOT.KIT2],
+      [x0 + half + i, y + 1 + i, 4, 1, SLOT.KIT2]); break;
   }
   return out;
+}
+
+/** GATE. A head's shading mask must never paint outside that head. Sizing the
+ *  under-chin shadow from its own guess at the jaw taper put two skin-shade
+ *  pixels on the background below the sharpest jaw, so the chin appeared to
+ *  flare outward instead of tapering. Both now read one jaw formula. */
+function assertShadingInsideHead() {
+  const bad = [];
+  for (let h = 0; h < HEADS.length; h++) {
+    const inHead = new Set();
+    for (const [x, y, w, ht] of HEADS[h].rects) {
+      for (let j = y; j < y + ht; j++) for (let i = x; i < x + w; i++) inHead.add(j * 64 + i);
+    }
+    for (const [x, y, w, ht] of SHADING[h].rects) {
+      for (let j = y; j < y + ht; j++) for (let i = x; i < x + w; i++) {
+        if (!inHead.has(j * 64 + i)) bad.push(`${HEADS[h].name}: shading pixel (${i},${j}) is outside the skull`);
+      }
+    }
+  }
+  return { pass: bad.length === 0, bad };
+}
+
+/** GATE. Every pattern, on every build, must paint inside its own torso —
+ *  exhaustive over all 28 pairs, so it is a proof rather than a sample. */
+function assertKitFits() {
+  const bad = [];
+  BUILDS.forEach((b, bi) => {
+    const [tx, , tw] = b.rects[1];
+    for (let pattern = 0; pattern < KIT_PATTERNS.length; pattern++) {
+      for (const [x, , w] of kitPattern({ pattern }, tx, tw)) {
+        if (x < tx || x + w > tx + tw) {
+          bad.push(`${b.name} + ${KIT_PATTERNS[pattern]}: rect x${x}..${x + w - 1} leaves torso ${tx}..${tx + tw - 1}`);
+        }
+      }
+    }
+  });
+  return { pass: bad.length === 0, bad };
 }
 
 // -------------------------------------------------------------- compose
@@ -380,7 +436,7 @@ function place(className, part, a, pal) {
     case 'nose':     return emit(rects, pal, a.noseX, a.noseY);
     case 'mouth':    return emit(rects, pal, a.noseX, a.mouthY);
     case 'chin':     return emit(rects, pal, a.noseX, a.chinY);
-    case 'top':      return emit(clampToSkull(rects, a), pal, a.noseX, a.top);
+    case 'top':      return emit(clampToSkull(rects, a, cfg.clamp), pal, a.noseX, a.top);
     default:         return emit(rects, pal);
   }
 }
@@ -390,14 +446,25 @@ function place(className, part, a, pal) {
  *  from one stored copy. */
 const mirror = (rects, boxW) => rects.map(([x, y, w, h, s]) => [boxW - x - w, y, w, h, s]);
 
-/** Item 11 — hair follows head geometry. Hair is authored against the WIDEST
- *  skull; on a narrow one the overhang would be 25% of the head. Clipping to
- *  the skull ±2 makes one authored cap fit six heads. Rects that vanish are
- *  dropped, which is why a zero-width rect can never reach the SVG. */
-function clampToSkull(rects, a) {
-  const lo = a.headX - a.noseX - 2, hi = a.headX + a.headW - a.noseX + 2;   // local space
+/** Item 11 — hair follows head geometry. Caps are authored against the
+ *  WIDEST skull; on a narrow one the overhang would be a quarter of the head.
+ *
+ *  The rule is not "clip everything to the skull". Hair that SITS ON the head
+ *  is sized to it; hair that HANGS BESIDE it — a ponytail, dreadlocks, a scrum
+ *  cap's ear flaps — is meant to be outside the outline, and clipping it
+ *  deleted those parts entirely on the narrow skull. Ponytail collapsed onto
+ *  Short, and Scrum Cap onto Keeper Cap, at a silhouette distance of zero.
+ *
+ *  So: a rect is clipped only if it OVERLAPS the skull. One that lies wholly
+ *  outside is left alone, and lands flush against the clipped cap. Rects that
+ *  clip to nothing are dropped, so a zero-width rect never reaches the SVG. */
+function clampToSkull(rects, a, margin) {
+  if (!margin) return rects;
+  const skullLo = a.headX - a.noseX, skullHi = a.headX + a.headW - a.noseX;
+  const lo = skullLo - margin, hi = skullHi + margin;
   const out = [];
   for (const [x, y, w, h, s] of rects) {
+    if (x + w <= skullLo || x >= skullHi) { out.push([x, y, w, h, s]); continue; }  // hangs free
     const x0 = x < lo ? lo : x, x1 = x + w > hi ? hi : x + w;
     if (x1 > x0) out.push([x0, y, x1 - x0, h, s]);
   }

@@ -1,3 +1,5 @@
+import { auditAll } from '../tools/silhouette-lib.mjs';
+import { assertConnected, detached } from '../tools/connectivity.mjs';
 // The parity harness. Three claims, each one a place the pipeline could
 // silently drift between the JS reference renderer and the chain:
 //   1. the blob codec is an exact inverse (encode -> decode -> same rects)
@@ -17,7 +19,7 @@ import { encodeClass, decodePart, partCount, BIAS, BLOB_VERSION } from '../src/b
 // @ts-expect-error
 import { validatePalettes } from '../spec/palettes.js';
 // @ts-expect-error
-import { renderPlayer, traitsOf, seedOf, freeAgentKit } from '../src/render.js';
+import { renderPlayer, traitsOf, seedOf, freeAgentKit , assertKitFits, assertShadingInsideHead, freeAgentKit } from '../src/render.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 const KIT = { primary: '2f6fd0', secondary: 'f2f4f8', accent: 'f2f4f8', pattern: 2 };
@@ -209,5 +211,62 @@ describe('generated artefacts agree with the spec', () => {
     expect(web).toContain('export const ANCHOR =');
     expect(web).toContain('export const HEAD_SPECS =');
     expect(web).toContain(`export const CANVAS = 32;`);
+  });
+});
+
+describe('image-level properties the byte-parity harness cannot see', () => {
+  // Parity compares JS to Solidity. A mistake made IDENTICALLY in both is
+  // invisible to it — which is exactly how four kit stripes at a fixed pitch
+  // shipped a detached 3x7 block of colour beside the Slim build's shoulder
+  // with every test green. These assert properties of the IMAGE instead.
+
+  test('every kit pattern paints inside its own torso, on every build', () => {
+    const r = assertKitFits();
+    expect(r.bad).toEqual([]);
+    expect(r.pass).toBe(true);
+  });
+
+  test('a player is one connected figure — no paint floats on the background', () => {
+    const r = assertConnected(120);
+    expect(r.bad.slice(0, 5)).toEqual([]);
+    expect(r.pass).toBe(true);
+  });
+
+  test('the detachment check is not vacuous', () => {
+    const body =
+      '<rect x="0" y="0" width="32" height="32" fill="#111111"/>' +
+      '<rect x="7" y="25" width="18" height="7" fill="#2f6fd0"/>';
+    expect(detached(body).orphan).toBe(0);
+    // the exact rect the old fourth stripe emitted on the Slim build
+    expect(detached(body + '<rect x="27" y="25" width="3" height="7" fill="#f2f4f8"/>').orphan).toBe(21);
+  });
+
+  test("a head's shading never paints outside that head", () => {
+    const r = assertShadingInsideHead();
+    expect(r.bad).toEqual([]);
+  });
+
+  test('silhouettes separate on EVERY head, not just the first', () => {
+    // auditing head 0 alone reported PASS while Scrum Cap and Keeper Cap
+    // rendered the identical mask on the Long head, ear flaps clipped away
+    const reports = auditAll();
+    expect(reports.length).toBe(3 * HEAD_SPECS.length);
+    expect(reports.flatMap((r) => r.collisions)).toEqual([]);
+  });
+
+  test('the fixtures cover every build x pattern pair, so parity carries the proof to the chain', () => {
+    const fx = JSON.parse(readFileSync(new URL('../gen/fixtures/render.json', import.meta.url), 'utf8'));
+    const seen = new Set<string>();
+    for (let i = 0; i < fx.dna.length; i++) {
+      const s0 = seedOf(fx.dna[i], BigInt(fx.appearance[i]));
+      const t = traitsOf(s0);
+      seen.add(`${t.build}/${fx.kitPattern[i]}`);
+      seen.add(`${t.build}/${freeAgentKit(s0).pattern}`);
+    }
+    const missing: string[] = [];
+    for (let b = 0; b < 4; b++) {
+      for (let p = 0; p < 7; p++) if (!seen.has(`${b}/${p}`)) missing.push(`${b}/${p}`);
+    }
+    expect(missing).toEqual([]);
   });
 });

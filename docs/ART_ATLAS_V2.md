@@ -168,12 +168,12 @@ Local space unless the class attaches `absolute`. Slot names map to
 
 | # | name | weight | rects `[x, y, w, h, slot]` |
 |--:|---|--:|---|
-| 0 | Oval shading | — | [10, 4, 12, 1, light] [21, 5, 2, 12, shade] [9, 5, 1, 3, shade] [11, 15, 2, 2, shade] [19, 15, 2, 2, shade] [12, 20, 8, 1, shade] |
-| 1 | Long shading | — | [11, 4, 10, 1, light] [20, 5, 2, 13, shade] [10, 5, 1, 3, shade] [12, 15, 2, 2, shade] [18, 15, 2, 2, shade] [13, 21, 6, 1, shade] |
-| 2 | Round shading | — | [10, 4, 13, 1, light] [22, 5, 2, 11, shade] [9, 5, 1, 3, shade] [10, 15, 2, 2, shade] [21, 15, 2, 2, shade] [11, 19, 11, 1, shade] |
-| 3 | Square shading | — | [9, 4, 14, 1, light] [22, 5, 2, 12, shade] [8, 5, 1, 3, shade] [9, 15, 2, 2, shade] [21, 15, 2, 2, shade] [9, 20, 14, 1, shade] |
-| 4 | Heavy Jaw shading | — | [9, 4, 14, 1, light] [22, 5, 2, 13, shade] [8, 5, 1, 3, shade] [9, 14, 2, 2, shade] [21, 14, 2, 2, shade] [9, 21, 14, 1, shade] |
-| 5 | Tapered shading | — | [10, 4, 13, 1, light] [22, 5, 2, 12, shade] [9, 5, 1, 3, shade] [12, 14, 2, 2, shade] [19, 14, 2, 2, shade] [13, 20, 7, 1, shade] |
+| 0 | Oval shading | — | [10, 4, 12, 1, light] [21, 5, 2, 12, shade] [9, 5, 1, 3, shade] [11, 15, 2, 2, shade] [19, 15, 2, 2, shade] [13, 19, 6, 1, shade] |
+| 1 | Long shading | — | [11, 4, 10, 1, light] [20, 5, 2, 13, shade] [10, 5, 1, 3, shade] [12, 15, 2, 2, shade] [18, 15, 2, 2, shade] [13, 20, 6, 1, shade] |
+| 2 | Round shading | — | [10, 4, 13, 1, light] [22, 5, 2, 11, shade] [9, 5, 1, 3, shade] [10, 15, 2, 2, shade] [21, 15, 2, 2, shade] [11, 18, 11, 1, shade] |
+| 3 | Square shading | — | [9, 4, 14, 1, light] [22, 5, 2, 12, shade] [8, 5, 1, 3, shade] [9, 15, 2, 2, shade] [21, 15, 2, 2, shade] [10, 19, 12, 1, shade] |
+| 4 | Heavy Jaw shading | — | [9, 4, 14, 1, light] [22, 5, 2, 13, shade] [8, 5, 1, 3, shade] [9, 14, 2, 2, shade] [21, 14, 2, 2, shade] [9, 20, 14, 1, shade] |
+| 5 | Tapered shading | — | [10, 4, 13, 1, light] [22, 5, 2, 12, shade] [9, 5, 1, 3, shade] [12, 14, 2, 2, shade] [19, 14, 2, 2, shade] [15, 19, 3, 1, shade] |
 
 ### `EARS` — 3 parts, attaches `ears`, mirrored
 
@@ -283,9 +283,9 @@ Local space unless the class attaches `absolute`. Slot names map to
 
 | # | name | weight | rects `[x, y, w, h, slot]` |
 |--:|---|--:|---|
-| 0 | Narrow | — | [14, 21, 4, 4, shade] [15, 22, 2, 3, skin] |
-| 1 | Normal | — | [13, 21, 6, 4, shade] [14, 22, 4, 3, skin] |
-| 2 | Thick | — | [12, 21, 8, 4, shade] [13, 22, 6, 3, skin] |
+| 0 | Narrow | — | [14, 19, 4, 6, shade] [15, 20, 2, 5, skin] |
+| 1 | Normal | — | [13, 19, 6, 6, shade] [14, 20, 4, 5, skin] |
+| 2 | Thick | — | [12, 19, 8, 6, shade] [13, 20, 6, 5, skin] |
 
 ### `BUILDS` — 4 parts, attaches `absolute`
 
@@ -311,7 +311,10 @@ Local space unless the class attaches `absolute`. Slot names map to
 |---|---|---|
 | palette separation | CIE ΔE76; ramps on adjacent steps, categorical sets on all pairs | `spec/palettes.js` |
 | 6:1 weight cap | no silhouette-bearing variant more than 6x another | `spec/weights.js` |
-| silhouette separation | colour stripped, every pair of hair/headwear/beard masks compared | `tools/silhouette-lib.mjs` |
+| silhouette separation | colour stripped, every pair of hair/headwear/beard masks compared **on every head** | `tools/silhouette-lib.mjs` |
+| kit fits the torso | all 28 (build, pattern) pairs, exhaustively | `assertKitFits()` |
+| shading inside the skull | every shading pixel covered by its own head | `assertShadingInsideHead()` |
+| one connected figure | no painted pixel detached from the body | `tools/connectivity.mjs` |
 | blob round trip | every encoded part decodes back to its source rects | `tools/gen-art.mjs` |
 | web field coverage | the browser data carries every authored field | `tools/gen-art.mjs` |
 | byte parity | 64 fixtures, JS vs Solidity, hash for hash | `contracts/test/unit/RendererParity.t.sol` |
@@ -321,6 +324,21 @@ Local space unless the class attaches `absolute`. Slot names map to
 Current silhouette audit:
 
 - **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
-- **HEADWEAR**: ✅ clear — closest pair is Keeper Cap ~ Scrum Cap at Δ6px
+- **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
+- **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
+- **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
+- **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
+- **HAIR**: ✅ clear — closest pair is Quiff ~ High Top at Δ12px
+- **HEADWEAR**: ✅ clear — closest pair is Headband ~ Sweatband at Δ18px
+- **HEADWEAR**: ✅ clear — closest pair is Headband ~ Sweatband at Δ20px
+- **HEADWEAR**: ✅ clear — closest pair is Keeper Cap ~ Scrum Cap at Δ17px
+- **HEADWEAR**: ✅ clear — closest pair is Keeper Cap ~ Scrum Cap at Δ16px
+- **HEADWEAR**: ✅ clear — closest pair is Keeper Cap ~ Scrum Cap at Δ16px
+- **HEADWEAR**: ✅ clear — closest pair is Keeper Cap ~ Scrum Cap at Δ17px
+- **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
+- **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
+- **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
+- **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
+- **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
 - **BEARDS**: ✅ clear — closest pair is None ~ Moustache at Δ10px
 

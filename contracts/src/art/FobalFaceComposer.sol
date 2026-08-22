@@ -105,7 +105,8 @@ contract FobalFaceComposer {
     ) private view returns (string memory out) {
         try art.part(className, index) returns (FobalArtLibrary.Rect[] memory rects) {
             uint8 mode = uint8(K.CLASS_ATTACH[classId]);
-            if (mode == AT_TOP) return _emitClamped(rects, a, pal);
+            uint8 clampMargin = uint8(K.CLASS_CLAMP[classId]);
+            if (clampMargin != 0) return _emitClamped(rects, a, pal, int16(uint16(clampMargin)));
             out = _emitSide(rects, mode, a, pal, false);
             if (uint8(K.CLASS_MIRROR[classId]) != 0) {
                 out = string.concat(out, _emitSide(rects, mode, a, pal, true));
@@ -176,21 +177,37 @@ contract FobalFaceComposer {
 
     /// @dev Item 11 — hair follows head geometry. Caps are authored against
     /// the WIDEST skull; on a narrow one the overhang would be a quarter of
-    /// the head. Clipping to the skull +/- 2 makes one authored cap fit all
-    /// six. A rect clipped to nothing is DROPPED, so a zero-width rect can
-    /// never reach the SVG.
-    function _emitClamped(FobalArtLibrary.Rect[] memory rects, FobalAnchors.Anchors memory a, bytes3[12] memory pal)
-        private
-        pure
-        returns (string memory out)
-    {
+    /// the head.
+    ///
+    /// The rule is not "clip everything to the skull". Hair that SITS ON the
+    /// head is sized to it; hair that HANGS BESIDE it — a ponytail, dreads, a
+    /// scrum cap's ear flaps — is meant to be outside the outline, and
+    /// clipping it deleted those parts on the narrow skull, collapsing
+    /// Ponytail onto Short and Scrum Cap onto Keeper Cap at a silhouette
+    /// distance of ZERO. So a rect is clipped only if it OVERLAPS the skull;
+    /// one wholly outside is left to hang, flush against the clipped cap.
+    /// A rect clipped to nothing is DROPPED, so a zero-width rect can never
+    /// reach the SVG.
+    function _emitClamped(
+        FobalArtLibrary.Rect[] memory rects,
+        FobalAnchors.Anchors memory a,
+        bytes3[12] memory pal,
+        int16 margin
+    ) private pure returns (string memory out) {
         int16 cx = int16(uint16(K.CX));
-        int16 lo = a.headX - cx - 2;
-        int16 hi = a.headX + a.headW - cx + 2;
+        int16 skullLo = a.headX - cx;
+        int16 skullHi = a.headX + a.headW - cx;
         for (uint256 i; i < rects.length; ++i) {
             int16 x1 = rects[i].x + int16(uint16(rects[i].w));
-            int16 x0 = rects[i].x < lo ? lo : rects[i].x;
-            if (x1 > hi) x1 = hi;
+            if (x1 <= skullLo || rects[i].x >= skullHi) {
+                // hangs free of the skull: placed, never clipped
+                out = string.concat(
+                    out, _rect(_moved(rects[i], rects[i].x + cx, rects[i].y + a.top, rects[i].w), pal)
+                );
+                continue;
+            }
+            int16 x0 = rects[i].x < skullLo - margin ? skullLo - margin : rects[i].x;
+            if (x1 > skullHi + margin) x1 = skullHi + margin;
             if (x1 <= x0) continue;
             out = string.concat(
                 out, _rect(_moved(rects[i], x0 + cx, rects[i].y + a.top, uint8(uint16(x1 - x0))), pal)

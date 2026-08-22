@@ -90,8 +90,13 @@ jobs:
       # colour is what flatters a weak silhouette. This strips it and measures
       # every pair of hair, headwear and beard masks; gen-art gates on the same
       # library, this step surfaces WHICH pair collided.
-      - name: silhouette separation
+      - name: silhouette separation (every part, on every head)
         run: node packages/art/tools/silhouette.mjs
+      # The property a byte-parity harness structurally cannot see: a mistake
+      # made identically in both renderers is invisible to it. A player must
+      # be ONE connected figure.
+      - name: no detached paint
+        run: node packages/art/tools/connectivity.mjs 400
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:

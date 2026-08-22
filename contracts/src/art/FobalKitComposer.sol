@@ -46,16 +46,26 @@ contract FobalKitComposer {
             // sleeves
             out = string.concat(_r(x, y, 3, 7, s), _r(x + int256(w) - 3, y, 3, 7, s));
         } else if (kit.pattern == 2) {
-            // stripes: 3px wide, 6px pitch
-            for (uint256 i; i < 4; ++i) out = string.concat(out, _r(x + int256(2 + i * 6), y, 3, 7, s));
+            // As many WHOLE 3px stripes at a 6px pitch as the torso holds,
+            // centred. A fixed four assumed a wide torso: on the Slim build
+            // the fourth landed three pixels clear of the shoulder, as a
+            // detached block of kit colour on the background. The byte-parity
+            // harness could not see it — both renderers were equally wrong.
+            uint256 n = w / 6;
+            uint256 off = (w - (6 * n - 3)) / 2;
+            for (uint256 i; i < n; ++i) out = string.concat(out, _r(x + int256(off + i * 6), y, 3, 7, s));
         } else if (kit.pattern == 3) {
             // hoops: 2px, and only two of them
             out = string.concat(_r(x, y + 1, w, 2, s), _r(x, y + 5, w, 2, s));
         } else if (kit.pattern == 4) {
             out = string.concat(out, _r(x + int256(half), y, w - half, 7, s));
         } else if (kit.pattern == 5) {
-            // sash
-            for (uint256 i; i < 7; ++i) out = string.concat(out, _r(x + int256(3 + i * 2), y + int256(i), 5, 1, s));
+            // sash: 12 columns of travel plus its own 5px width, started so
+            // the LAST row still lands on the shirt
+            uint256 start = w >= 17 ? (w - 17) / 2 : 0;
+            for (uint256 i; i < 7; ++i) {
+                out = string.concat(out, _r(x + int256(start + i * 2), y + int256(i), 5, 1, s));
+            }
         } else if (kit.pattern == 6) {
             // chevron
             for (uint256 i; i < 4; ++i) {

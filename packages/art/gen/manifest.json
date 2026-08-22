@@ -15,7 +15,14 @@
         "Heavy Jaw",
         "Tapered"
       ],
-      "cum": null
+      "cum": [
+        686,
+        1368,
+        2050,
+        2732,
+        3414,
+        4096
+      ]
     },
     "SHADING": {
       "parts": 6,
@@ -96,7 +103,15 @@
         "Hooked",
         "Flat"
       ],
-      "cum": null
+      "cum": [
+        586,
+        1171,
+        1756,
+        2341,
+        2926,
+        3511,
+        4096
+      ]
     },
     "MOUTHS": {
       "parts": 7,
@@ -110,7 +125,15 @@
         "Downturned",
         "Compressed"
       ],
-      "cum": null
+      "cum": [
+        586,
+        1171,
+        1756,
+        2341,
+        2926,
+        3511,
+        4096
+      ]
     },
     "BEARDS": {
       "parts": 8,
@@ -125,7 +148,16 @@
         "Full Beard",
         "Long Beard"
       ],
-      "cum": null
+      "cum": [
+        1063,
+        1641,
+        2074,
+        2483,
+        2820,
+        3350,
+        3807,
+        4096
+      ]
     },
     "HAIR": {
       "parts": 21,
@@ -216,7 +248,12 @@
         "Broad",
         "Very Broad"
       ],
-      "cum": null
+      "cum": [
+        921,
+        2254,
+        3380,
+        4096
+      ]
     },
     "COLLARS": {
       "parts": 4,
@@ -227,7 +264,12 @@
         "Contrast V",
         "Polo"
       ],
-      "cum": null
+      "cum": [
+        1187,
+        2264,
+        3234,
+        4096
+      ]
     }
   },
   "anchors": [
