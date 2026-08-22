@@ -30,9 +30,20 @@ contract DeployArtLibrary is Script {
 
     function run() external returns (FobalArtLibrary lib) {
         address admin = vm.envAddress("FOBAL_ART_ADMIN");
+        // Broadcast AS msg.sender explicitly. Bare startBroadcast() uses the
+        // default sender, which is not msg.sender under `forge test` — so the
+        // library would be constructed owning one account and written to by
+        // another, and this script could only be exercised against a real
+        // chain. Pinning both makes the test below run the real thing.
+        address deployer = msg.sender;
 
-        vm.startBroadcast();
-        lib = new FobalArtLibrary(admin);
+        vm.startBroadcast(deployer);
+        // The library grants roles to its constructor argument ONLY. Handing
+        // the timelock the keys up front meant the very next setClass in this
+        // same script reverted with AccessControlUnauthorizedAccount — the
+        // deployer had no role. So: deploy owning it, install, verify by
+        // read-back, and only THEN hand over and step away.
+        lib = new FobalArtLibrary(deployer);
         for (uint256 i; i < CLASSES.length; ++i) {
             bytes memory blob = _blob(_name(CLASSES[i]));
             lib.setClass(CLASSES[i], blob);
@@ -51,8 +62,25 @@ contract DeployArtLibrary is Script {
             }
             console2.log(_name(CLASSES[i]), n, blob.length);
         }
+        require(CLASSES.length == K.ART_CLASS_COUNT, "class list is short");
+        require(totalRects > 250, "atlas decoded to almost nothing");
+
+        // Hand over only after the read-back passed. Renouncing last means a
+        // failed verification above leaves the deployer still able to fix it.
+        vm.startBroadcast(deployer);
+        lib.grantRole(lib.DEFAULT_ADMIN_ROLE(), admin);
+        lib.grantRole(lib.ART_ADMIN_ROLE(), admin);
+        lib.renounceRole(lib.ART_ADMIN_ROLE(), deployer);
+        lib.renounceRole(lib.DEFAULT_ADMIN_ROLE(), deployer);
+        vm.stopBroadcast();
+
+        require(lib.hasRole(lib.ART_ADMIN_ROLE(), admin), "handover failed");
+        require(!lib.hasRole(lib.DEFAULT_ADMIN_ROLE(), deployer), "deployer still admin");
+
         console2.log("art library deployed", address(lib));
+        console2.log("classes installed", CLASSES.length);
         console2.log("rects verified by read-back", totalRects);
+        console2.log("art admin handed to", admin);
         console2.log("NOT sealed: inspect rendered output first, then seal()");
     }
 
