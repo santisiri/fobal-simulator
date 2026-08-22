@@ -15,13 +15,16 @@ export const DENOM = 4096;
  *  variants — see assertWeights(). Index 0 of hair/beard/headwear is "None". */
 export const RAW = {
   head:      [100, 100, 100, 100, 100, 100],
-  eyes:      [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
-  brows:     [100, 100, 100, 100, 100, 100, 100, 100],
-  nose:      [100, 100, 100],
-  mouth:     [100, 100, 100, 100, 100, 100, 100, 100, 100, 100],
-  hair:      [40, 45, 90, 100, 110, 100, 95, 80, 90, 95, 70, 60, 55, 40, 65, 60, 50, 85, 70, 55, 70, 75, 80, 75],
+  eyes:      [100, 100, 100, 100, 100, 100],
+  brows:     [100, 100, 100, 100, 100, 100],
+  nose:      [100, 100, 100, 100, 100, 100, 100],
+  mouth:     [100, 100, 100, 100, 100, 100, 100],
+  ears:      [110, 130, 60],
+  build:     [90, 130, 110, 70],
+  collar:    [110, 100, 90, 80],
+  hair:      [40, 100, 110, 100, 95, 80, 90, 95, 70, 60, 55, 40, 65, 60, 50, 85, 70, 55, 70, 75, 75],
   beard:     [220, 120, 90, 85, 70, 110, 95, 60],
-  headwear:  [900, 90, 70, 80, 60, 40, 45, 35, 55, 60],
+  headwear:  [820, 95, 75, 55, 40, 60],
   hairColor: [130, 120, 110, 100, 90, 80, 70, 60, 70],
   skin:      [100, 100, 100, 100, 100, 100, 100, 100],
   bg:        [100, 100, 100, 100, 100, 100, 100, 100],
@@ -57,7 +60,7 @@ export function pickFromCum(cum, r) {
  *   - silhouette classes keep max/min <= 6 among PRESENT variants ("None" is
  *     the absence of a feature, not a variant competing to be seen) */
 const HAS_NONE = new Set(['hair', 'beard', 'headwear']);
-const SILHOUETTE = ['head', 'hair', 'headwear', 'beard'];
+const SILHOUETTE = ['head', 'hair', 'headwear', 'beard', 'build', 'ears'];
 export function assertWeights() {
   const bad = [], rows = [];
   for (const [k, cum] of Object.entries(CUM)) {
