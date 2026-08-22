@@ -81,7 +81,7 @@ library FobalTraitEngine {
         // width class RESTRICTS the eligible set and the lane picks inside it,
         // so a narrow head lands on a defined narrow mouth rather than being
         // rerolled into an unrelated draw.
-        t.mouth = _eligibleMouth(FobalAnchors.anchorsOf(t.head).widthClass, lane(s0, "MOUTH"));
+        t.mouth = _eligibleMouth(FobalAnchors.anchorsOf(t.head).widthClass, lane(s0, "MOUTH") % K.WEIGHT_DENOM);
         // Shoulders decide the neck; one fewer lane, and no slim player with
         // a heavyweight's throat.
         t.neck = uint8(K.NECK_OF_BUILD[t.build]);
@@ -102,15 +102,23 @@ library FobalTraitEngine {
         if (t.ears == 2 && covers) t.ears = 1;
     }
 
-    /// @dev The eligible lists are generated from the same function the
-    /// reference renderer calls, so the rule exists in exactly one place.
-    function _eligibleMouth(uint8 widthClass, uint256 laneValue) private pure returns (uint8) {
+    /// @dev The eligible lists AND their renormalised rarity are generated
+    /// from the same functions the reference renderer calls, so the rule
+    /// exists in exactly one place. Picking uniformly inside the set left the
+    /// mouth weights wired to nothing while still shipping as on-chain bytes.
+    function _eligibleMouth(uint8 widthClass, uint256 r) private pure returns (uint8) {
         bytes memory lens = K.MOUTH_ELIG_LEN;
         bytes memory elig = K.MOUTH_ELIG;
+        bytes memory cum = K.MOUTH_ELIG_CUM;
         uint256 start;
         for (uint256 k; k < widthClass; ++k) start += uint256(uint8(lens[k]));
         uint256 n = uint256(uint8(lens[widthClass]));
         if (n == 0) return 0;
-        return uint8(elig[start + (laneValue % n)]);
+        for (uint256 k; k < n; ++k) {
+            uint256 j = (start + k) * 2;
+            uint256 edge = (uint256(uint8(cum[j])) << 8) | uint256(uint8(cum[j + 1]));
+            if (r < edge) return uint8(elig[start + k]);
+        }
+        return uint8(elig[start + n - 1]);
     }
 }

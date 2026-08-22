@@ -66,8 +66,11 @@ describe('browser avatar == reference renderer', () => {
     const hex = (s: string) => '0x' + [...keccak_256(new TextEncoder().encode(s))]
       .map(b => b.toString(16).padStart(2, '0')).join('');
     for (let i = 0; i < FIXTURES.dna.length; i++) {
-      expect(hex(avatarSvgOnchain({ dna: FIXTURES.dna[i], appearance: BigInt(FIXTURES.appearance[i]) })))
-        .toBe(FIXTURES.svgHash[i]);
+      expect(hex(avatarSvgOnchain({
+        dna: FIXTURES.dna[i],
+        appearance: BigInt(FIXTURES.appearance[i]),
+        position: Number(FIXTURES.position[i]),
+      }))).toBe(FIXTURES.svgHash[i]);
     }
   });
 

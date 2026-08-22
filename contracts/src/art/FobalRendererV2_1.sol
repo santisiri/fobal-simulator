@@ -78,7 +78,18 @@ contract FobalRendererV2_1 is IFobalRenderer {
     }
 
     /// @notice A player with no club still looks like a footballer.
-    function freeAgentKit(bytes32 s0) public pure returns (FobalKitComposer.Kit memory k) {
+    /// @param position 0 = goalkeeper. A keeper nobody has registered still has
+    /// to be told apart from the ten outfielders around them, so the
+    /// free-agent path gives them their own colours. A CLUB kit always wins
+    /// over this — see kitOf, which only reaches here on a fallback.
+    ///
+    /// This existed only in the JS reference until now: the browser previewed
+    /// a gold keeper the chain would never have minted, which is exactly the
+    /// preview-versus-mint divergence the generated renderer exists to end.
+    function freeAgentKit(bytes32 s0, uint8 position) public pure returns (FobalKitComposer.Kit memory k) {
+        if (position == 0) {
+            return FobalKitComposer.Kit(K.KEEPER_PRIMARY, K.KEEPER_SECONDARY, K.KEEPER_ACCENT, K.KEEPER_PATTERN);
+        }
         k.primary = uint24(bytes3(_c(K.ACCENT_COLOR, TE.lane(s0, "KIT1") % 8)));
         k.secondary = uint24(bytes3(_c(K.ACCENT_COLOR, TE.lane(s0, "KIT2") % 8)));
         k.accent = uint24(bytes3(_c(K.ACCENT_COLOR, TE.lane(s0, "KIT3") % 8)));
@@ -93,18 +104,18 @@ contract FobalRendererV2_1 is IFobalRenderer {
         returns (FobalKitComposer.Kit memory kit, uint64 teamId, bool clubKit)
     {
         if (address(squads) == address(0) || address(wardrobe) == address(0)) {
-            return (freeAgentKit(s0), 0, false);
+            return (freeAgentKit(s0, position), 0, false);
         }
         try squads.teamOfSafe(tokenId) returns (uint64 team) {
             teamId = team;
         } catch {
-            return (freeAgentKit(s0), 0, false);
+            return (freeAgentKit(s0, position), 0, false);
         }
-        if (teamId == 0) return (freeAgentKit(s0), 0, false);
+        if (teamId == 0) return (freeAgentKit(s0, position), 0, false);
         try wardrobe.kitFor(teamId, position) returns (FobalKitRegistry.Kit memory k) {
             return (FobalKitComposer.Kit(k.primary, k.secondary, k.accent, k.pattern), teamId, true);
         } catch {
-            return (freeAgentKit(s0), teamId, false);
+            return (freeAgentKit(s0, position), teamId, false);
         }
     }
 
@@ -151,12 +162,20 @@ contract FobalRendererV2_1 is IFobalRenderer {
         return imageWithKit(dna, appearance, kit);
     }
 
-    /// @notice The face alone, independent of any club. A transfer or a
-    /// kit change must never move this value — asserted in the tests.
+    /// @notice The face alone, independent of any club. A transfer or a kit
+    /// change must never move this value — asserted in the tests.
+    ///
+    /// EVERY identity trait, including the ones added with the anchor system.
+    /// Hashing ten of fifteen made the invariant partial: ears, build, collar,
+    /// neck and shading could all have moved with a transfer and this would
+    /// have reported the face unchanged.
     function faceHash(bytes32 dna, uint256 appearance) external pure returns (bytes32) {
         TE.Traits memory t = TE.traitsOf(TE.seedOf(dna, appearance));
         return keccak256(
-            abi.encode(t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard, t.headwear)
+            abi.encode(
+                t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard, t.headwear,
+                t.ears, t.build, t.collar, t.neck, t.shading, t.bg, t.accent, t.iris
+            )
         );
     }
 

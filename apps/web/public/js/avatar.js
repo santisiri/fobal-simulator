@@ -114,7 +114,10 @@ const ACCENT = ["e8e2d4","1b1b1f","d8342c","e0a02a","2f8f4e","2f6fd0","8a5cf6","
 const INK = "0f0b09";
 const EYE_WHITE = "f4f1ea";
 const IRIS = ["3b2a1c","2a3d52","3d5240","5a4632"];
+const KEEPER_KIT = {"primary":"e0c04a","secondary":"1b1b1f","accent":"1b1b1f","pattern":0};
 const CUM = {"head":[686,1368,2050,2732,3414,4096],"eyes":[686,1368,2050,2732,3414,4096],"brows":[686,1368,2050,2732,3414,4096],"nose":[586,1171,1756,2341,2926,3511,4096],"mouth":[586,1171,1756,2341,2926,3511,4096],"ears":[1501,3277,4096],"build":[921,2254,3380,4096],"collar":[1187,2264,3234,4096],"hair":[106,371,674,939,1191,1403,1642,1894,2080,2239,2385,2491,2663,2822,2954,3180,3366,3512,3698,3897,4096],"beard":[1063,1641,2074,2483,2820,3350,3807,4096],"headwear":[2936,3275,3543,3739,3882,4096],"hairColor":[645,1237,1779,2272,2716,3110,3455,3751,4096],"skin":[512,1024,1536,2048,2560,3072,3584,4096],"bg":[512,1024,1536,2048,2560,3072,3584,4096],"accent":[512,1024,1536,2048,2560,3072,3584,4096],"iris":[1024,2048,3072,4096]};
+const MOUTH_ELIG = [[0,4,6],[0,2,4,5,6],[0,1,2,3,4,5,6]];
+const MOUTH_CUM = [[1366,2731,4096],[820,1639,2458,3277,4096],[586,1171,1756,2341,2926,3511,4096]];
 const DENOM = 4096;
 const SLOT = {"INK":0,"SKIN":1,"SHADE":2,"LIGHT":3,"HAIR":4,"HAIRD":5,"WHITE":6,"IRIS":7,"ACCENT":8,"KIT1":9,"KIT2":10,"KIT3":11};
 const ANCHOR = {"HEADS":{"at":"absolute","mirror":false},"SHADING":{"at":"absolute","mirror":false},"EARS":{"at":"ears","mirror":true},"EYES":{"at":"eyes","mirror":true},"BROWS":{"at":"brows","mirror":true},"NOSES":{"at":"nose","mirror":false},"MOUTHS":{"at":"mouth","mirror":false},"BEARDS":{"at":"chin","mirror":false},"HAIR":{"at":"top","mirror":false,"clamp":2},"HEADWEAR":{"at":"top","mirror":false,"clamp":2},"NECKS":{"at":"absolute","mirror":false},"BUILDS":{"at":"absolute","mirror":false},"COLLARS":{"at":"absolute","mirror":false}};
@@ -201,7 +204,7 @@ const EARS = [{"name":"Small","rects":[[2,1,2,2,1],[1,1,1,2,0],[2,2,1,1,2]],"tag
 const EYES = [{"name":"Neutral","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,0]],"tags":[]},{"name":"Deep-set","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,2],[0,-2,4,1,2]],"tags":[]},{"name":"Wide","rects":[[0,-1,4,3,6],[1,0,2,2,7],[0,-2,4,1,0]],"tags":[]},{"name":"Narrow","rects":[[0,0,4,1,6],[1,0,2,1,7],[0,-1,4,1,0]],"tags":[]},{"name":"Heavy Lid","rects":[[0,1,4,1,6],[1,1,2,1,7],[0,-1,4,2,0]],"tags":[]},{"name":"Round","rects":[[0,-1,4,3,6],[1,-1,2,3,7],[0,-2,4,1,0]],"tags":[]}];
 const BROWS = [{"name":"Flat","rects":[[0,0,4,1,4]],"tags":[]},{"name":"Heavy","rects":[[0,-1,4,2,4]],"tags":[]},{"name":"Raised","rects":[[0,-1,4,1,4]],"tags":[]},{"name":"Angry","rects":[[0,0,2,1,4],[2,1,2,1,4]],"tags":[]},{"name":"Arched","rects":[[0,1,1,1,4],[1,0,3,1,4]],"tags":[]},{"name":"Thick Low","rects":[[0,0,4,1,4],[1,1,3,1,4]],"tags":[]}];
 const NOSES = [{"name":"Straight","rects":[[-1,0,1,3,2],[-1,3,2,1,2]],"tags":[]},{"name":"Short","rects":[[-1,1,1,2,2],[-1,3,2,1,2]],"tags":[]},{"name":"Long","rects":[[-1,-1,1,5,2],[-1,4,2,1,2]],"tags":[]},{"name":"Broad Tip","rects":[[-1,0,1,3,2],[-2,3,4,1,2],[-1,2,1,1,3]],"tags":[]},{"name":"Narrow","rects":[[0,0,1,3,2],[0,3,1,1,2]],"tags":[]},{"name":"Hooked","rects":[[-1,0,1,2,2],[-1,2,2,2,2]],"tags":[]},{"name":"Flat","rects":[[-2,2,4,1,2],[-1,1,1,1,2]],"tags":[]}];
-const MOUTHS = [{"name":"Neutral","w":4,"rects":[[-2,0,4,1,0]],"tags":[]},{"name":"Stern","w":6,"rects":[[-3,0,6,1,0]],"tags":[]},{"name":"Slight","w":5,"rects":[[-2,0,4,1,0],[-3,-1,1,1,0],[2,-1,1,1,0]],"tags":[]},{"name":"Wide Smile","w":6,"rects":[[-3,0,6,1,0],[-2,1,4,1,0],[-2,0,4,1,6]],"tags":[]},{"name":"Open","w":4,"rects":[[-2,-1,4,3,0],[-1,0,2,1,6]],"tags":[]},{"name":"Downturned","w":5,"rects":[[-2,0,4,1,0],[-3,1,1,1,0],[2,1,1,1,0]],"tags":[]},{"name":"Compressed","w":3,"rects":[[-1,0,3,1,0],[-1,-1,3,1,2]],"tags":[]}];
+const MOUTHS = [{"name":"Neutral","rects":[[-2,0,4,1,0]],"w":4,"tags":[]},{"name":"Stern","rects":[[-3,0,6,1,0]],"w":6,"tags":[]},{"name":"Slight","rects":[[-2,0,5,1,0],[-2,-1,1,1,0],[2,-1,1,1,0]],"w":5,"tags":[]},{"name":"Wide Smile","rects":[[-3,0,6,1,0],[-2,1,4,1,0],[-2,0,4,1,6]],"w":6,"tags":[]},{"name":"Open","rects":[[-2,-1,4,3,0],[-1,0,2,1,6]],"w":4,"tags":[]},{"name":"Downturned","rects":[[-2,0,5,1,0],[-2,1,1,1,0],[2,1,1,1,0]],"w":5,"tags":[]},{"name":"Compressed","rects":[[-1,0,3,1,0],[-1,-1,3,1,2]],"w":3,"tags":[]}];
 const BEARDS = [{"name":"None","rects":[],"tags":[]},{"name":"Stubble","rects":[[-6,-5,2,4,5],[4,-5,2,4,5],[-5,-2,10,2,5]],"tags":[]},{"name":"Moustache","rects":[[-3,-4,6,1,4],[-4,-4,1,2,4],[3,-4,1,2,4]],"tags":[]},{"name":"Goatee","rects":[[-3,-4,6,1,4],[-2,-2,4,3,4]],"tags":[]},{"name":"Chinstrap","rects":[[-7,-6,2,7,4],[5,-6,2,7,4],[-5,0,10,1,4]],"tags":[]},{"name":"Short Beard","rects":[[-3,-4,6,1,4],[-7,-5,2,5,4],[5,-5,2,5,4],[-5,-2,10,2,4],[-4,0,8,1,4]],"tags":[]},{"name":"Full Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,1,4],[-4,1,8,1,4],[-3,2,6,1,5]],"tags":[]},{"name":"Long Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,2,4],[-4,2,8,2,4],[-3,4,6,1,4],[-2,5,4,1,5]],"tags":[]}];
 const HAIR = [{"name":"Bald","rects":[],"tags":[]},{"name":"Buzz","rects":[[-9,-1,18,3,4]],"tags":[]},{"name":"Short","rects":[[-9,-1,18,4,4],[-9,3,2,3,4],[7,3,2,3,4]],"tags":[]},{"name":"Side Part","rects":[[-9,-1,18,4,4],[-9,-1,7,6,4],[-2,3,1,1,5]],"tags":[]},{"name":"Swept","rects":[[-9,-1,18,4,4],[3,-3,7,4,4]],"tags":[]},{"name":"Quiff","rects":[[-9,-1,18,3,4],[-4,-5,8,4,4]],"tags":[]},{"name":"Messy","rects":[[-9,-1,18,4,4],[-7,-4,3,3,4],[-1,-5,4,4,4],[5,-3,3,3,4]],"tags":[]},{"name":"Curly","rects":[[-9,-1,18,5,4],[-10,1,3,5,4],[7,1,3,5,4],[-5,-3,10,3,4]],"tags":[]},{"name":"Afro","rects":[[-11,-5,22,10,4],[-12,-1,3,7,4],[9,-1,3,7,4]],"tags":[]},{"name":"High Top","rects":[[-9,-1,18,3,4],[-6,-8,12,7,4]],"tags":[]},{"name":"Flat Top","rects":[[-9,-1,18,3,4],[-8,-6,16,5,4]],"tags":[]},{"name":"Mohawk","rects":[[-2,-7,5,9,4],[-8,-1,16,2,5]],"tags":[]},{"name":"Dreads","rects":[[-9,-1,18,4,4],[-10,3,2,7,4],[-8,3,2,11,4],[6,3,2,7,4],[8,3,2,11,4]],"tags":[]},{"name":"Braids","rects":[[-9,-1,18,4,4],[-9,3,2,4,5],[-6,3,2,4,5],[4,3,2,4,5],[7,3,2,4,5],[-9,7,2,5,4],[7,7,2,5,4]],"tags":[]},{"name":"Cornrows","rects":[[-9,-1,18,6,5],[-9,-1,2,6,4],[-6,-1,2,6,4],[-3,-1,2,6,4],[0,-1,2,6,4],[3,-1,2,6,4],[6,-1,2,6,4]],"tags":[]},{"name":"Long","rects":[[-9,-1,18,4,4],[-10,3,3,13,4],[7,3,3,13,4]],"tags":[]},{"name":"Ponytail","rects":[[-9,-1,18,4,4],[8,2,3,9,4],[9,9,3,5,4]],"tags":[]},{"name":"Topknot","rects":[[-9,-1,18,4,4],[-2,-5,5,4,4]],"tags":[]},{"name":"Undercut","rects":[[-7,-4,14,7,4],[-9,3,18,2,5]],"tags":[]},{"name":"Receding","rects":[[-6,-1,12,3,4],[-9,1,3,4,4],[6,1,3,4,4]],"tags":[]},{"name":"Wavy","rects":[[-9,-1,18,4,4],[-9,-3,6,2,4],[-4,-4,7,2,4],[2,-3,7,2,4]],"tags":[]}];
 const HEADWEAR = [{"name":"None","rects":[],"tags":[]},{"name":"Headband","rects":[[-9,2,18,2,8],[-9,3,18,1,11],[6,1,3,4,8]],"tags":["band"]},{"name":"Sweatband","rects":[[-9,1,18,3,8],[-9,2,18,1,9],[-2,1,4,1,9]],"tags":["band"]},{"name":"Keeper Cap","rects":[[-8,-3,16,4,10],[-8,-3,16,1,11],[-10,1,20,1,10],[-9,2,18,1,10],[-9,3,18,1,2]],"tags":["covers"]},{"name":"Scrum Cap","rects":[[-8,-3,16,7,8],[-8,0,16,1,9],[-10,1,2,6,8],[8,1,2,6,8],[-10,6,2,1,0],[8,6,2,1,0]],"tags":["covers"]},{"name":"Bandana","rects":[[-9,-1,18,4,8],[-9,2,18,1,11],[7,2,3,3,8],[9,4,2,3,8]],"tags":["covers"]}];
@@ -267,8 +270,9 @@ function traitsOf(s0) {
   // A wide skull can carry a wide mouth; a narrow one cannot. Rather than
   // stretching geometry, the head's width class restricts which mouths are
   // eligible, and the lane chooses within that set — still deterministic.
-  const eligible = mouthEligible(anchorsOf(t.head).widthClass);
-  t.mouth = eligible[Number(lane(s0, 'MOUTH') % BigInt(eligible.length))];
+  const wc = anchorsOf(t.head).widthClass;
+  const eligible = mouthEligible(wc);
+  t.mouth = eligible[pickFromCum(mouthCum(wc), Number(lane(s0, 'MOUTH') % BigInt(DENOM)))];
 
   // Neck follows shoulders — a slim player with a thick neck reads as a bug,
   // and deriving it costs one fewer lane.
@@ -292,14 +296,12 @@ function traitsOf(s0) {
 
 /** Item 16 — the compatibility matrix, as data. A wide skull can carry a wide
  *  mouth and a narrow one cannot, so the head's width class RESTRICTS the
- *  eligible set and the lane picks within it. Never a reroll: the same seed on
- *  a narrower head lands on a defined narrower mouth, not on a different draw. */
-function mouthEligible(widthClass) {
-  const maxW = widthClass === 0 ? 4 : widthClass === 1 ? 5 : 6;
-  const out = [];
-  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxW) out.push(i);
-  return out;
-}
+ *  eligible set and the lane picks within it — by RARITY, not uniformly, so
+ *  the mouth weights are actually wired to something. Never a reroll: the same
+ *  seed on a narrower head lands on a defined narrower mouth, not a different
+ *  draw. Both tables are generated (spec/weights.js). */
+const mouthEligible = (widthClass) => MOUTH_ELIG[widthClass];
+const mouthCum = (widthClass) => MOUTH_CUM[widthClass];
 
 /** Shoulders decide the neck; one fewer lane and no impossible pairings. */
 const NECK_OF_BUILD = [0, 1, 1, 2];
@@ -335,7 +337,11 @@ function resolvePalette(t, kit) {
 
 const KIT_PATTERNS = ['Solid', 'Sleeves', 'Stripes', 'Hoops', 'Halves', 'Sash', 'Chevron'];
 
-function freeAgentKit(s0) {
+/** @param position 0 = goalkeeper. A CLUB kit always wins over this — the
+ *  keeper colours are a fallback for a player nobody has registered, not an
+ *  override that repaints a club's own registered keeper strip. */
+function freeAgentKit(s0, position = 2) {
+  if (position === 0) return { ...KEEPER_KIT };
   return {
     primary: ACCENT[Number(lane(s0, 'KIT1') % 8n)],
     secondary: ACCENT[Number(lane(s0, 'KIT2') % 8n)],
@@ -491,8 +497,7 @@ function faceLayers(t, pal) {
 function renderPlayer({ dna, appearance, kit, position = 2 }) {
   const s0 = seedOf(dna, appearance);
   const t = traitsOf(s0);
-  kit = kit ?? freeAgentKit(s0);
-  if (position === 0) kit = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
+  kit = kit ?? freeAgentKit(s0, position);
   const pal = resolvePalette(t, kit);
   const a = anchorsOf(t.head);
   const build = BUILDS[t.build];

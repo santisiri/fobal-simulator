@@ -5,12 +5,12 @@
 // weighted CDFs and a constraint pass, resolve a palette, then splice
 // authored rects in a fixed layer order — TRANSLATED onto the anchors of the
 // chosen head, which is what makes head choice restructure the whole face.
-import { SKIN, HAIR as HAIR_COL, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
+import { SKIN, HAIR as HAIR_COL, BG, ACCENT, INK, EYE_WHITE, IRIS, KEEPER_KIT } from '../spec/palettes.js';
 import {
   CANVAS, SLOT, ANCHOR, anchorsOf, EYE_W, EAR_W,
   HEADS, SHADING, EARS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HEADWEAR, NECKS, BUILDS, COLLARS,
 } from '../spec/parts.js';
-import { CUM, DENOM, pickFromCum, assertWeights } from '../spec/weights.js';
+import { CUM, DENOM, MOUTH_ELIG, MOUTH_CUM, pickFromCum, assertWeights } from '../spec/weights.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 // ------------------------------------------------------------------ lanes
@@ -62,8 +62,9 @@ export function traitsOf(s0) {
   // A wide skull can carry a wide mouth; a narrow one cannot. Rather than
   // stretching geometry, the head's width class restricts which mouths are
   // eligible, and the lane chooses within that set — still deterministic.
-  const eligible = mouthEligible(anchorsOf(t.head).widthClass);
-  t.mouth = eligible[Number(lane(s0, 'MOUTH') % BigInt(eligible.length))];
+  const wc = anchorsOf(t.head).widthClass;
+  const eligible = mouthEligible(wc);
+  t.mouth = eligible[pickFromCum(mouthCum(wc), Number(lane(s0, 'MOUTH') % BigInt(DENOM)))];
 
   // Neck follows shoulders — a slim player with a thick neck reads as a bug,
   // and deriving it costs one fewer lane.
@@ -87,14 +88,12 @@ export function traitsOf(s0) {
 
 /** Item 16 — the compatibility matrix, as data. A wide skull can carry a wide
  *  mouth and a narrow one cannot, so the head's width class RESTRICTS the
- *  eligible set and the lane picks within it. Never a reroll: the same seed on
- *  a narrower head lands on a defined narrower mouth, not on a different draw. */
-export function mouthEligible(widthClass) {
-  const maxW = widthClass === 0 ? 4 : widthClass === 1 ? 5 : 6;
-  const out = [];
-  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxW) out.push(i);
-  return out;
-}
+ *  eligible set and the lane picks within it — by RARITY, not uniformly, so
+ *  the mouth weights are actually wired to something. Never a reroll: the same
+ *  seed on a narrower head lands on a defined narrower mouth, not a different
+ *  draw. Both tables are generated (spec/weights.js). */
+export const mouthEligible = (widthClass) => MOUTH_ELIG[widthClass];
+export const mouthCum = (widthClass) => MOUTH_CUM[widthClass];
 
 /** Shoulders decide the neck; one fewer lane and no impossible pairings. */
 export const NECK_OF_BUILD = [0, 1, 1, 2];
@@ -130,7 +129,11 @@ function resolvePalette(t, kit) {
 
 export const KIT_PATTERNS = ['Solid', 'Sleeves', 'Stripes', 'Hoops', 'Halves', 'Sash', 'Chevron'];
 
-export function freeAgentKit(s0) {
+/** @param position 0 = goalkeeper. A CLUB kit always wins over this — the
+ *  keeper colours are a fallback for a player nobody has registered, not an
+ *  override that repaints a club's own registered keeper strip. */
+export function freeAgentKit(s0, position = 2) {
+  if (position === 0) return { ...KEEPER_KIT };
   return {
     primary: ACCENT[Number(lane(s0, 'KIT1') % 8n)],
     secondary: ACCENT[Number(lane(s0, 'KIT2') % 8n)],
@@ -286,8 +289,7 @@ export function faceLayers(t, pal) {
 export function renderPlayer({ dna, appearance, kit, position = 2 }) {
   const s0 = seedOf(dna, appearance);
   const t = traitsOf(s0);
-  kit = kit ?? freeAgentKit(s0);
-  if (position === 0) kit = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
+  kit = kit ?? freeAgentKit(s0, position);
   const pal = resolvePalette(t, kit);
   const a = anchorsOf(t.head);
   const build = BUILDS[t.build];

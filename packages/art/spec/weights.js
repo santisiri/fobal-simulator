@@ -75,3 +75,21 @@ export function assertWeights() {
   }
   return { pass: bad.length === 0, bad, rows };
 }
+
+// ---------------------------------------------------------------- mouths
+// The compatibility rule (item 16) with its rarity RENORMALISED over each
+// eligible set. It lives here, beside the other tables, and is GENERATED into
+// both the Solidity constants and the browser module — so no runtime
+// recomputes it and the three cannot disagree.
+import { MOUTHS } from './parts.js';
+
+/** A wide skull can carry a wide mouth; a narrow one cannot. */
+export function mouthEligible(widthClass) {
+  const maxW = widthClass === 0 ? 4 : widthClass === 1 ? 5 : 6;
+  const out = [];
+  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxW) out.push(i);
+  return out;
+}
+
+export const MOUTH_ELIG = [0, 1, 2].map(mouthEligible);
+export const MOUTH_CUM = MOUTH_ELIG.map((set) => toCumulative(set.map((i) => RAW.mouth[i])));

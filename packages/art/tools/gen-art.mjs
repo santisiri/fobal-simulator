@@ -17,10 +17,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { CLASSES, CANVAS, SLOT, ANCHOR } from '../spec/parts.js';
 import { HEAD_SPECS, CX, HEAD_TOP, EYE_W, EAR_W, anchorsOf } from '../spec/anchors.js';
 import { auditAll } from './silhouette-lib.mjs';
-import { CUM, RAW, DENOM, assertWeights } from '../spec/weights.js';
-import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
+import { CUM, RAW, DENOM, MOUTH_ELIG, MOUTH_CUM, assertWeights } from '../spec/weights.js';
+import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS, KEEPER_KIT } from '../spec/palettes.js';
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
-import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, mouthEligible, assertKitFits, assertShadingInsideHead } from '../src/render.js';
+import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, assertKitFits, assertShadingInsideHead } from '../src/render.js';
 import { assertConnected } from './connectivity.mjs';
 import { keccak_256 } from '@noble/hashes/sha3';
 
@@ -72,6 +72,14 @@ for (const rep of sil) for (const c of rep.collisions) fail.push(`silhouette ${r
 // Every pattern on every build, exhaustively: 28 pairs, so a proof.
 const kit = assertKitFits();
 for (const b of kit.bad) fail.push(`kit geometry: ${b}`);
+for (const [cls, parts] of Object.entries(CLASSES)) {
+  const key = Object.keys(CUM).find(k => k === cls.toLowerCase() || k === cls.toLowerCase().replace(/s$/, ''));
+  if (!key) continue;
+  if (CUM[key].length !== parts.length) {
+    fail.push(`${cls}: ${parts.length} parts but ${CUM[key].length} weights — `
+      + (CUM[key].length < parts.length ? 'the extra parts can never be minted' : 'a weight selects nothing'));
+  }
+}
 const shade = assertShadingInsideHead();
 for (const b of shade.bad.slice(0, 10)) fail.push(`shading: ${b}`);
 // And the property a byte-parity harness structurally cannot see — a mistake
@@ -204,7 +212,7 @@ solLines.push('',
 
 // ---- correlation + fallback tables, generated from the SAME functions the
 // reference renderer calls, so the two can never state different rules.
-const elig = [0, 1, 2].map(wc => mouthEligible(wc));
+const elig = MOUTH_ELIG;
 solLines.push('',
   '    // ---- deterministic compatibility tables (item 16). Generated from the',
   '    // reference renderer, never restated by hand.',
@@ -213,6 +221,11 @@ solLines.push('',
   '    /// @dev mouths a head of each width class may wear, concatenated',
   `    bytes internal constant MOUTH_ELIG = hex"${elig.flat().map(b2).join('')}";`,
   `    bytes internal constant MOUTH_ELIG_LEN = hex"${elig.map(e => b2(e.length)).join('')}";`,
+  '    /// @dev rarity RENORMALISED over each eligible set, 2 bytes per entry.',
+  '    /// Picking uniformly inside the set left the mouth weights wired to',
+  '    /// nothing while still shipping as bytes.',
+  `    bytes internal constant MOUTH_ELIG_CUM = hex"${[0, 1, 2].map(wc =>
+      MOUTH_CUM[wc].map(v => v.toString(16).padStart(4, '0')).join('')).join('')}";`,
   '    /// @dev x and width of each build\'s torso box, so the kit composer can',
   '    /// place a pattern from pure geometry without ever seeing a trait.',
   `    bytes internal constant BUILD_TORSO = hex"${CLASSES.BUILDS.map(b => b2(b.rects[1][0]) + b2(b.rects[1][2])).join('')}";`);
@@ -229,6 +242,11 @@ solLines.push(
   hexArr('IRIS_COLOR', IRIS),
   `    bytes3 internal constant INK = hex"${INK}";`,
   `    bytes3 internal constant EYE_WHITE = hex"${EYE_WHITE}";`,
+  '    // the goalkeeper\'s FREE-AGENT kit. A club kit always wins over it.',
+  `    uint24 internal constant KEEPER_PRIMARY = 0x${KEEPER_KIT.primary};`,
+  `    uint24 internal constant KEEPER_SECONDARY = 0x${KEEPER_KIT.secondary};`,
+  `    uint24 internal constant KEEPER_ACCENT = 0x${KEEPER_KIT.accent};`,
+  `    uint8 internal constant KEEPER_PATTERN = ${KEEPER_KIT.pattern};`,
   '}', '');
 // written straight into the contracts tree — its only consumer. A second
 // copy under gen/ would be one more thing that can silently drift.
@@ -290,7 +308,10 @@ const avatarJs = [
   `const INK = ${JSON.stringify(INK)};`,
   `const EYE_WHITE = ${JSON.stringify(EYE_WHITE)};`,
   `const IRIS = ${JSON.stringify(IRIS)};`,
+  `const KEEPER_KIT = ${JSON.stringify(KEEPER_KIT)};`,
   `const CUM = ${JSON.stringify(CUM)};`,
+  `const MOUTH_ELIG = ${JSON.stringify(MOUTH_ELIG)};`,
+  `const MOUTH_CUM = ${JSON.stringify(MOUTH_CUM)};`,
   `const DENOM = ${DENOM};`,
   `const SLOT = ${JSON.stringify(SLOT)};`,
   `const ANCHOR = ${JSON.stringify(ANCHOR)};`,
@@ -346,28 +367,102 @@ const avatarJs = [
 ].join('\n');
 writeFileSync(new URL('../../apps/web/public/js/avatar.js', A), avatarJs);
 
+// SELF-CHECK. The browser module is assembled by listing symbols by hand, and
+// that list has now silently dropped a part field, a palette constant and the
+// tail of a multi-line import — each time surfacing as a crash in the browser
+// rather than a failure here. So: import what was just written and render
+// through it. A missing symbol is a ReferenceError at BUILD time.
+try {
+  const mod = await import(new URL('../../apps/web/public/js/avatar.js', A).href
+    + `?v=${keccak_256(new TextEncoder().encode(avatarJs))[0]}-${avatarJs.length}`);
+  for (let i = 0; i < 8; i++) {
+    const b = keccak_256(new TextEncoder().encode(`web-selfcheck-${i}`));
+    const dna = '0x' + [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+    const id = { dna, appearance: (BigInt(dna) >> 96n) & 0xffffffffn };
+    const position = i % 4;
+    const got = mod.avatarSvgOnchain({ dna: id.dna, appearance: id.appearance, position });
+    const want = renderPlayer({ dna: id.dna, appearance: id.appearance, position });
+    if (got !== want) fail.push(`web module diverges from the reference at self-check ${i} (position ${position})`);
+  }
+  const norm = mod.toRenderKit({ primary: '#22c55e', secondary: '#0d1428' });
+  if (!/^[0-9a-f]{6}$/.test(norm.primary) || norm.accent === undefined) {
+    fail.push('web module: toRenderKit does not normalise a UI kit');
+  }
+} catch (err) {
+  fail.push(`web module does not load: ${err.message}. The browser bundle is`
+    + ' assembled by listing symbols by hand — a name used by the render logic'
+    + ' but missing from the emitted data will look exactly like this.');
+}
+
+
 // ---- parity fixtures: (dna, appearance) -> expected SVG hash. The forge
 // test replays these through the Solidity renderer and compares hashes, so
 // any divergence between the two implementations fails a build.
 const FIXTURE_N = 64;
 const hashOf = (str) => '0x' + [...keccak_256(new TextEncoder().encode(str))]
   .map(b => b.toString(16).padStart(2, '0')).join('');
+const idFromTag = (tag) => {
+  const dna = '0x' + [...keccak_256(new TextEncoder().encode(tag))]
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  return { dna, appearance: (BigInt(dna) >> 96n) & 0xffffffffn };
+};
+
+// Which trait keys index which class, for the coverage sweep below.
+const TRAIT_CLASS = {
+  head: 'HEADS', eyes: 'EYES', brows: 'BROWS', nose: 'NOSES', mouth: 'MOUTHS',
+  beard: 'BEARDS', hair: 'HAIR', headwear: 'HEADWEAR', ears: 'EARS',
+  build: 'BUILDS', collar: 'COLLARS', neck: 'NECKS', shading: 'SHADING',
+};
+
+// The base set, plus whatever it takes to reach EVERY part index. Sixty-four
+// arbitrary seeds left High Top, Mohawk, Undercut and Scrum Cap never rendered
+// by the parity gate — so their placement, mirroring and skull clamping were
+// unverified between the two implementations, and Scrum Cap is precisely the
+// part whose clamping had just changed.
+const tags = [];
+for (let i = 0; i < FIXTURE_N; i++) tags.push(`fobal-fixture-${i}`);
+
+const covered = Object.fromEntries(Object.keys(TRAIT_CLASS).map(k => [k, new Set()]));
+const noteCoverage = (tag) => {
+  const { dna, appearance } = idFromTag(tag);
+  const t = traitsOf(seedOf(dna, appearance));
+  let novel = false;
+  for (const k of Object.keys(TRAIT_CLASS)) {
+    if (!covered[k].has(t[k])) { covered[k].add(t[k]); novel = true; }
+  }
+  return novel;
+};
+tags.forEach(noteCoverage);
+
+const missing = () => Object.entries(TRAIT_CLASS)
+  .flatMap(([k, cls]) => [...Array(CLASSES[cls].length).keys()]
+    .filter(i => !covered[k].has(i)).map(i => `${cls}[${i}] ${CLASSES[cls][i].name}`));
+
+let probe = 0;
+while (missing().length && probe < 200000) {
+  const tag = `fobal-fixture-cover-${probe++}`;
+  if (noteCoverage(tag)) tags.push(tag);
+}
+if (missing().length) fail.push(`fixtures cannot reach: ${missing().join(', ')}`);
+
 const fx = {
-  dna: [], appearance: [], svgHash: [], traits: [],
-  // an EXPLICIT kit per fixture, so P4's club-kit path is proven byte-exact
+  dna: [], appearance: [], position: [], svgHash: [], traits: [],
+  // an EXPLICIT kit per fixture, so the club-kit path is proven byte-exact
   // too — not just the free-agent one
   kitPrimary: [], kitSecondary: [], kitAccent: [], kitPattern: [], svgKitHash: [],
 };
-for (let i = 0; i < FIXTURE_N; i++) {
-  const dnaBytes = keccak_256(new TextEncoder().encode(`fobal-fixture-${i}`));
-  const dna = '0x' + [...dnaBytes].map(b => b.toString(16).padStart(2, '0')).join('');
-  const appearance = (BigInt(dna) >> 96n) & 0xffffffffn;
+tags.forEach((tag, i) => {
+  const { dna, appearance } = idFromTag(tag);
+  // cycle the positions so the GOALKEEPER free-agent path is exercised; it
+  // existed only in the JS reference and no fixture had ever rendered it
+  const position = i % 4;
   const t = traitsOf(seedOf(dna, appearance));
   fx.dna.push(dna);
   fx.appearance.push(appearance.toString());
-  fx.svgHash.push(hashOf(renderPlayer({ dna, appearance })));
-  fx.traits.push([t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard, t.headwear, t.bg, t.accent, t.iris].join(','));
-  // deterministic club kit, spanning every pattern across the fixture set
+  fx.position.push(String(position));
+  fx.svgHash.push(hashOf(renderPlayer({ dna, appearance, position })));
+  fx.traits.push([t.head, t.skin, t.eyes, t.brows, t.nose, t.mouth, t.hair, t.hairColor, t.beard,
+    t.headwear, t.bg, t.accent, t.iris, t.ears, t.build, t.collar, t.neck, t.shading].join(','));
   const kh = BigInt(hashOf(`kit-${i}`));
   const kit = {
     primary: Number((kh >> 8n) & 0xffffffn).toString(16).padStart(6, '0'),
@@ -379,8 +474,9 @@ for (let i = 0; i < FIXTURE_N; i++) {
   fx.kitSecondary.push(String(parseInt(kit.secondary, 16)));
   fx.kitAccent.push(String(parseInt(kit.accent, 16)));
   fx.kitPattern.push(String(kit.pattern));
-  fx.svgKitHash.push(hashOf(renderPlayer({ dna, appearance, kit })));
-}
+  fx.svgKitHash.push(hashOf(renderPlayer({ dna, appearance, kit, position })));
+});
+
 mkdirSync(new URL('./gen/fixtures/', A), { recursive: true });
 
 // ---- EVERY part of EVERY class, flattened. The decode test replays this
@@ -422,7 +518,8 @@ console.log('class            parts   bytes');
 for (const [k, m] of Object.entries(manifest.classes))
   console.log(`  ${k.padEnd(14)} ${String(m.parts).padStart(3)}  ${String(m.bytes).padStart(6)}`);
 console.log(`  ${'TOTAL'.padEnd(14)}      ${String(totalBytes).padStart(6)} B of art data`);
-console.log(`fixtures: ${FIXTURE_N} seeds -> gen/fixtures/render.json`);
+console.log(`fixtures: ${tags.length} seeds (${FIXTURE_N} base + ${tags.length - FIXTURE_N} for coverage)`
+  + ` -> gen/fixtures/render.json; every part index of every class rendered`);
 console.log(`          ${rectFx.x.length} rects across ${Object.keys(CLASSES).length} classes -> gen/fixtures/rects.json`);
 console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 4).padStart(5)} B (4 ints x ${HEAD_SPECS.length} heads; 10 more anchors derived)`);
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`

@@ -147,3 +147,11 @@ export function validatePalettes() {
   ].every(Boolean);
   return { pass: ok, report: rows };
 }
+
+/** The goalkeeper's free-agent kit. A keeper who is not on a club's books
+ *  still has to be told apart from the ten outfielders around them, so the
+ *  free-agent path gives them their own colours. Kept HERE, as data, because
+ *  it lived as a literal inside the JS renderer and the chain had no
+ *  counterpart at all — the browser previewed a gold keeper the chain would
+ *  never have minted. */
+export const KEEPER_KIT = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
