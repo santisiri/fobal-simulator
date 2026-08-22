@@ -5,10 +5,14 @@
 // smoothing. Two mandatory variants follow: one squad in ONE kit (the hub
 // strip, and the harder case, because team colour stops helping), and a
 // silhouette-only sheet with colour removed entirely.
-import { writeFileSync } from 'node:fs';
-import { renderPlayer, traitsOf, seedOf, assertWeights, HAIR, HEADWEAR, BEARDS, HEADS, EYES, MOUTHS } from '../src/render.js';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { renderPlayer, traitsOf, seedOf, assertWeights, anchorsOf,
+  HAIR, HEADWEAR, BEARDS, HEADS, EYES, MOUTHS, NOSES, BROWS, EARS, NECKS, BUILDS, COLLARS } from '../src/render.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { validatePalettes } from '../spec/palettes.js';
+
+// out/ is gitignored: create it rather than assuming a previous run made it
+mkdirSync(new URL('../out/', import.meta.url), { recursive: true });
 
 const TEAMS = [
   { name: 'SKY CITY FC',   primary: '2f6fd0', secondary: 'f2f4f8', accent: 'f2f4f8', pattern: 2 },
@@ -107,7 +111,9 @@ writeFileSync(new URL('../out/transfer.html', import.meta.url), page('FOBAL v2 �
 
 // ---- 6. stratified sheets (find collisions systematically)
 let strat = '';
-for (const [label, list, key] of [['Hair', HAIR, 'hair'], ['Headwear', HEADWEAR, 'headwear'], ['Facial hair', BEARDS, 'beard']]) {
+for (const [label, list, key] of [['Heads', HEADS, 'head'], ['Eyes', EYES, 'eyes'], ['Brows', BROWS, 'brows'],
+  ['Noses', NOSES, 'nose'], ['Mouths', MOUTHS, 'mouth'], ['Ears', EARS, 'ears'], ['Builds', BUILDS, 'build'],
+  ['Collars', COLLARS, 'collar'], ['Hair', HAIR, 'hair'], ['Headwear', HEADWEAR, 'headwear'], ['Facial hair', BEARDS, 'beard']]) {
   let row = '';
   list.forEach((part, idx) => {
     // find a seed whose trait matches, so every variant is actually shown
@@ -121,6 +127,25 @@ writeFileSync(new URL('../out/strata.html', import.meta.url), page('FOBAL v2 —
 <h1>Stratified sheets — every variant of every class</h1>
 <p class="sub">Collision hunting: clipping, layering faults, and variants that read identically.</p>${strat}`));
 
+// ---- 7. THE ANCHOR PROOF: one identity, six skulls. Every face part is the
+// same authored art; only the head — and therefore the anchor set — changes.
+import { renderPlayerWithHead } from '../src/render.js';
+let anchorRow = '', anchorTbl = '<table><tr><th>head</th><th>w</th><th>eyes</th><th>eyeY</th><th>mouthY</th><th>chin</th></tr>';
+for (let h = 0; h < HEADS.length; h++) {
+  const a = anchorsOf(h);
+  anchorRow += `<div><div class="c120">${renderPlayerWithHead({ ...idOf(7), kit: TEAMS[0] }, h)}</div><div class="mono">${HEADS[h].name}</div></div>`;
+  anchorTbl += `<tr><td>${HEADS[h].name}</td><td>${a.headW}</td><td>${a.leftEyeX}/${a.rightEyeX}</td><td>${a.eyeY}</td><td>${a.mouthY}</td><td>${a.chinY}</td></tr>`;
+}
+anchorTbl += '</table>';
+let anchor48 = '';
+for (let h = 0; h < HEADS.length; h++) anchor48 += `<div class="c48">${renderPlayerWithHead({ ...idOf(7), kit: TEAMS[0] }, h)}</div>`;
+writeFileSync(new URL('../out/anchors.html', import.meta.url), page('FOBAL v3 — anchors', `
+<h1>Anchor proof — one identity, six skulls</h1>
+<p class="sub">Same seed, same authored eyes/nose/mouth art. Only the head index changes, which moves every anchor: eye spacing, eye height, mouth height, chin. Face parts are stored ONCE in local space and translated — per-head facial architecture at zero atlas cost.</p>
+${anchorTbl}
+<h2>at 120px</h2><div class="row">${anchorRow}</div>
+<h2>at 48px — production size</h2><div class="g g10">${anchor48}</div>`));
+
 // ---- diversity measurement (the sibling metric the reviews used)
 const sig = (i) => { const t = traitsAt(i); return `${t.bg}|${t.hair}|${t.hairColor}|${t.skin}|${t.headwear}`; };
 const seen = new Map();
@@ -128,4 +153,4 @@ for (let i = 0; i < 100; i++) seen.set(sig(i), (seen.get(sig(i)) ?? 0) + 1);
 const siblings = [...seen.values()].filter(v => v > 1).reduce((a, v) => a + v, 0);
 console.log(`palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`);
 console.log(`dominant-channel clusters in 100: ${seen.size} · players sharing a cluster: ${siblings} (${siblings}%)`);
-console.log('wrote out/gate.html, out/teams.html, out/transfer.html, out/strata.html');
+console.log('wrote out/gate.html, out/teams.html, out/transfer.html, out/strata.html, out/anchors.html');

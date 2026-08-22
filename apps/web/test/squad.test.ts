@@ -76,6 +76,12 @@ describe('on-chain avatar port', () => {
     expect((svg.match(/<rect/g) || []).length).toBeGreaterThan(20);
     expect(svg).not.toContain('NaN');
     expect(svg).not.toContain('undefined');
+    // the app's kits are CSS colours; every fill that reaches the SVG must
+    // still be a single well-formed hex. `fill="##22c55e"` shipped for months
+    // because nothing asserted the shape of a colour.
+    for (const m of svg.matchAll(/fill="([^"]*)"/g)) {
+      expect(m[1]).toMatch(/^#[0-9a-f]{6}$/);
+    }
     expect(avatarSvgDressed(id, kit)).toBe(svg);
   });
 

@@ -1,184 +1,268 @@
-// FOBAL art v2 — the authored part atlas, 32x32 bust.
+// FOBAL art — the authored part atlas, 32x32 bust.
 //
-// Every part is DATA: a list of [x, y, w, h, paletteSlot] rects. The helpers
-// below are authoring convenience only — what ships is the emitted arrays,
-// which tools/gen-art.mjs serialises into SSTORE2 blobs and the Solidity
-// composer replays verbatim. Nothing here is computed at render time beyond
-// substituting a palette slot for a hex value, so the TS reference renderer
-// and the Solidity renderer can be asserted byte-identical.
+// Every part is DATA: [x, y, w, h, paletteSlot] rects. What changed from the
+// first version is WHERE those coordinates live:
 //
-// PALETTE SLOTS (the "sentinels"):
-//   0 ink   1 skin   2 skinShade   3 skinLight   4 hair   5 hairDark
-//   6 eyeWhite   7 iris   8 accent   9 kitPrimary  10 kitSecondary  11 kitAccent
+//   HEADS, NECKS, BUILDS, COLLARS  absolute — they define the frame
+//   everything else                LOCAL, translated onto a per-head anchor
+//
+// So choosing a head no longer just changes an outline: it moves the eyes,
+// the brow line, the nose, the mouth, the ears and the beard with it. That
+// costs ZERO extra atlas bytes, because each part is still stored once.
+//
+// PALETTE SLOTS:
+//   0 ink  1 skin  2 skinShade  3 skinLight  4 hair  5 hairDark
+//   6 eyeWhite  7 iris  8 accent  9 kitPrimary  10 kitSecondary  11 kitAccent
+import { HEAD_SPECS, anchorsOf, EYE_W, EAR_W, CX, HEAD_TOP } from './anchors.js';
+
 export const SLOT = { INK: 0, SKIN: 1, SHADE: 2, LIGHT: 3, HAIR: 4, HAIRD: 5,
   WHITE: 6, IRIS: 7, ACCENT: 8, KIT1: 9, KIT2: 10, KIT3: 11 };
-
-// -------------------------------------------------------------- geometry
-// One canonical face box. Everything anchors to it, which is what keeps
-// features from colliding across head widths.
 export const CANVAS = 32;
-export const FACE = { cx: 16, top: 4, bottom: 21, browY: 11, eyeY: 12, noseY: 15, mouthY: 18 };
+export { anchorsOf, HEAD_SPECS, EYE_W, EAR_W };
 
-const rect = (x, y, w, h, pal) => [x, y, w, h, pal];
-
-/** HEADS — 6 silhouettes from width x jaw. The art critic's reallocation:
- *  head shape is the worst variety-per-byte in the system, so it gets a
- *  small, cheap, purely-geometric family and the budget goes to hair. */
-const headShape = (w, taper) => {
-  const x = FACE.cx - (w >> 1), h = FACE.bottom - FACE.top;
-  const out = [];
-  out.push(rect(x - 1, FACE.top - 1, w + 2, h - 3, SLOT.INK));       // skull outline
-  out.push(rect(x, FACE.top, w, h - 4, SLOT.SKIN));                  // skull
-  for (let i = 0; i < 4; i++) {                                       // jaw rows
-    const inset = Math.round((i + 1) * taper);
-    out.push(rect(x + inset - 1, FACE.top + h - 4 + i, w - inset * 2 + 2, 1, SLOT.INK));
-    if (i < 3) out.push(rect(x + inset, FACE.top + h - 4 + i, w - inset * 2, 1, SLOT.SKIN));
-  }
-  out.push(rect(x, FACE.top, w, 1, SLOT.LIGHT));                      // forehead light
-  out.push(rect(x + w - 2, FACE.top + 1, 2, h - 6, SLOT.SHADE));      // right plane
-  out.push(rect(x - 2, FACE.top + 7, 2, 4, SLOT.INK));                // ears
-  out.push(rect(x + w, FACE.top + 7, 2, 4, SLOT.INK));
-  out.push(rect(x - 2, FACE.top + 8, 1, 2, SLOT.SKIN));
-  out.push(rect(x + w + 1, FACE.top + 8, 1, 2, SLOT.SHADE));
-  return { rects: out, w, x };
+/** Which anchor a class attaches to, and whether it is drawn on both sides.
+ *  Generated into the Solidity constants, so the composer needs no per-part
+ *  metadata in the blob itself. */
+export const ANCHOR = {
+  HEADS:    { at: 'absolute', mirror: false },
+  SHADING:  { at: 'absolute', mirror: false },
+  EARS:     { at: 'ears',     mirror: true  },
+  EYES:     { at: 'eyes',     mirror: true  },
+  BROWS:    { at: 'brows',    mirror: true  },
+  NOSES:    { at: 'nose',     mirror: false },
+  MOUTHS:   { at: 'mouth',    mirror: false },
+  BEARDS:   { at: 'chin',     mirror: false },
+  HAIR:     { at: 'top',      mirror: false, clamp: 2 },
+  HEADWEAR: { at: 'top',      mirror: false, clamp: 2 },
+  NECKS:    { at: 'absolute', mirror: false },
+  BUILDS:   { at: 'absolute', mirror: false },
+  COLLARS:  { at: 'absolute', mirror: false },
 };
-export const HEADS = [
-  { name: 'Narrow',  ...headShape(12, 1.0) },
-  { name: 'Oval',    ...headShape(14, 1.0) },
-  { name: 'Round',   ...headShape(14, 0.4) },
-  { name: 'Square',  ...headShape(16, 0.3) },
-  { name: 'Broad',   ...headShape(16, 1.0) },
-  { name: 'Angular', ...headShape(14, 1.6) },
-];
 
-// ------------------------------------------------------------------ EYES
-const eyePair = (build) => {
+const r = (x, y, w, h, pal) => [x, y, w, h, pal];
+
+// ============================================================ HEADS
+// Absolute. Six structurally different skulls: width AND chin height AND jaw
+// taper all move, so the silhouette differs before any feature is drawn.
+const JAW_ROWS = 4;
+/** How far row `i` of the jaw is pulled in on each side. The shading mask
+ *  MUST use this too: computing the under-chin shadow from its own
+ *  approximation put two skin-shade pixels outside the Tapered silhouette. */
+const jawInsetAt = (spec, i) => Math.round((i + 1) * spec.jaw);
+const jawWidthAt = (spec, w, i) => Math.max(2, w - jawInsetAt(spec, i) * 2);
+
+const buildHead = (spec) => {
+  const a = anchorsOf(HEAD_SPECS.indexOf(spec));
   const out = [];
-  for (const side of [-1, 1]) {
-    const x = side < 0 ? FACE.cx - 6 : FACE.cx + 2;
-    out.push(...build(x, FACE.eyeY, side));
+  const x = a.headX, w = a.headW, top = HEAD_TOP, chin = a.chinY;
+  const jawRows = JAW_ROWS;
+  const flatH = chin - top - jawRows;
+  out.push(r(x - 1, top - 1, w + 2, flatH + 1, SLOT.INK));      // skull outline
+  out.push(r(x, top, w, flatH, SLOT.SKIN));
+  for (let i = 0; i < jawRows; i++) {                            // tapering jaw
+    const inset = jawInsetAt(spec, i);
+    const jw = jawWidthAt(spec, w, i);
+    out.push(r(x + inset - 1, top + flatH + i, jw + 2, 1, SLOT.INK));
+    if (i < jawRows - 1) out.push(r(x + inset, top + flatH + i, jw, 1, SLOT.SKIN));
   }
   return out;
 };
+export const HEADS = HEAD_SPECS.map(s => ({ name: s.name, rects: buildHead(s) }));
+
+// ============================================================ SHADING
+// One mask per head, indexed BY HEAD — not chosen independently. Three tonal
+// planes (lit forehead, shaded side, jaw/under-chin) turn a flat silhouette
+// into something sculpted, which is the cheapest quality per byte available
+// at this resolution.
+const buildShading = (spec) => {
+  const a = anchorsOf(HEAD_SPECS.indexOf(spec));
+  const x = a.headX, w = a.headW, top = HEAD_TOP, chin = a.chinY;
+  const out = [];
+  out.push(r(x + 1, top, w - 2, 1, SLOT.LIGHT));                 // forehead plane
+  out.push(r(x + w - 2, top + 1, 2, chin - top - 5, SLOT.SHADE)); // side plane
+  out.push(r(x, top + 1, 1, 3, SLOT.SHADE));                     // left temple
+  // Cheek hollows follow the jaw taper. At 2x3 they read as tear tracks at
+  // 48px; 2x2, tucked inside the taper, reads as bone.
+  const cheekY = a.eyeY + 3, cheekInset = Math.round(spec.jaw) + 1;
+  out.push(r(x + cheekInset, cheekY, 2, 2, SLOT.SHADE));
+  out.push(r(x + w - cheekInset - 2, cheekY, 2, 2, SLOT.SHADE));
+  // The under-chin shadow belongs on the last SKIN row. Painting it on
+  // chin-1 erased the ink chin outline, and sizing it from its own guess at
+  // the taper pushed it OUTSIDE the silhouette on the sharpest jaw.
+  const lastSkin = JAW_ROWS - 2;
+  const inset = jawInsetAt(spec, lastSkin);
+  const jw = jawWidthAt(spec, w, lastSkin);
+  if (jw > 2) out.push(r(x + inset + 1, chin - 2, jw - 2, 1, SLOT.SHADE));
+  return out;
+};
+export const SHADING = HEAD_SPECS.map(s => ({ name: s.name + ' shading', rects: buildShading(s) }));
+
+// ============================================================ EARS  (local, mirrored)
+// origin = (earLeftX, earY) in a 4-wide mirror box: local x=3 lands on the
+// skull's first skin column, so the art at x<3 is what PROTRUDES — 1px, 2px
+// and 3px respectively. Bodied in SKIN with an ink rim; an all-ink ear reads
+// as a black blob at 48px, which is what the first pass shipped.
+export const EARS = [
+  { name: 'Small',     rects: [r(2, 1, 2, 2, SLOT.SKIN), r(1, 1, 1, 2, SLOT.INK), r(2, 2, 1, 1, SLOT.SHADE)] },
+  { name: 'Normal',    rects: [r(2, 0, 2, 4, SLOT.SKIN), r(1, 1, 1, 3, SLOT.INK), r(2, 0, 2, 1, SLOT.INK), r(2, 1, 1, 2, SLOT.SHADE)] },
+  { name: 'Protruding',rects: [r(1, 0, 3, 5, SLOT.SKIN), r(0, 1, 1, 3, SLOT.INK), r(1, 0, 3, 1, SLOT.INK),
+                               r(1, 4, 3, 1, SLOT.INK), r(1, 1, 1, 3, SLOT.SHADE)] },
+];
+
+// ============================================================ EYES  (local, mirrored)
+// origin = eye top-left. SIX structures that differ in shape, not in colour:
+// ten near-identical marks were decorative, these change the face.
 export const EYES = [
-  { name: 'Neutral',    rects: eyePair((x, y) => [rect(x, y, 4, 2, SLOT.WHITE), rect(x + 1, y, 2, 2, SLOT.IRIS)]) },
-  { name: 'Narrow',     rects: eyePair((x, y) => [rect(x, y + 1, 4, 1, SLOT.WHITE), rect(x + 1, y + 1, 2, 1, SLOT.IRIS)]) },
-  { name: 'Wide',       rects: eyePair((x, y) => [rect(x, y - 1, 4, 3, SLOT.WHITE), rect(x + 1, y, 2, 2, SLOT.IRIS)]) },
-  { name: 'Sleepy',     rects: eyePair((x, y) => [rect(x, y + 1, 4, 1, SLOT.INK)]) },
-  { name: 'Focused',    rects: eyePair((x, y, s) => [rect(x, y, 4, 2, SLOT.WHITE), rect(s < 0 ? x + 2 : x, y, 2, 2, SLOT.IRIS)]) },
-  { name: 'Smiling',    rects: eyePair((x, y) => [rect(x, y + 1, 4, 1, SLOT.INK), rect(x, y, 4, 1, SLOT.SHADE)]) },
-  { name: 'Intense',    rects: eyePair((x, y) => [rect(x, y, 4, 2, SLOT.WHITE), rect(x + 1, y, 2, 2, SLOT.IRIS), rect(x, y - 1, 4, 1, SLOT.INK)]) },
-  { name: 'Deep-set',   rects: eyePair((x, y) => [rect(x, y, 4, 2, SLOT.SHADE), rect(x + 1, y, 2, 2, SLOT.IRIS)]) },
-  { name: 'Close-set',  rects: [rect(FACE.cx - 5, FACE.eyeY, 4, 2, SLOT.WHITE), rect(FACE.cx - 4, FACE.eyeY, 2, 2, SLOT.IRIS),
-    rect(FACE.cx + 1, FACE.eyeY, 4, 2, SLOT.WHITE), rect(FACE.cx + 2, FACE.eyeY, 2, 2, SLOT.IRIS)] },
-  { name: 'Wide-set',   rects: [rect(FACE.cx - 7, FACE.eyeY, 4, 2, SLOT.WHITE), rect(FACE.cx - 6, FACE.eyeY, 2, 2, SLOT.IRIS),
-    rect(FACE.cx + 3, FACE.eyeY, 4, 2, SLOT.WHITE), rect(FACE.cx + 4, FACE.eyeY, 2, 2, SLOT.IRIS)] },
+  { name: 'Neutral',  rects: [r(0, 0, 4, 2, SLOT.WHITE), r(1, 0, 2, 2, SLOT.IRIS), r(0, -1, 4, 1, SLOT.INK)] },
+  { name: 'Deep-set', rects: [r(0, 0, 4, 2, SLOT.WHITE), r(1, 0, 2, 2, SLOT.IRIS), r(0, -1, 4, 1, SLOT.SHADE), r(0, -2, 4, 1, SLOT.SHADE)] },
+  { name: 'Wide',     rects: [r(0, -1, 4, 3, SLOT.WHITE), r(1, 0, 2, 2, SLOT.IRIS), r(0, -2, 4, 1, SLOT.INK)] },
+  { name: 'Narrow',   rects: [r(0, 0, 4, 1, SLOT.WHITE), r(1, 0, 2, 1, SLOT.IRIS), r(0, -1, 4, 1, SLOT.INK)] },
+  { name: 'Heavy Lid',rects: [r(0, 1, 4, 1, SLOT.WHITE), r(1, 1, 2, 1, SLOT.IRIS), r(0, -1, 4, 2, SLOT.INK)] },
+  { name: 'Round',    rects: [r(0, -1, 4, 3, SLOT.WHITE), r(1, -1, 2, 3, SLOT.IRIS), r(0, -2, 4, 1, SLOT.INK)] },
 ];
 
-// ---------------------------------------------------------------- BROWS
-const browPair = (build) => {
-  const out = [];
-  for (const side of [-1, 1]) {
-    const x = side < 0 ? FACE.cx - 6 : FACE.cx + 2;
-    out.push(...build(x, FACE.browY, side));
-  }
-  return out;
-};
+// ============================================================ BROWS (local, mirrored)
+// origin = (eyeX, browY). Six, each a different expression lever.
+// x=0 is the OUTER end of each brow and x=3 the inner (nose) end; the right
+// brow is the mirror, so an angled pair actually converges.
 export const BROWS = [
-  { name: 'Straight',   rects: browPair((x, y) => [rect(x, y, 4, 1, SLOT.HAIR)]) },
-  { name: 'Thick',      rects: browPair((x, y) => [rect(x, y - 1, 4, 2, SLOT.HAIR)]) },
-  { name: 'Arched',     rects: browPair((x, y, s) => [rect(s < 0 ? x : x + 2, y - 1, 2, 1, SLOT.HAIR), rect(s < 0 ? x + 2 : x, y, 2, 1, SLOT.HAIR)]) },
-  { name: 'Angry',      rects: browPair((x, y, s) => [rect(s < 0 ? x + 2 : x, y - 1, 2, 1, SLOT.HAIR), rect(s < 0 ? x : x + 2, y, 2, 1, SLOT.HAIR)]) },
-  { name: 'Raised',     rects: browPair((x, y) => [rect(x, y - 2, 4, 1, SLOT.HAIR)]) },
-  { name: 'Thin',       rects: browPair((x, y) => [rect(x + 1, y, 3, 1, SLOT.HAIR)]) },
-  { name: 'Furrowed',   rects: browPair((x, y, s) => [rect(x, y, 4, 1, SLOT.HAIR), rect(s < 0 ? x + 3 : x, y + 1, 1, 1, SLOT.HAIR)]) },
-  { name: 'Slit',       rects: [...browPair((x, y) => [rect(x, y - 1, 4, 2, SLOT.HAIR)]), rect(FACE.cx - 5, FACE.browY - 1, 1, 2, SLOT.SKIN)] },
+  { name: 'Flat',       rects: [r(0, 0, 4, 1, SLOT.HAIR)] },
+  { name: 'Heavy',      rects: [r(0, -1, 4, 2, SLOT.HAIR)] },
+  { name: 'Raised',     rects: [r(0, -1, 4, 1, SLOT.HAIR)] },
+  { name: 'Angry',      rects: [r(0, 0, 2, 1, SLOT.HAIR), r(2, 1, 2, 1, SLOT.HAIR)] },
+  { name: 'Arched',     rects: [r(0, 1, 1, 1, SLOT.HAIR), r(1, 0, 3, 1, SLOT.HAIR)] },
+  { name: 'Thick Low',  rects: [r(0, 0, 4, 1, SLOT.HAIR), r(1, 1, 3, 1, SLOT.HAIR)] },
 ];
 
-// ---------------------------------------------------------------- NOSES
+// ============================================================ NOSES (local)
+// origin = (CX, noseY), x relative to centre. Structures, not marks: a bridge,
+// a side shadow and a tip, so the nose reads as geometry rather than a speck.
 export const NOSES = [
-  { name: 'Small',  rects: [rect(FACE.cx - 1, FACE.noseY, 2, 2, SLOT.SHADE)] },
-  { name: 'Broad',  rects: [rect(FACE.cx - 2, FACE.noseY + 1, 4, 1, SLOT.SHADE), rect(FACE.cx - 1, FACE.noseY, 2, 1, SLOT.SHADE)] },
-  { name: 'Long',   rects: [rect(FACE.cx - 1, FACE.noseY - 1, 2, 3, SLOT.SHADE)] },
+  { name: 'Straight',  rects: [r(-1, 0, 1, 3, SLOT.SHADE), r(-1, 3, 2, 1, SLOT.SHADE)] },
+  { name: 'Short',     rects: [r(-1, 1, 1, 2, SLOT.SHADE), r(-1, 3, 2, 1, SLOT.SHADE)] },
+  { name: 'Long',      rects: [r(-1, -1, 1, 5, SLOT.SHADE), r(-1, 4, 2, 1, SLOT.SHADE)] },
+  { name: 'Broad Tip', rects: [r(-1, 0, 1, 3, SLOT.SHADE), r(-2, 3, 4, 1, SLOT.SHADE), r(-1, 2, 1, 1, SLOT.LIGHT)] },
+  { name: 'Narrow',    rects: [r(0, 0, 1, 3, SLOT.SHADE), r(0, 3, 1, 1, SLOT.SHADE)] },
+  { name: 'Hooked',    rects: [r(-1, 0, 1, 2, SLOT.SHADE), r(-1, 2, 2, 2, SLOT.SHADE)] },
+  { name: 'Flat',      rects: [r(-2, 2, 4, 1, SLOT.SHADE), r(-1, 1, 1, 1, SLOT.SHADE)] },
 ];
 
-// --------------------------------------------------------------- MOUTHS
-const M = FACE.mouthY;
+// ============================================================ MOUTHS (local)
+// origin = (CX, mouthY), x relative to centre. 3-6px wide; the widest are
+// biased toward wide heads by the correlation pass.
 export const MOUTHS = [
-  { name: 'Neutral',      rects: [rect(FACE.cx - 2, M, 4, 1, SLOT.INK)] },
-  { name: 'Slight Smile', rects: [rect(FACE.cx - 2, M, 4, 1, SLOT.INK), rect(FACE.cx - 3, M - 1, 1, 1, SLOT.INK), rect(FACE.cx + 2, M - 1, 1, 1, SLOT.INK)] },
-  { name: 'Broad Smile',  rects: [rect(FACE.cx - 3, M, 6, 2, SLOT.INK), rect(FACE.cx - 2, M, 4, 1, SLOT.WHITE)] },
-  { name: 'Smirk',        rects: [rect(FACE.cx - 2, M, 4, 1, SLOT.INK), rect(FACE.cx + 2, M - 1, 1, 1, SLOT.INK)] },
-  { name: 'Open',         rects: [rect(FACE.cx - 2, M - 1, 4, 3, SLOT.INK), rect(FACE.cx - 1, M, 2, 1, SLOT.WHITE)] },
-  { name: 'Stern',        rects: [rect(FACE.cx - 3, M, 6, 1, SLOT.INK)] },
-  { name: 'Gritted',      rects: [rect(FACE.cx - 3, M, 6, 2, SLOT.INK), rect(FACE.cx - 2, M, 4, 1, SLOT.WHITE), rect(FACE.cx, M, 1, 1, SLOT.INK)] },
-  { name: 'Tired',        rects: [rect(FACE.cx - 2, M + 1, 4, 1, SLOT.INK), rect(FACE.cx - 3, M, 1, 1, SLOT.INK)] },
-  { name: 'Shouting',     rects: [rect(FACE.cx - 2, M - 1, 5, 4, SLOT.INK), rect(FACE.cx - 1, M, 3, 2, SLOT.WHITE)] },
-  { name: 'Pursed',       rects: [rect(FACE.cx - 1, M, 3, 1, SLOT.INK)] },
+  { name: 'Neutral',   w: 4, rects: [r(-2, 0, 4, 1, SLOT.INK)] },
+  { name: 'Stern',     w: 6, rects: [r(-3, 0, 6, 1, SLOT.INK)] },
+  { name: 'Slight',    w: 5, rects: [r(-2, 0, 4, 1, SLOT.INK), r(-3, -1, 1, 1, SLOT.INK), r(2, -1, 1, 1, SLOT.INK)] },
+  { name: 'Wide Smile',w: 6, rects: [r(-3, 0, 6, 1, SLOT.INK), r(-2, 1, 4, 1, SLOT.INK), r(-2, 0, 4, 1, SLOT.WHITE)] },
+  { name: 'Open',      w: 4, rects: [r(-2, -1, 4, 3, SLOT.INK), r(-1, 0, 2, 1, SLOT.WHITE)] },
+  { name: 'Downturned',w: 5, rects: [r(-2, 0, 4, 1, SLOT.INK), r(-3, 1, 1, 1, SLOT.INK), r(2, 1, 1, 1, SLOT.INK)] },
+  { name: 'Compressed',w: 3, rects: [r(-1, 0, 3, 1, SLOT.INK), r(-1, -1, 3, 1, SLOT.SHADE)] },
 ];
 
-// ----------------------------------------------------------- FACIAL HAIR
-const jawTop = FACE.bottom - 6;
+// ============================================================ BEARDS (local)
+// origin = (CX, chinY). The big ones EXTEND PAST the chin, changing the
+// lower-face silhouette instead of just darkening pixels inside it.
+// The mouth is ALWAYS at local y = -3 (mouthY is derived as chinY - 3), so
+// every beard here leaves row -3 open across the centre and builds volume
+// around it: cheek panels, an upper lip, an under-lip block, and a chin mass
+// that extends past the jaw on the big ones.
 export const BEARDS = [
-  { name: 'None', rects: [] },
-  // no SVG opacity anywhere: a translucent group cannot be encoded as
-  // blob data, so "lighter" is expressed as a palette slot instead
-  { name: 'Stubble',    rects: [rect(FACE.cx - 5, jawTop + 2, 10, 4, SLOT.HAIRD)] },
-  { name: 'Moustache',  rects: [rect(FACE.cx - 3, M - 2, 6, 1, SLOT.HAIR)] },
-  { name: 'Goatee',     rects: [rect(FACE.cx - 2, M + 2, 4, 2, SLOT.HAIR)] },
-  { name: 'Chinstrap',  rects: [rect(FACE.cx - 7, jawTop, 2, 6, SLOT.HAIR), rect(FACE.cx + 5, jawTop, 2, 6, SLOT.HAIR), rect(FACE.cx - 5, FACE.bottom - 2, 10, 2, SLOT.HAIR)] },
-  { name: 'Short Beard',rects: [rect(FACE.cx - 6, jawTop + 1, 12, 5, SLOT.HAIR), rect(FACE.cx - 3, M - 2, 6, 1, SLOT.HAIR)] },
-  { name: 'Full Beard', rects: [rect(FACE.cx - 7, jawTop - 1, 14, 8, SLOT.HAIR), rect(FACE.cx - 3, M - 2, 6, 1, SLOT.HAIR), rect(FACE.cx - 2, M, 4, 1, SLOT.INK)] },
-  { name: 'Long Beard', rects: [rect(FACE.cx - 7, jawTop - 1, 14, 9, SLOT.HAIR), rect(FACE.cx - 4, FACE.bottom + 2, 8, 3, SLOT.HAIR), rect(FACE.cx - 3, M - 2, 6, 1, SLOT.HAIR)] },
+  { name: 'None',       rects: [] },
+  { name: 'Stubble',    rects: [r(-6, -5, 2, 4, SLOT.HAIRD), r(4, -5, 2, 4, SLOT.HAIRD), r(-5, -2, 10, 2, SLOT.HAIRD)] },
+  { name: 'Moustache',  rects: [r(-3, -4, 6, 1, SLOT.HAIR), r(-4, -4, 1, 2, SLOT.HAIR), r(3, -4, 1, 2, SLOT.HAIR)] },
+  { name: 'Goatee',     rects: [r(-3, -4, 6, 1, SLOT.HAIR), r(-2, -2, 4, 3, SLOT.HAIR)] },
+  { name: 'Chinstrap',  rects: [r(-7, -6, 2, 7, SLOT.HAIR), r(5, -6, 2, 7, SLOT.HAIR), r(-5, 0, 10, 1, SLOT.HAIR)] },
+  { name: 'Short Beard',rects: [r(-3, -4, 6, 1, SLOT.HAIR), r(-7, -5, 2, 5, SLOT.HAIR), r(5, -5, 2, 5, SLOT.HAIR),
+                                r(-5, -2, 10, 2, SLOT.HAIR), r(-4, 0, 8, 1, SLOT.HAIR)] },
+  { name: 'Full Beard', rects: [r(-3, -4, 6, 1, SLOT.HAIR), r(-7, -6, 2, 6, SLOT.HAIR), r(5, -6, 2, 6, SLOT.HAIR),
+                                r(-6, -2, 12, 2, SLOT.HAIR), r(-5, 0, 10, 1, SLOT.HAIR),
+                                r(-4, 1, 8, 1, SLOT.HAIR), r(-3, 2, 6, 1, SLOT.HAIRD)] },
+  { name: 'Long Beard', rects: [r(-3, -4, 6, 1, SLOT.HAIR), r(-7, -6, 2, 6, SLOT.HAIR), r(5, -6, 2, 6, SLOT.HAIR),
+                                r(-6, -2, 12, 2, SLOT.HAIR), r(-5, 0, 10, 2, SLOT.HAIR),
+                                r(-4, 2, 8, 2, SLOT.HAIR), r(-3, 4, 6, 1, SLOT.HAIR), r(-2, 5, 4, 1, SLOT.HAIRD)] },
 ];
 
-// ------------------------------------------------------------------ HAIR
-// The single strongest identity channel, so it gets the largest family and
-// the widest silhouette range — including styles that break the head outline.
-const T = FACE.top;
-const cap = (h, extra = []) => [rect(FACE.cx - 8, T - 1, 16, h, SLOT.HAIR), ...extra];
+// ============================================================ HAIR (local)
+// origin = (CX, HEAD_TOP), x relative to centre. Authored against the WIDEST
+// skull so a narrow head gets overhang (reads as volume) rather than a bald
+// patch at the temples.
+const cap = (h, extra = []) => [r(-9, -1, 18, h, SLOT.HAIR), ...extra];
 export const HAIR = [
   { name: 'Bald',        rects: [] },
-  { name: 'Shaved',      rects: [rect(FACE.cx - 7, T - 1, 14, 3, SLOT.HAIRD)] },
   { name: 'Buzz',        rects: cap(3) },
-  { name: 'Crop',        rects: cap(4) },
-  { name: 'Short',       rects: [...cap(4), rect(FACE.cx - 8, T + 3, 2, 3, SLOT.HAIR), rect(FACE.cx + 6, T + 3, 2, 3, SLOT.HAIR)] },
-  { name: 'Side Part',   rects: [...cap(4), rect(FACE.cx - 8, T - 1, 7, 6, SLOT.HAIR)] },
-  { name: 'Swept',       rects: [...cap(4), rect(FACE.cx + 3, T - 3, 6, 4, SLOT.HAIR)] },
-  { name: 'Quiff',       rects: [...cap(3), rect(FACE.cx - 4, T - 5, 8, 4, SLOT.HAIR)] },
-  { name: 'Messy',       rects: [...cap(4), rect(FACE.cx - 6, T - 4, 3, 3, SLOT.HAIR), rect(FACE.cx, T - 5, 4, 4, SLOT.HAIR), rect(FACE.cx + 5, T - 3, 3, 3, SLOT.HAIR)] },
-  { name: 'Curly',       rects: [...cap(5), rect(FACE.cx - 9, T + 1, 3, 5, SLOT.HAIR), rect(FACE.cx + 6, T + 1, 3, 5, SLOT.HAIR), rect(FACE.cx - 5, T - 3, 10, 3, SLOT.HAIR)] },
-  { name: 'Afro',        rects: [rect(FACE.cx - 10, T - 5, 20, 10, SLOT.HAIR), rect(FACE.cx - 11, T - 1, 3, 7, SLOT.HAIR), rect(FACE.cx + 8, T - 1, 3, 7, SLOT.HAIR)] },
-  { name: 'High Top',    rects: [...cap(3), rect(FACE.cx - 6, T - 8, 12, 7, SLOT.HAIR)] },
-  { name: 'Flat Top',    rects: [...cap(3), rect(FACE.cx - 7, T - 6, 14, 5, SLOT.HAIR)] },
-  { name: 'Mohawk',      rects: [rect(FACE.cx - 2, T - 7, 5, 9, SLOT.HAIR), rect(FACE.cx - 7, T - 1, 14, 2, SLOT.HAIRD)] },
-  { name: 'Dreads',      rects: [...cap(4), ...[0, 1, 2, 3, 4].map(i => rect(FACE.cx - 8 + i * 4, T + 3, 2, 8 + (i % 3) * 3, SLOT.HAIR))] },
-  { name: 'Braids',      rects: [...cap(4), ...[0, 1, 2, 3].map(i => rect(FACE.cx - 7 + i * 4, T + 3, 2, 5, SLOT.HAIRD))] },
-  { name: 'Cornrows',    rects: [...[0, 1, 2, 3, 4].map(i => rect(FACE.cx - 8 + i * 3, T - 1, 2, 6, SLOT.HAIR))] },
-  { name: 'Long',        rects: [...cap(4), rect(FACE.cx - 9, T + 3, 3, 12, SLOT.HAIR), rect(FACE.cx + 6, T + 3, 3, 12, SLOT.HAIR)] },
-  { name: 'Ponytail',    rects: [...cap(4), rect(FACE.cx + 7, T + 3, 3, 7, SLOT.HAIR), rect(FACE.cx + 8, T + 8, 2, 4, SLOT.HAIR)] },
-  { name: 'Topknot',     rects: [...cap(4), rect(FACE.cx - 2, T - 5, 5, 4, SLOT.HAIR)] },
-  { name: 'Undercut',    rects: [rect(FACE.cx - 8, T - 1, 16, 4, SLOT.HAIR), rect(FACE.cx - 8, T + 3, 16, 2, SLOT.HAIRD)] },
-  { name: 'Receding',    rects: [rect(FACE.cx - 6, T - 1, 12, 3, SLOT.HAIR), rect(FACE.cx - 8, T + 1, 3, 4, SLOT.HAIR), rect(FACE.cx + 5, T + 1, 3, 4, SLOT.HAIR)] },
-  { name: 'Widow Peak',  rects: [...cap(3), rect(FACE.cx - 1, T + 2, 2, 2, SLOT.HAIR)] },
-  { name: 'Wavy',        rects: [...cap(4), rect(FACE.cx - 8, T - 3, 5, 3, SLOT.HAIR), rect(FACE.cx + 1, T - 3, 5, 3, SLOT.HAIR)] },
+  { name: 'Short',       rects: [...cap(4), r(-9, 3, 2, 3, SLOT.HAIR), r(7, 3, 2, 3, SLOT.HAIR)] },
+  { name: 'Side Part',   rects: [...cap(4), r(-9, -1, 7, 6, SLOT.HAIR), r(-2, 3, 1, 1, SLOT.HAIRD)] },
+  { name: 'Swept',       rects: [...cap(4), r(3, -3, 7, 4, SLOT.HAIR)] },
+  { name: 'Quiff',       rects: [...cap(3), r(-4, -5, 8, 4, SLOT.HAIR)] },
+  { name: 'Messy',       rects: [...cap(4), r(-7, -4, 3, 3, SLOT.HAIR), r(-1, -5, 4, 4, SLOT.HAIR), r(5, -3, 3, 3, SLOT.HAIR)] },
+  { name: 'Curly',       rects: [...cap(5), r(-10, 1, 3, 5, SLOT.HAIR), r(7, 1, 3, 5, SLOT.HAIR), r(-5, -3, 10, 3, SLOT.HAIR)] },
+  { name: 'Afro',        rects: [r(-11, -5, 22, 10, SLOT.HAIR), r(-12, -1, 3, 7, SLOT.HAIR), r(9, -1, 3, 7, SLOT.HAIR)] },
+  { name: 'High Top',    rects: [...cap(3), r(-6, -8, 12, 7, SLOT.HAIR)] },
+  { name: 'Flat Top',    rects: [...cap(3), r(-8, -6, 16, 5, SLOT.HAIR)] },
+  { name: 'Mohawk',      rects: [r(-2, -7, 5, 9, SLOT.HAIR), r(-8, -1, 16, 2, SLOT.HAIRD)] },
+  { name: 'Dreads',      rects: [...cap(4), ...[-10, -8, 6, 8].map((x, i) => r(x, 3, 2, 7 + (i % 2) * 4, SLOT.HAIR))] },
+  { name: 'Braids',      rects: [...cap(4), ...[-9, -6, 4, 7].map(x => r(x, 3, 2, 4, SLOT.HAIRD)), r(-9, 7, 2, 5, SLOT.HAIR), r(7, 7, 2, 5, SLOT.HAIR)] },
+  { name: 'Cornrows',    rects: [r(-9, -1, 18, 6, SLOT.HAIRD), ...[0, 1, 2, 3, 4, 5].map(i => r(-9 + i * 3, -1, 2, 6, SLOT.HAIR))] },
+  { name: 'Long',        rects: [...cap(4), r(-10, 3, 3, 13, SLOT.HAIR), r(7, 3, 3, 13, SLOT.HAIR)] },
+  { name: 'Ponytail',    rects: [...cap(4), r(8, 2, 3, 9, SLOT.HAIR), r(9, 9, 3, 5, SLOT.HAIR)] },
+  { name: 'Topknot',     rects: [...cap(4), r(-2, -5, 5, 4, SLOT.HAIR)] },
+  { name: 'Undercut',    rects: [r(-7, -4, 14, 7, SLOT.HAIR), r(-9, 3, 18, 2, SLOT.HAIRD)] },
+  { name: 'Receding',    rects: [r(-6, -1, 12, 3, SLOT.HAIR), r(-9, 1, 3, 4, SLOT.HAIR), r(6, 1, 3, 4, SLOT.HAIR)] },
+  { name: 'Wavy',        rects: [...cap(4), r(-9, -3, 6, 2, SLOT.HAIR), r(-4, -4, 7, 2, SLOT.HAIR), r(2, -3, 7, 2, SLOT.HAIR)] },
 ];
 
-// -------------------------------------------------------------- HEADWEAR
-// Silhouette-breaking, and deliberately a large family: the art critic's
-// measurement says headwear buys more perceived diversity per byte than any
-// facial feature.
+// ============================================================ HEADWEAR (local)
+// Culled to what says FOOTBALL. A bucket hat and a beanie made the collection
+// read as a generic avatar set; the player should be recognisable from head,
+// hair and build, with headwear as an occasional accent.
+// A slab across the forehead is a hat in no sport. Each of these carries the
+// ONE feature that names it: the keeper's peak, the scrum cap's ear flaps and
+// stitch line, the bandana's trailing knot.
 export const HEADWEAR = [
-  { name: 'None',        rects: [], tags: [] },
-  { name: 'Headband',    rects: [rect(FACE.cx - 8, T + 2, 16, 2, SLOT.ACCENT)], tags: ['band'] },
-  { name: 'Sweatband',   rects: [rect(FACE.cx - 8, T + 1, 16, 3, SLOT.ACCENT), rect(FACE.cx - 8, T + 2, 16, 1, SLOT.KIT1)], tags: ['band'] },
-  { name: 'Cap',         rects: [rect(FACE.cx - 8, T - 3, 16, 5, SLOT.KIT1), rect(FACE.cx - 9, T + 1, 18, 2, SLOT.KIT1), rect(FACE.cx - 9, T + 3, 18, 1, SLOT.INK)], tags: ['covers'] },
-  { name: 'Beanie',      rects: [rect(FACE.cx - 8, T - 4, 16, 7, SLOT.ACCENT), rect(FACE.cx - 8, T + 1, 16, 2, SLOT.KIT2)], tags: ['covers'] },
-  { name: 'Keeper Cap',  rects: [rect(FACE.cx - 8, T - 3, 16, 4, SLOT.KIT2), rect(FACE.cx - 10, T + 1, 20, 2, SLOT.KIT2)], tags: ['covers'] },
-  { name: 'Bucket Hat',  rects: [rect(FACE.cx - 7, T - 4, 14, 5, SLOT.ACCENT), rect(FACE.cx - 10, T + 1, 20, 2, SLOT.ACCENT)], tags: ['covers'] },
-  { name: 'Scrum Cap',   rects: [rect(FACE.cx - 8, T - 3, 16, 8, SLOT.ACCENT), rect(FACE.cx - 8, T + 5, 2, 4, SLOT.ACCENT), rect(FACE.cx + 6, T + 5, 2, 4, SLOT.ACCENT)], tags: ['covers'] },
-  { name: 'Visor',       rects: [rect(FACE.cx - 9, T + 1, 18, 2, SLOT.ACCENT), rect(FACE.cx - 9, T + 3, 18, 1, SLOT.INK)], tags: ['band'] },
-  { name: 'Bandana',     rects: [rect(FACE.cx - 8, T - 1, 16, 4, SLOT.ACCENT), rect(FACE.cx + 5, T + 2, 4, 5, SLOT.ACCENT)], tags: ['covers'] },
+  { name: 'None',       rects: [], tags: [] },
+  { name: 'Headband',   rects: [r(-9, 2, 18, 2, SLOT.ACCENT), r(-9, 3, 18, 1, SLOT.KIT3),
+                                r(6, 1, 3, 4, SLOT.ACCENT)], tags: ['band'] },
+  { name: 'Sweatband',  rects: [r(-9, 1, 18, 3, SLOT.ACCENT), r(-9, 2, 18, 1, SLOT.KIT1),
+                                r(-2, 1, 4, 1, SLOT.KIT1)], tags: ['band'] },
+  { name: 'Keeper Cap', rects: [r(-8, -3, 16, 4, SLOT.KIT2), r(-8, -3, 16, 1, SLOT.KIT3),
+                                r(-10, 1, 20, 1, SLOT.KIT2), r(-9, 2, 18, 1, SLOT.KIT2),
+                                r(-9, 3, 18, 1, SLOT.SHADE)], tags: ['covers'] },
+  { name: 'Scrum Cap',  rects: [r(-8, -3, 16, 7, SLOT.ACCENT), r(-8, 0, 16, 1, SLOT.KIT1),
+                                r(-10, 1, 2, 6, SLOT.ACCENT), r(8, 1, 2, 6, SLOT.ACCENT),
+                                r(-10, 6, 2, 1, SLOT.INK), r(8, 6, 2, 1, SLOT.INK)], tags: ['covers'] },
+  { name: 'Bandana',    rects: [r(-9, -1, 18, 4, SLOT.ACCENT), r(-9, 2, 18, 1, SLOT.KIT3),
+                                r(7, 2, 3, 3, SLOT.ACCENT), r(9, 4, 2, 3, SLOT.ACCENT)], tags: ['covers'] },
 ];
 
-export const CLASSES = { HEADS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HEADWEAR };
+// ============================================================ NECKS (absolute)
+// Necks start at 19, not 21. A head's last painted row is chinY - 1, and the
+// Round skull's chin is 20 — so a neck starting at 21 left row 20 as raw
+// background and the head floated detached from the body. Necks are drawn
+// BEFORE the head, so the extra rows are simply covered on the taller skulls.
+export const NECKS = [
+  { name: 'Narrow', rects: [r(14, 19, 4, 6, SLOT.SHADE), r(15, 20, 2, 5, SLOT.SKIN)] },
+  { name: 'Normal', rects: [r(13, 19, 6, 6, SLOT.SHADE), r(14, 20, 4, 5, SLOT.SKIN)] },
+  { name: 'Thick',  rects: [r(12, 19, 8, 6, SLOT.SHADE), r(13, 20, 6, 5, SLOT.SKIN)] },
+];
+
+// ============================================================ BUILDS (absolute)
+// Shoulder masks the kit fills. The silhouette differs before a single kit
+// colour is chosen, which is worth more than another ten hairstyles.
+export const BUILDS = [
+  { name: 'Slim',      rects: [r(6, 24, 20, 1, SLOT.INK), r(7, 25, 18, 7, SLOT.KIT1)] },
+  { name: 'Normal',    rects: [r(4, 24, 24, 1, SLOT.INK), r(5, 25, 22, 7, SLOT.KIT1)] },
+  { name: 'Broad',     rects: [r(2, 24, 28, 1, SLOT.INK), r(3, 25, 26, 7, SLOT.KIT1)] },
+  { name: 'Very Broad',rects: [r(1, 23, 30, 1, SLOT.INK), r(2, 24, 28, 8, SLOT.KIT1)] },
+];
+
+// ============================================================ COLLARS (absolute)
+// High leverage: they sit next to the face and separate neck from shirt.
+export const COLLARS = [
+  { name: 'Crew',      rects: [r(12, 24, 8, 2, SLOT.ACCENT), r(13, 24, 6, 1, SLOT.INK)] },
+  { name: 'V-Neck',    rects: [r(12, 24, 8, 1, SLOT.ACCENT), r(13, 25, 6, 1, SLOT.ACCENT), r(14, 26, 4, 1, SLOT.INK)] },
+  { name: 'Contrast V',rects: [r(11, 24, 10, 1, SLOT.KIT3), r(13, 25, 6, 2, SLOT.KIT3), r(14, 25, 4, 1, SLOT.INK)] },
+  { name: 'Polo',      rects: [r(11, 24, 10, 2, SLOT.KIT3), r(13, 24, 6, 1, SLOT.INK), r(11, 26, 2, 1, SLOT.KIT3), r(19, 26, 2, 1, SLOT.KIT3)] },
+];
+
+export const CLASSES = { HEADS, SHADING, EARS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HEADWEAR, NECKS, BUILDS, COLLARS };

@@ -1,3 +1,5 @@
+import { auditAll } from '../tools/silhouette-lib.mjs';
+import { assertConnected, detached } from '../tools/connectivity.mjs';
 // The parity harness. Three claims, each one a place the pipeline could
 // silently drift between the JS reference renderer and the chain:
 //   1. the blob codec is an exact inverse (encode -> decode -> same rects)
@@ -9,6 +11,7 @@ import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error — plain JS modules, deliberately unbuilt
 import { CLASSES } from '../spec/parts.js';
+import { HEAD_SPECS } from '../spec/anchors.js';
 // @ts-expect-error
 import { CUM, DENOM, RAW, toCumulative, pickFromCum, assertWeights } from '../spec/weights.js';
 // @ts-expect-error
@@ -16,7 +19,7 @@ import { encodeClass, decodePart, partCount, BIAS, BLOB_VERSION } from '../src/b
 // @ts-expect-error
 import { validatePalettes } from '../spec/palettes.js';
 // @ts-expect-error
-import { renderPlayer, traitsOf, seedOf, freeAgentKit } from '../src/render.js';
+import { renderPlayer, traitsOf, seedOf, freeAgentKit , assertKitFits, assertShadingInsideHead, freeAgentKit } from '../src/render.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 const KIT = { primary: '2f6fd0', secondary: 'f2f4f8', accent: 'f2f4f8', pattern: 2 };
@@ -170,14 +173,100 @@ describe('generated artefacts agree with the spec', () => {
     }
     expect(solSrc).toContain(`WEIGHT_DENOM = ${DENOM};`);
     expect(solSrc).toContain(`BIAS = ${BIAS};`);
-    // spot-check a full table round-trips into Solidity syntax
-    expect(solSrc).toContain(CUM.hair.map((v: number) => `uint16(${v})`).join(', '));
+    // EVERY table, in the packed form Solidity now reads: 2 bytes per entry,
+    // concatenated in CUM key order. A spot check of one class let the other
+    // fifteen drift.
+    const b4 = (n: number) => n.toString(16).padStart(4, '0');
+    const keys = Object.keys(CUM);
+    expect(solSrc).toContain(`CUM_DATA = hex"${keys.map((k) => (CUM as any)[k].map(b4).join('')).join('')}"`);
+    expect(solSrc).toContain(`CUM_LEN = hex"${keys.map((k) => (CUM as any)[k].length.toString(16).padStart(2, '0')).join('')}"`);
+    keys.forEach((k, i) => expect(solSrc).toContain(`CLS_${k.toUpperCase()} = ${i};`));
+
+    // the install list must name every class, in blob order — the omission
+    // that would otherwise ship five classes short
+    Object.keys(CLASSES).forEach((name, i) => expect(solSrc).toContain(`out[${i}] = bytes32("${name}");`));
+    expect(solSrc).toContain(`ART_CLASS_COUNT = ${Object.keys(CLASSES).length};`);
+  });
+
+  test('the anchor table is generated, and the derived anchors are not stored', () => {
+    const solSrc = sol();
+    const b2 = (n: number) => n.toString(16).padStart(2, '0');
+    // FOUR integers per head reach the chain; the other ten anchors are
+    // recomputed on both sides (item 20)
+    expect(solSrc).toContain(
+      `HEAD_GEOM = hex"${HEAD_SPECS.map((h: any) => b2(h.w) + b2(h.bottom) + b2(h.eyeY) + b2(h.eyeGap)).join('')}"`
+    );
+    expect(solSrc).not.toContain('MOUTH_Y');
+    expect(solSrc).not.toContain('BROW_Y');
+    // and every class declares how it attaches and whether it mirrors
+    expect(solSrc).toMatch(/CLASS_ATTACH = hex"[0-9a-f]+"/);
+    expect(solSrc).toMatch(/CLASS_MIRROR = hex"[0-9a-f]+"/);
   });
 
   test('the web module carries the same part data (no hand-port drift)', () => {
     const web = gen('parts.web.js');
     const afro = (CLASSES as any).HAIR.find((h: any) => h.name === 'Afro');
     expect(web).toContain(JSON.stringify(afro.rects));
+    // the anchor table travels with the part data, or the browser cannot place it
+    expect(web).toContain('export const ANCHOR =');
+    expect(web).toContain('export const HEAD_SPECS =');
     expect(web).toContain(`export const CANVAS = 32;`);
+  });
+});
+
+describe('image-level properties the byte-parity harness cannot see', () => {
+  // Parity compares JS to Solidity. A mistake made IDENTICALLY in both is
+  // invisible to it — which is exactly how four kit stripes at a fixed pitch
+  // shipped a detached 3x7 block of colour beside the Slim build's shoulder
+  // with every test green. These assert properties of the IMAGE instead.
+
+  test('every kit pattern paints inside its own torso, on every build', () => {
+    const r = assertKitFits();
+    expect(r.bad).toEqual([]);
+    expect(r.pass).toBe(true);
+  });
+
+  test('a player is one connected figure — no paint floats on the background', () => {
+    const r = assertConnected(120);
+    expect(r.bad.slice(0, 5)).toEqual([]);
+    expect(r.pass).toBe(true);
+  });
+
+  test('the detachment check is not vacuous', () => {
+    const body =
+      '<rect x="0" y="0" width="32" height="32" fill="#111111"/>' +
+      '<rect x="7" y="25" width="18" height="7" fill="#2f6fd0"/>';
+    expect(detached(body).orphan).toBe(0);
+    // the exact rect the old fourth stripe emitted on the Slim build
+    expect(detached(body + '<rect x="27" y="25" width="3" height="7" fill="#f2f4f8"/>').orphan).toBe(21);
+  });
+
+  test("a head's shading never paints outside that head", () => {
+    const r = assertShadingInsideHead();
+    expect(r.bad).toEqual([]);
+  });
+
+  test('silhouettes separate on EVERY head, not just the first', () => {
+    // auditing head 0 alone reported PASS while Scrum Cap and Keeper Cap
+    // rendered the identical mask on the Long head, ear flaps clipped away
+    const reports = auditAll();
+    expect(reports.length).toBe(3 * HEAD_SPECS.length);
+    expect(reports.flatMap((r) => r.collisions)).toEqual([]);
+  });
+
+  test('the fixtures cover every build x pattern pair, so parity carries the proof to the chain', () => {
+    const fx = JSON.parse(readFileSync(new URL('../gen/fixtures/render.json', import.meta.url), 'utf8'));
+    const seen = new Set<string>();
+    for (let i = 0; i < fx.dna.length; i++) {
+      const s0 = seedOf(fx.dna[i], BigInt(fx.appearance[i]));
+      const t = traitsOf(s0);
+      seen.add(`${t.build}/${fx.kitPattern[i]}`);
+      seen.add(`${t.build}/${freeAgentKit(s0).pattern}`);
+    }
+    const missing: string[] = [];
+    for (let b = 0; b < 4; b++) {
+      for (let p = 0; p < 7; p++) if (!seen.has(`${b}/${p}`)) missing.push(`${b}/${p}`);
+    }
+    expect(missing).toEqual([]);
   });
 });

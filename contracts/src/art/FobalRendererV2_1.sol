@@ -126,14 +126,19 @@ contract FobalRendererV2_1 is IFobalRenderer {
     {
         TE.Traits memory t = TE.traitsOf(TE.seedOf(dna, appearance));
         bytes3[12] memory pal = paletteFor(t, kit);
-        return string.concat(
+        // layer order is the reference renderer's, exactly: background,
+        // shoulders, the pattern painted into them, neck, collar, then the
+        // face on top
+        bytes memory torso = K.BUILD_TORSO;
+        string memory out = string.concat(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" shape-rendering="crispEdges" width="100%" height="100%">',
             _r(0, 0, 32, 32, _c(K.BG_COLOR, t.bg)),
-            kits.kitLayer(kit, pal[8]),
-            _r(13, 21, 6, 3, pal[2]),
-            faces.identity(t, pal),
-            "</svg>"
+            faces.build(t, pal)
         );
+        out = string.concat(
+            out, kits.kitLayer(kit, uint256(uint8(torso[t.build * 2])), uint256(uint8(torso[t.build * 2 + 1])))
+        );
+        return string.concat(out, faces.neckAndCollar(t, pal), faces.identity(t, pal), "</svg>");
     }
 
     function imageOf(uint256 tokenId, bytes32 dna, uint256 appearance, uint8 position)

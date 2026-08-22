@@ -1,11 +1,33 @@
-# @fobal/art — on-chain player art v2 ("Anchored Atlas"), phase P0
+# @fobal/art — on-chain player art ("Anchored Atlas")
 
-**P0 is art direction with zero Solidity.** Nothing here touches a contract;
-the deliverable is a spec plus the gates that decide whether the art is good
-enough to be worth writing Solidity for.
+The spec is the source of truth. Everything downstream — SSTORE2 blobs, the
+Solidity constants, the browser module, the parity fixtures, the budget
+document — is GENERATED from it, and CI regenerates and diffs, so the four
+implementations cannot drift apart.
 
-    npm run sheets      # regenerate out/*.html (the gates)
-    npm run palettes    # re-solve the palettes and print the separation report
+    node tools/gen-art.mjs      # blobs, Solidity constants, web module, fixtures
+    node tools/atlas-doc.mjs    # docs/ART_ATLAS_V2.md — budget + rect data
+    node tools/silhouette.mjs   # the colour-blind separation audit
+    node tools/ascii.mjs heads  # rasterise to 32x32 ASCII — the honest look
+    npm run sheets              # out/*.html contact sheets
+    npm run palettes            # re-solve palettes, print the separation report
+
+## v3 — anchors: head choice restructures the face
+
+Six heads no longer differ only in outline. Each carries an ANCHOR SET, and
+every face part is authored ONCE in local space and translated onto it, so a
+narrow skull gets close-set eyes, a higher mouth and a shorter ear line from
+the same stored rects a wide one uses. Per-head facial architecture, at zero
+extra atlas bytes.
+
+Four integers per head reach the chain (width, chin row, eye row, eye gap);
+ten more anchors are DERIVED identically in `spec/anchors.js` and
+`contracts/src/art/FobalAnchors.sol`. `mouthY = chinY - 3` is derived rather
+than authored on purpose — pinning the mouth a fixed distance above the chin
+is what lets one authored beard clear the mouth on all six skulls.
+
+Full budget, anchor tables, the compatibility matrix and every rect:
+**[docs/ART_ATLAS_V2.md](../../docs/ART_ATLAS_V2.md)** (generated).
 
 ## Why the redesign exists (measured, not asserted)
 
@@ -28,10 +50,11 @@ The fix is canvas allocation, not combinatorics.
    siblings; a conventional collectible curve gives 5.3%; 36:1 gives 20.95%,
    which is v1's failure. Rarity belongs only in channels that do not change
    the silhouette. ("None" is exempt — it is the absence of a feature.)
-3. **Budget follows perception.** Head shapes are the worst variety-per-byte
-   in the system, so there are six, purely geometric. Hair (24, heading to
-   32) and headwear (10, heading to 14) get the budget because silhouette is
-   what survives downscaling.
+3. **Budget follows perception.** Six heads, purely geometric — and since
+   v3 they move every feature on the face, which is the best variety-per-byte
+   in the system. Silhouette is what survives downscaling, so hair and
+   headwear get the budget; but only where the silhouettes actually differ
+   (see gate 3 below).
 4. **A per-player accent that survives the team kit** (collar + cuffs). Team
    ownership otherwise collapses a squad's colour to cardinality 1.
 
@@ -55,8 +78,20 @@ colour removed entirely (pure silhouette). Reviewing at 120px flatters exactly
 the detail that vanishes in production, which is why the 120px squad sheet is
 explicitly secondary.
 
-Machine gates, both green: palette separation (dE76 — ramps on adjacent
-steps, categorical sets on all pairs) and the 6:1 silhouette weight ratio.
+Machine gates, all green:
+
+1. **Palette separation** (dE76 — ramps on adjacent steps, categorical sets
+   on all pairs).
+2. **The 6:1 silhouette weight ratio.**
+3. **Silhouette separation** (`tools/silhouette.mjs`): colour is what
+   flatters a weak silhouette, so the audit throws it away and measures every
+   pair of hair, headwear and beard masks. It found Cornrows and Undercut
+   **pixel-identical**, and Shaved, Crop and Widow Peak each within 7px of a
+   neighbour — three names for one haircut is not variety, it is a bigger
+   atlas. Hair is 21 styles that differ rather than 24 that mostly do not.
+4. **Web field coverage**: the generated browser data must carry every
+   authored field. Hand-listing three keys silently dropped the mouths' width
+   field and the browser divided by an empty set on its first render.
 
 ## The three implementations, and which is which (P5)
 
@@ -66,7 +101,7 @@ implementation with one generated copy per runtime:
 | where | what it is | kept honest by |
 |---|---|---|
 | `packages/art/src/render.js` | the REFERENCE. Every change starts here. | the palette + weight gates |
-| `contracts/src/art/*` | the chain. Reads the same SSTORE2 bytes. | `RendererV2Parity.t.sol` + `KitParity.t.sol` assert byte-identity over 64 fixtures |
+| `contracts/src/art/*` | the chain. Reads the same SSTORE2 bytes. | `RendererParity.t.sol` + `KitParity.t.sol` assert byte-identity over 64 fixtures; `ArtLibrary.t.sol` replays every rect of every class |
 | `apps/web/public/js/avatar.js` | the browser. **Generated**, never hand-edited — it inlines its own keccak because apps/web has no bundler. | `apps/web/test/parity.test.ts` compares its bytes to the reference AND to the hashes the Solidity test uses |
 
 The hand-maintained port that used to live in the browser had invented a
@@ -85,4 +120,12 @@ not a portrait). It is out of scope by design, not by oversight.
     node packages/art/tools/gen-art.mjs
 
 writes the SSTORE2 blobs, the Solidity constants, the parity fixtures and the
-browser module. CI regenerates and diffs, so a stale artefact fails the build.
+browser module; `tools/atlas-doc.mjs` writes the budget document. CI
+regenerates BOTH and diffs all four artefact sets, so a stale one fails the
+build.
+
+The install list is generated too (`FobalArtConstants.classNames()`). It used
+to be hand-written in five places, and when the atlas grew to thirteen classes
+the deploy script still installed eight — the missing five degrading silently
+to nothing on chain rather than failing. Deploy scripts and tests MUST iterate
+`classNames()`, never restate it.

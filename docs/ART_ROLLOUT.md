@@ -14,8 +14,8 @@ below.
 | contract | role |
 |---|---|
 | `FobalRendererRouter` | the safety valve — `tokenURI` becomes total |
-| `FobalArtLibrary` + 8 SSTORE2 blobs | the art atlas, 1,613 bytes total |
-| `FobalTraitEngine` / `FobalFaceComposer` / `FobalKitComposer` | pure rendering |
+| `FobalArtLibrary` + 13 SSTORE2 blobs | the art atlas, 1,797 bytes total — see [ART_ATLAS_V2.md](ART_ATLAS_V2.md) |
+| `FobalTraitEngine` / `FobalAnchors` / `FobalFaceComposer` / `FobalKitComposer` | pure rendering |
 | `FobalSquadRegistry` / `FobalKitRegistry` | which club, and its colours |
 | `FobalRendererV2_1` | the renderer that ties them together |
 | `TimelockController` (48h) | holds routing + art-admin rights |
@@ -46,7 +46,12 @@ FOBAL_ART_ADMIN=<timelock> forge script script/DeployArtLibrary.s.sol \
   --rpc-url base_sepolia --account fobal-admin --broadcast --verify
 ```
 
-The script verifies every blob by read-back before reporting success.
+The script installs every class in `FobalArtConstants.classNames()` — the
+GENERATED list — and verifies each blob by read-back before reporting success.
+Confirm the log shows **13 classes**: the list used to be hand-written, and a
+short list does not fail, it deploys an atlas with silently missing classes
+that the composer's try/catch degrades to nothing.
+
 **Do not `seal()` yet** — sealing is permanent, and it should follow visual
 inspection of real rendered output, not precede it.
 

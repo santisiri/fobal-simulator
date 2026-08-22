@@ -6,9 +6,14 @@ import {SvgNum} from "./SvgNum.sol";
 
 /// @title FobalKitComposer — draws WHAT a player wears.
 /// @notice The mirror of FobalFaceComposer: that one has no kit parameter,
-/// this one has no dna, appearance or trait parameter. Neither can reach into
-/// the other's half of the picture, so "a transfer changes the jersey, not
-/// the face" holds by construction rather than by discipline.
+/// this one has no dna, appearance or trait parameter. It is handed a torso
+/// BOX — an x and a width, pure geometry — and paints inside it. Neither
+/// contract can reach into the other's half of the picture, so "a transfer
+/// changes the jersey, not the face" holds by construction rather than by
+/// discipline.
+///
+/// Patterns are sized for the EIGHT rows a 32px bust actually has: 3px
+/// stripes and 2px hoops, never 1px alternation, which is noise at 48px.
 contract FobalKitComposer {
     struct Kit {
         uint24 primary;
@@ -16,6 +21,8 @@ contract FobalKitComposer {
         uint24 accent;
         uint8 pattern;
     }
+
+    uint256 private constant PATTERN_Y = 25;
 
     function _r(int256 x, int256 y, uint256 w, uint256 h, bytes3 fill) private pure returns (string memory) {
         return string.concat(
@@ -25,38 +32,50 @@ contract FobalKitComposer {
         );
     }
 
-    /// @param playerAccent the PLAYER's colour, not the club's — collar and
-    /// cuffs keep eleven people distinguishable inside one kit.
-    function kitLayer(Kit memory kit, bytes3 playerAccent) external pure returns (string memory out) {
-        bytes3 p = bytes3(kit.primary);
+    /// @notice The pattern only. The torso itself belongs to the player's
+    /// build, which is body geometry, not clothing.
+    /// @param x0 left edge of the torso box
+    /// @param w width of the torso box
+    function kitLayer(Kit memory kit, uint256 x0, uint256 w) external pure returns (string memory out) {
         bytes3 s = bytes3(kit.secondary);
-        int256 y = 24;
-        out = string.concat(_r(0, y - 1, 32, 1, K.INK), _r(2, y, 28, 8, p));
+        int256 x = int256(x0);
+        int256 y = int256(PATTERN_Y);
+        uint256 half = w >> 1;
+
         if (kit.pattern == 1) {
-            out = string.concat(out, _r(2, y, 5, 8, s), _r(25, y, 5, 8, s));
+            // sleeves
+            out = string.concat(_r(x, y, 3, 7, s), _r(x + int256(w) - 3, y, 3, 7, s));
         } else if (kit.pattern == 2) {
-            for (uint256 i; i < 5; ++i) out = string.concat(out, _r(int256(4 + i * 6), y, 3, 8, s));
+            // As many WHOLE 3px stripes at a 6px pitch as the torso holds,
+            // centred. A fixed four assumed a wide torso: on the Slim build
+            // the fourth landed three pixels clear of the shoulder, as a
+            // detached block of kit colour on the background. The byte-parity
+            // harness could not see it — both renderers were equally wrong.
+            uint256 n = w / 6;
+            uint256 off = (w - (6 * n - 3)) / 2;
+            for (uint256 i; i < n; ++i) out = string.concat(out, _r(x + int256(off + i * 6), y, 3, 7, s));
         } else if (kit.pattern == 3) {
-            out = string.concat(out, _r(2, y + 2, 28, 2, s), _r(2, y + 6, 28, 2, s));
+            // hoops: 2px, and only two of them
+            out = string.concat(_r(x, y + 1, w, 2, s), _r(x, y + 5, w, 2, s));
         } else if (kit.pattern == 4) {
-            out = string.concat(out, _r(16, y, 14, 8, s));
+            out = string.concat(out, _r(x + int256(half), y, w - half, 7, s));
         } else if (kit.pattern == 5) {
-            for (uint256 i; i < 8; ++i) out = string.concat(out, _r(int256(6 + i * 2), y + int256(i), 4, 1, s));
+            // sash: 12 columns of travel plus its own 5px width, started so
+            // the LAST row still lands on the shirt
+            uint256 start = w >= 17 ? (w - 17) / 2 : 0;
+            for (uint256 i; i < 7; ++i) {
+                out = string.concat(out, _r(x + int256(start + i * 2), y + int256(i), 5, 1, s));
+            }
         } else if (kit.pattern == 6) {
+            // chevron
             for (uint256 i; i < 4; ++i) {
                 out = string.concat(
                     out,
-                    _r(14 - int256(i * 2), y + 2 + int256(i), 3, 1, s),
-                    _r(16 + int256(i * 2), y + 2 + int256(i), 3, 1, s)
+                    _r(x + int256(half) - 4 + int256(i), y + 1 + int256(i), 4, 1, s),
+                    _r(x + int256(half) + int256(i), y + 1 + int256(i), 4, 1, s)
                 );
             }
         }
-        out = string.concat(
-            out,
-            _r(12, y, 8, 2, playerAccent),
-            _r(2, y + 6, 3, 2, playerAccent),
-            _r(27, y + 6, 3, 2, playerAccent),
-            _r(13, y, 6, 1, K.INK)
-        );
+        // pattern 0 is Solid: the build's own torso rect is the whole kit
     }
 }

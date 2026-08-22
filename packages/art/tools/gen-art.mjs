@@ -14,12 +14,42 @@
 // Three implementations of this art exist today (Solidity, the web port, the
 // golden client). Generating them removes the drift by construction.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { CLASSES, CANVAS, FACE, SLOT } from '../spec/parts.js';
+import { CLASSES, CANVAS, SLOT, ANCHOR } from '../spec/parts.js';
+import { HEAD_SPECS, CX, HEAD_TOP, EYE_W, EAR_W, anchorsOf } from '../spec/anchors.js';
+import { auditAll } from './silhouette-lib.mjs';
 import { CUM, RAW, DENOM, assertWeights } from '../spec/weights.js';
 import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IRIS } from '../spec/palettes.js';
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
-import { renderPlayer, seedOf, traitsOf, freeAgentKit } from '../src/render.js';
+import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, mouthEligible, assertKitFits, assertShadingInsideHead } from '../src/render.js';
+import { assertConnected } from './connectivity.mjs';
 import { keccak_256 } from '@noble/hashes/sha3';
+
+
+/** Strip whole `import …;` and `export { … };` STATEMENTS, not just their
+ *  first lines. A line-based filter silently emitted the tail of a multi-line
+ *  import into the browser bundle, which failed at parse time rather than at
+ *  build time. */
+function stripModulePlumbing(src) {
+  const lines = src.split('\n');
+  const out = [];
+  let skipping = false;
+  for (const line of lines) {
+    if (!skipping && (/^import[\s{]/.test(line) || /^export\s*\{/.test(line))) {
+      skipping = true;
+    }
+    if (skipping) {
+      if (line.trimEnd().endsWith(';')) skipping = false;
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n').replace(/^export /gm, '');
+}
+
+/** Every authored field, not a hand-listed subset. Listing three keys by hand
+ *  silently dropped the mouths' width field, and the browser divided by an
+ *  empty eligible set on the first render it attempted. */
+const webPart = (p) => ({ ...p, rects: p.rects ?? [], tags: p.tags ?? [] });
 
 const A = new URL('..', import.meta.url);
 const blobDir = new URL('./gen/blobs/', A);
@@ -35,6 +65,22 @@ const pal = validatePalettes();
 if (!pal.pass) fail.push('palette separation gate failed');
 const wts = assertWeights();
 if (!wts.pass) fail.push(`weight gate failed: ${wts.bad.join('; ')}`);
+// Colour-blind silhouette separation: two parts whose masks are a handful of
+// pixels apart are one part with two names, and must not reach a deploy.
+const sil = auditAll();
+for (const rep of sil) for (const c of rep.collisions) fail.push(`silhouette ${rep.label}: ${c}`);
+// Every pattern on every build, exhaustively: 28 pairs, so a proof.
+const kit = assertKitFits();
+for (const b of kit.bad) fail.push(`kit geometry: ${b}`);
+const shade = assertShadingInsideHead();
+for (const b of shade.bad.slice(0, 10)) fail.push(`shading: ${b}`);
+// And the property a byte-parity harness structurally cannot see — a mistake
+// made identically in both renderers is invisible to it. A player must be ONE
+// connected figure; anything else is paint floating on the background.
+const conn = assertConnected(200);
+for (const b of [...new Set(conn.bad.map((x) => x.replace(/^seed \d+ /, '')))].slice(0, 10)) {
+  fail.push(`detached paint: ${b}`);
+}
 
 // ---- encode every class, and prove the round trip immediately
 const manifest = { version: BLOB_VERSION, canvas: CANVAS, bias: BIAS, denom: DENOM, classes: {} };
@@ -56,7 +102,9 @@ for (const [name, parts] of Object.entries(CLASSES)) {
     parts: parts.length,
     bytes: blob.length,
     names: parts.map(p => p.name),
-    cum: CUM[name.toLowerCase()] ?? null,
+    // CUM keys are singular where the class name is plural ('NOSES' -> 'nose'),
+    // so a bare toLowerCase() reported six classes as having no weight table.
+    cum: CUM[name.toLowerCase()] ?? CUM[name.toLowerCase().replace(/s$/, '')] ?? null,
   };
   totalBytes += blob.length;
 }
@@ -79,15 +127,95 @@ const solLines = [
 ];
 for (const [name, meta] of Object.entries(manifest.classes))
   solLines.push(`    uint256 internal constant ${name.toUpperCase()}_COUNT = ${meta.parts};`);
+// The install list, GENERATED. It was hand-written in five places, and adding
+// classes silently left the deploy script installing eight of thirteen — the
+// missing ones degrading to nothing on chain rather than failing loudly.
+solLines.push('',
+  `    uint256 internal constant ART_CLASS_COUNT = ${Object.keys(manifest.classes).length};`,
+  '',
+  '    /// @notice Every art class, in blob order. Deploy scripts and tests',
+  '    /// MUST iterate this rather than restating it. Dynamic on purpose: a',
+  '    /// library constant is not accepted as a fixed-array length, and a',
+  '    /// hand-written length is the very thing this function removes.',
+  '    function classNames() internal pure returns (bytes32[] memory out) {',
+  `        out = new bytes32[](${Object.keys(manifest.classes).length});`,
+  ...Object.keys(manifest.classes).map((n, i) => `        out[${i}] = bytes32("${n}");`),
+  '    }');
 // headwear tag bitmasks — the constraint pass reads these, so they are
 // generated from the same spec rather than restated by hand in Solidity
+const b2 = (n) => n.toString(16).padStart(2, '0');
 const maskOf = (tag) => CLASSES.HEADWEAR.reduce((m, p, i) => (p.tags ?? []).includes(tag) ? m | (1 << i) : m, 0);
 solLines.push('', `    uint256 internal constant HEADWEAR_COVERS_MASK = ${maskOf('covers')};`,
   `    uint256 internal constant HEADWEAR_BAND_MASK = ${maskOf('band')};`);
-solLines.push('');
-for (const [k, cum] of Object.entries(CUM))
-  solLines.push(`    function cum${k[0].toUpperCase()}${k.slice(1)}() internal pure returns (uint16[${cum.length}] memory) {`,
-    `        return [${cum.map(v => `uint16(${v})`).join(', ')}];`, '    }');
+
+// ---- the anchor system, generated so Solidity cannot drift from the spec.
+// Only FOUR integers per head are stored; the other ten anchors are derived
+// identically on both sides (see FobalFaceComposer.anchorsOf).
+const ATTACH = { absolute: 0, eyes: 1, brows: 2, ears: 3, nose: 4, mouth: 5, chin: 6, top: 7 };
+const classOrder = Object.keys(CLASSES);
+solLines.push('',
+  '    // ---- anchor system',
+  `    uint256 internal constant CX = ${CX};`,
+  `    uint256 internal constant HEAD_TOP = ${HEAD_TOP};`,
+  `    uint256 internal constant EYE_W = ${EYE_W};`,
+  `    uint256 internal constant EAR_W = ${EAR_W};`,
+  '    /// @dev 4 bytes per head: width, chinY, eyeY, eyeGap. Everything else',
+  '    /// (headX, brow/nose/mouth/ear lines, eye x, width class) is DERIVED.',
+  `    bytes internal constant HEAD_GEOM = hex"${HEAD_SPECS.map(h => b2(h.w) + b2(h.bottom) + b2(h.eyeY) + b2(h.eyeGap)).join('')}";`,
+  `    /// @dev one byte per class, in blob order: ${classOrder.join(', ')}`,
+  `    bytes internal constant CLASS_ATTACH = hex"${classOrder.map(c => b2(ATTACH[ANCHOR[c].at])).join('')}";`,
+  '    /// @dev mirror-box width per class; 0 means the part is drawn once',
+  `    bytes internal constant CLASS_MIRROR = hex"${classOrder.map(c =>
+      b2(!ANCHOR[c].mirror ? 0 : c === 'EARS' ? EAR_W : EYE_W)).join('')}";`,
+  '    /// @dev skull-clamp margin per class; 0 means the class is never clipped',
+  `    bytes internal constant CLASS_CLAMP = hex"${classOrder.map(c => b2(ANCHOR[c].clamp ?? 0)).join('')}";`);
+// ---- cumulative weight tables, PACKED. One accessor replaces a family of
+// fixed-size adapters that had to be edited by hand every time a class
+// changed length — which is precisely the drift this generator exists to end.
+const cumKeys = Object.keys(CUM);
+const b4 = (n) => n.toString(16).padStart(4, '0');
+let cumFlat = '', cumOff = '', cumLen = '', at = 0;
+for (const k of cumKeys) {
+  cumFlat += CUM[k].map(b4).join('');
+  cumOff += b4(at); cumLen += b2(CUM[k].length);
+  at += CUM[k].length;
+}
+solLines.push('',
+  '    // ---- weight tables: 2 bytes per entry, indexed by CLS_* below',
+  ...cumKeys.map((k, i) => `    uint256 internal constant CLS_${k.toUpperCase()} = ${i};`),
+  `    uint256 internal constant CLS_COUNT = ${cumKeys.length};`,
+  `    bytes internal constant CUM_DATA = hex"${cumFlat}";`,
+  `    bytes internal constant CUM_OFFSET = hex"${cumOff}";`,
+  `    bytes internal constant CUM_LEN = hex"${cumLen}";`,
+  '',
+  '    /// @notice The cumulative table for one class, unpacked.',
+  '    function cumOf(uint256 cls) internal pure returns (uint16[] memory out) {',
+  '        bytes memory off = CUM_OFFSET;',
+  '        bytes memory len = CUM_LEN;',
+  '        bytes memory data = CUM_DATA;',
+  '        uint256 start = (uint256(uint8(off[cls * 2])) << 8) | uint256(uint8(off[cls * 2 + 1]));',
+  '        uint256 n = uint256(uint8(len[cls]));',
+  '        out = new uint16[](n);',
+  '        for (uint256 k; k < n; ++k) {',
+  '            uint256 j = (start + k) * 2;',
+  '            out[k] = uint16((uint256(uint8(data[j])) << 8) | uint256(uint8(data[j + 1])));',
+  '        }',
+  '    }');
+
+// ---- correlation + fallback tables, generated from the SAME functions the
+// reference renderer calls, so the two can never state different rules.
+const elig = [0, 1, 2].map(wc => mouthEligible(wc));
+solLines.push('',
+  '    // ---- deterministic compatibility tables (item 16). Generated from the',
+  '    // reference renderer, never restated by hand.',
+  `    bytes internal constant HAIR_FALLBACK = hex"${HEADWEAR_HAIR_FALLBACK.map(b2).join('')}";`,
+  `    bytes internal constant NECK_OF_BUILD = hex"${NECK_OF_BUILD.map(b2).join('')}";`,
+  '    /// @dev mouths a head of each width class may wear, concatenated',
+  `    bytes internal constant MOUTH_ELIG = hex"${elig.flat().map(b2).join('')}";`,
+  `    bytes internal constant MOUTH_ELIG_LEN = hex"${elig.map(e => b2(e.length)).join('')}";`,
+  '    /// @dev x and width of each build\'s torso box, so the kit composer can',
+  '    /// place a pattern from pure geometry without ever seeing a trait.',
+  `    bytes internal constant BUILD_TORSO = hex"${CLASSES.BUILDS.map(b => b2(b.rects[1][0]) + b2(b.rects[1][2])).join('')}";`);
 solLines.push('');
 const hexArr = (name, arr) =>
   `    bytes internal constant ${name} = hex"${arr.join('')}";`;
@@ -115,13 +243,13 @@ const web = [
   '// The browser reads the SAME part data the chain stores, so the preview',
   '// can never drift from what gets minted.',
   `export const CANVAS = ${CANVAS};`,
-  `export const FACE = ${JSON.stringify(FACE)};`,
+  `export const ANCHOR = ${JSON.stringify(ANCHOR)};`,
+  `export const HEAD_SPECS = ${JSON.stringify(HEAD_SPECS)};`,
   `export const SLOT = ${JSON.stringify(SLOT)};`,
   `export const CUM = ${JSON.stringify(CUM)};`,
   `export const PALETTES = ${JSON.stringify({ SKIN_BASE, HAIR, BG, ACCENT, IRIS, INK, EYE_WHITE })};`,
   `export const PARTS = ${JSON.stringify(
-    Object.fromEntries(Object.entries(CLASSES).map(([k, v]) =>
-      [k, v.map(p => ({ name: p.name, rects: p.rects ?? [], opacity: p.opacity ?? null, tags: p.tags ?? [] }))])))};`,
+    Object.fromEntries(Object.entries(CLASSES).map(([k, v]) => [k, v.map(webPart)])))};`,
   '',
 ].join('\n');
 writeFileSync(new URL('./parts.web.js', genDir), web);
@@ -130,16 +258,15 @@ writeFileSync(new URL('./parts.web.js', genDir), web);
 // straight into apps/web so the preview and the chain cannot diverge
 const keccakSrc = readFileSync(new URL('./src/keccak-web.js', A), 'utf8')
   .replace(/^export /gm, '');
+// the anchor resolver is LOGIC, not data: inline the source rather than
+// restating it, so the browser derives anchors exactly as the spec does
+const anchorSrc = stripModulePlumbing(readFileSync(new URL('./spec/anchors.js', A), 'utf8'));
 const renderSrc = readFileSync(new URL('./src/render.js', A), 'utf8');
 // lift the body of the reference renderer, swapping its module imports for
 // the inlined data above — the logic itself is copied verbatim, never retyped
-const renderBody = renderSrc
-  .split('\n')
-  // drop module plumbing: imports, and re-exports of things that are inlined
-  // above as plain consts. The RENDER LOGIC below is copied verbatim.
-  .filter(l => !l.startsWith('import ') && !l.startsWith('export {'))
-  .join('\n')
-  .replace(/^export /gm, '');
+// drop module plumbing: imports, and re-exports of things that are inlined
+// above as plain consts. The RENDER LOGIC below is copied verbatim.
+const renderBody = stripModulePlumbing(renderSrc);
 
 const avatarJs = [
   '// GENERATED by packages/art/tools/gen-art.mjs — DO NOT EDIT.',
@@ -165,11 +292,12 @@ const avatarJs = [
   `const IRIS = ${JSON.stringify(IRIS)};`,
   `const CUM = ${JSON.stringify(CUM)};`,
   `const DENOM = ${DENOM};`,
-  `const CANVAS = ${CANVAS};`,
-  `const FACE = ${JSON.stringify(FACE)};`,
   `const SLOT = ${JSON.stringify(SLOT)};`,
-  ...Object.entries(CLASSES).map(([k, v]) =>
-    `const ${k} = ${JSON.stringify(v.map(p => ({ name: p.name, rects: p.rects ?? [], tags: p.tags ?? [] })))};`),
+  `const ANCHOR = ${JSON.stringify(ANCHOR)};`,
+  '',
+  '// ---- the anchor resolver, verbatim from spec/anchors.js',
+  anchorSrc,
+  ...Object.entries(CLASSES).map(([k, v]) => `const ${k} = ${JSON.stringify(v.map(webPart))};`),
   'const pickFromCum = (cum, r) => { for (let i = 0; i < cum.length; i++) if (r < cum[i]) return i; return cum.length - 1; };',
   '',
   '// ---- the reference renderer, verbatim',
@@ -183,9 +311,29 @@ const avatarJs = [
   '  return renderPlayer({ dna, appearance, position });',
   '}',
   '',
+  '/** The app carries kits as CSS colours ("#22c55e") and often only two of',
+  ' *  them. The renderer, like the chain, wants BARE hex and a full three',
+  ' *  colour kit with a pattern. Normalising at the boundary is why a UI kit',
+  ' *  can no longer reach the renderer half-formed: passing one straight',
+  ' *  through emitted fill="##22c55e" — invalid, and black in every browser. */',
+  'export function toRenderKit(kit) {',
+  '  if (!kit) return undefined;',
+  '  const hex = (v, fallback) => {',
+  '    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(v ?? ""));',
+  '    return m ? m[1].toLowerCase() : fallback;',
+  '  };',
+  '  const secondary = hex(kit.secondary, "f2f4f8");',
+  '  return {',
+  '    primary: hex(kit.primary, "2f6fd0"),',
+  '    secondary,',
+  '    accent: hex(kit.accent, secondary),',
+  '    pattern: Number.isFinite(Number(kit.pattern)) ? Math.abs(Number(kit.pattern)) % 7 : 0,',
+  '  };',
+  '}',
+  '',
   '/** The same identity wearing a specific club kit. */',
   'export function avatarSvgDressed({ dna, appearance, position = 2 }, kit) {',
-  '  return renderPlayer({ dna, appearance, kit, position });',
+  '  return renderPlayer({ dna, appearance, kit: toRenderKit(kit), position });',
   '}',
   '',
   'export function avatarDataUri(p, kit) {',
@@ -193,7 +341,7 @@ const avatarJs = [
   "  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);",
   '}',
   '',
-  'export { traitsOf, seedOf, freeAgentKit, CANVAS };',
+  'export { traitsOf, seedOf, freeAgentKit, anchorsOf, CANVAS };',
   '',
 ].join('\n');
 writeFileSync(new URL('../../apps/web/public/js/avatar.js', A), avatarJs);
@@ -234,8 +382,38 @@ for (let i = 0; i < FIXTURE_N; i++) {
   fx.svgKitHash.push(hashOf(renderPlayer({ dna, appearance, kit })));
 }
 mkdirSync(new URL('./gen/fixtures/', A), { recursive: true });
+
+// ---- EVERY part of EVERY class, flattened. The decode test replays this
+// through the on-chain library, so the claim it proves is "the chain decodes
+// the whole atlas to the exact JS rects", not "three parts I happened to
+// pick still look right".
+const rectFx = { className: [], partIndex: [], x: [], y: [], w: [], h: [], slot: [], partCount: [] };
+for (const [name, parts] of Object.entries(CLASSES)) {
+  rectFx.partCount.push(String(parts.length));
+  parts.forEach((part, pi) => {
+    for (const r of (part.rects ?? [])) {
+      rectFx.className.push(name);
+      rectFx.partIndex.push(String(pi));
+      rectFx.x.push(String(r[0])); rectFx.y.push(String(r[1]));
+      rectFx.w.push(String(r[2])); rectFx.h.push(String(r[3])); rectFx.slot.push(String(r[4]));
+    }
+  });
+}
+writeFileSync(new URL('./gen/fixtures/rects.json', A), JSON.stringify(rectFx, null, 1));
 writeFileSync(new URL('./gen/fixtures/render.json', A), JSON.stringify(fx, null, 1));
 
+// gate: the web data must carry every key the spec authored. A missing key
+// is a silent render failure in a place with no test of its own.
+for (const [name, parts] of Object.entries(CLASSES)) {
+  parts.forEach((p, i) => {
+    const emitted = Object.keys(webPart(p)).sort().join(',');
+    const authored = [...new Set([...Object.keys(p), 'rects', 'tags'])].sort().join(',');
+    if (emitted !== authored) fail.push(`${name}[${i}]: web data drops fields (${authored} -> ${emitted})`);
+  });
+}
+
+manifest.anchors = HEAD_SPECS.map((h, i) => ({ ...h, ...anchorsOf(i) }));
+manifest.headGeomBytes = HEAD_SPECS.length * 4;
 manifest.totalBytes = totalBytes;
 manifest.gates = { palettes: pal.pass, weights: wts.pass, maxBlobBytes: MAX_BLOB };
 writeFileSync(new URL('./gen/manifest.json', A), JSON.stringify(manifest, null, 2));
@@ -245,5 +423,10 @@ for (const [k, m] of Object.entries(manifest.classes))
   console.log(`  ${k.padEnd(14)} ${String(m.parts).padStart(3)}  ${String(m.bytes).padStart(6)}`);
 console.log(`  ${'TOTAL'.padEnd(14)}      ${String(totalBytes).padStart(6)} B of art data`);
 console.log(`fixtures: ${FIXTURE_N} seeds -> gen/fixtures/render.json`);
-console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'} · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
+console.log(`          ${rectFx.x.length} rects across ${Object.keys(CLASSES).length} classes -> gen/fixtures/rects.json`);
+console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 4).padStart(5)} B (4 ints x ${HEAD_SPECS.length} heads; 10 more anchors derived)`);
+console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`
+  + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'}`
+  + ` · kit-fits ${kit.pass ? 'PASS' : 'FAIL'} · shading-inside ${shade.pass ? 'PASS' : 'FAIL'} · connectivity ${conn.pass ? 'PASS' : 'FAIL'} (${conn.checked} renders)`
+  + ` · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

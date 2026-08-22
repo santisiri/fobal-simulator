@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {FobalArtLibrary} from "../../src/FobalArtLibrary.sol";
+import {FobalArtConstants as K} from "../../src/art/FobalArtConstants.sol";
 import {FobalFaceComposer} from "../../src/art/FobalFaceComposer.sol";
 import {FobalKitComposer} from "../../src/art/FobalKitComposer.sol";
 import {FobalSquadRegistry} from "../../src/art/FobalSquadRegistry.sol";
@@ -22,7 +23,16 @@ interface ILive {
 /// after the rollout, decided before committing to it.
 contract LiveSquadPreviewTest is Test {
     address constant PLAYER = 0x52F5828dA509D6043c2619F048687BEdfA4789d4;
-    string[8] internal CLASSES = ["HEADS", "EYES", "BROWS", "NOSES", "MOUTHS", "BEARDS", "HAIR", "HEADWEAR"];
+    /// @dev the GENERATED install list — see FobalArtConstants.classNames()
+    bytes32[] internal CLASSES = K.classNames();
+
+    function _name(bytes32 k) internal pure returns (string memory) {
+        uint256 n;
+        while (n < 32 && k[n] != 0) ++n;
+        bytes memory b = new bytes(n);
+        for (uint256 i; i < n; ++i) b[i] = k[i];
+        return string(b);
+    }
 
     function test_previewLiveSquad() public {
         if (block.chainid != 84532) {
@@ -32,9 +42,9 @@ contract LiveSquadPreviewTest is Test {
         FobalArtLibrary art = new FobalArtLibrary(address(this));
         for (uint256 i; i < CLASSES.length; ++i) {
             string memory h = vm.readFile(
-                string.concat(vm.projectRoot(), "/../packages/art/gen/blobs/", CLASSES[i], ".hex")
+                string.concat(vm.projectRoot(), "/../packages/art/gen/blobs/", _name(CLASSES[i]), ".hex")
             );
-            art.setClass(bytes32(bytes(CLASSES[i])), vm.parseBytes(vm.replace(h, "\n", "")));
+            art.setClass(CLASSES[i], vm.parseBytes(vm.replace(h, "\n", "")));
         }
         FobalRendererV2_1 r2 = new FobalRendererV2_1(
             IPlayerReader2(PLAYER),
