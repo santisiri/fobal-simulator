@@ -62,7 +62,8 @@ contract KitParityTest is Test {
     }
 
     function test_clubKitRenderIsByteIdenticalToTheReference() public view {
-        assertEq(dna.length, 64);
+        // the generator extends the set until every part index is rendered
+        assertGe(dna.length, 64);
         for (uint256 i; i < dna.length; ++i) {
             FobalKitComposer.Kit memory kit =
                 FobalKitComposer.Kit(uint24(kitP[i]), uint24(kitS[i]), uint24(kitA[i]), uint8(kitPat[i]));

@@ -109,6 +109,10 @@ library FobalArtConstants {
     /// @dev mouths a head of each width class may wear, concatenated
     bytes internal constant MOUTH_ELIG = hex"000406000204050600010203040506";
     bytes internal constant MOUTH_ELIG_LEN = hex"030507";
+    /// @dev rarity RENORMALISED over each eligible set, 2 bytes per entry.
+    /// Picking uniformly inside the set left the mouth weights wired to
+    /// nothing while still shipping as bytes.
+    bytes internal constant MOUTH_ELIG_CUM = hex"05560aab100003340667099a0ccd1000024a049306dc09250b6e0db71000";
     /// @dev x and width of each build's torso box, so the kit composer can
     /// place a pattern from pure geometry without ever seeing a trait.
     bytes internal constant BUILD_TORSO = hex"07120516031a021c";
@@ -123,4 +127,9 @@ library FobalArtConstants {
     bytes internal constant IRIS_COLOR = hex"3b2a1c2a3d523d52405a4632";
     bytes3 internal constant INK = hex"0f0b09";
     bytes3 internal constant EYE_WHITE = hex"f4f1ea";
+    // the goalkeeper's FREE-AGENT kit. A club kit always wins over it.
+    uint24 internal constant KEEPER_PRIMARY = 0xe0c04a;
+    uint24 internal constant KEEPER_SECONDARY = 0x1b1b1f;
+    uint24 internal constant KEEPER_ACCENT = 0x1b1b1f;
+    uint8 internal constant KEEPER_PATTERN = 0;
 }

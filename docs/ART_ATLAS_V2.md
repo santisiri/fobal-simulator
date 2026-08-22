@@ -223,10 +223,10 @@ Local space unless the class attaches `absolute`. Slot names map to
 |--:|---|--:|---|
 | 0 | Neutral | 14.3% | [-2, 0, 4, 1, ink] |
 | 1 | Stern | 14.3% | [-3, 0, 6, 1, ink] |
-| 2 | Slight | 14.3% | [-2, 0, 4, 1, ink] [-3, -1, 1, 1, ink] [2, -1, 1, 1, ink] |
+| 2 | Slight | 14.3% | [-2, 0, 5, 1, ink] [-2, -1, 1, 1, ink] [2, -1, 1, 1, ink] |
 | 3 | Wide Smile | 14.3% | [-3, 0, 6, 1, ink] [-2, 1, 4, 1, ink] [-2, 0, 4, 1, white] |
 | 4 | Open | 14.3% | [-2, -1, 4, 3, ink] [-1, 0, 2, 1, white] |
-| 5 | Downturned | 14.3% | [-2, 0, 4, 1, ink] [-3, 1, 1, 1, ink] [2, 1, 1, 1, ink] |
+| 5 | Downturned | 14.3% | [-2, 0, 5, 1, ink] [-2, 1, 1, 1, ink] [2, 1, 1, 1, ink] |
 | 6 | Compressed | 14.3% | [-1, 0, 3, 1, ink] [-1, -1, 3, 1, shade] |
 
 ### `BEARDS` — 8 parts, attaches `chin`

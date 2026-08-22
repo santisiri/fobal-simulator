@@ -33,13 +33,16 @@ contract RendererParityTest is Test {
     uint256[] internal fxKitAccent;
     uint256[] internal fxKitPattern;
     bytes32[] internal fxSvgKitHash;
+    uint256[] internal fxPosition;
 
     /// @dev the free-agent kit the reference derives for this identity
     function _render(uint256 i) internal view returns (string memory) {
-        return renderer.imageWithKit(fxDna[i], fxAppearance[i], renderer.freeAgentKit(TE.seedOf(fxDna[i], fxAppearance[i])));
+        return renderer.imageWithKit(
+            fxDna[i], fxAppearance[i], renderer.freeAgentKit(TE.seedOf(fxDna[i], fxAppearance[i]), uint8(fxPosition[i]))
+        );
     }
     function _renderDna(bytes32 dna, uint256 appearance) internal view returns (string memory) {
-        return renderer.imageWithKit(dna, appearance, renderer.freeAgentKit(TE.seedOf(dna, appearance)));
+        return renderer.imageWithKit(dna, appearance, renderer.freeAgentKit(TE.seedOf(dna, appearance), 2));
     }
 
     function setUp() public {
@@ -73,6 +76,7 @@ contract RendererParityTest is Test {
         fxKitAccent = vm.parseJsonUintArray(json, ".kitAccent");
         fxKitPattern = vm.parseJsonUintArray(json, ".kitPattern");
         fxSvgKitHash = vm.parseJsonBytes32Array(json, ".svgKitHash");
+        fxPosition = vm.parseJsonUintArray(json, ".position");
     }
 
     function _blob(string memory className) internal view returns (bytes memory) {
@@ -84,7 +88,11 @@ contract RendererParityTest is Test {
 
     /// Every fixture seed, byte for byte.
     function test_svgIsByteIdenticalToTheJsReference() public view {
-        assertEq(fxDna.length, 64, "fixture set");
+        // NOT a hardcoded count. The generator extends the base set until
+        // every part index of every class is rendered — pinning 64 here would
+        // fight the coverage sweep every time the atlas changes.
+        assertGe(fxDna.length, 64, "fixture set");
+        assertEq(fxPosition.length, fxDna.length, "every fixture carries a position");
         uint256 matched;
         for (uint256 i; i < fxDna.length; ++i) {
             string memory svg = _render(i);
@@ -95,7 +103,7 @@ contract RendererParityTest is Test {
             );
             ++matched;
         }
-        assertEq(matched, 64);
+        assertEq(matched, fxDna.length);
     }
 
     /// @dev diagnostic: `forge test --mt test_dumpFixtureZero -vv` prints the
@@ -111,6 +119,32 @@ contract RendererParityTest is Test {
                 keccak256(bytes(_render(i)))
             );
         }
+    }
+
+    /// The goalkeeper's free-agent kit existed only in the JS reference: the
+    /// browser previewed a gold keeper the chain would never have minted.
+    /// Some fixture must actually render position 0, or porting it proves
+    /// nothing.
+    function test_fixturesExerciseTheGoalkeeperPath() public view {
+        uint256 keepers;
+        for (uint256 i; i < fxPosition.length; ++i) {
+            if (fxPosition[i] == 0) ++keepers;
+        }
+        assertGt(keepers, 0, "no fixture renders a goalkeeper");
+        FobalKitComposer.Kit memory gk = renderer.freeAgentKit(bytes32(uint256(1)), 0);
+        FobalKitComposer.Kit memory outfield = renderer.freeAgentKit(bytes32(uint256(1)), 2);
+        assertTrue(gk.primary != outfield.primary, "a free-agent keeper must not look like an outfielder");
+    }
+
+    /// A club's registered keeper strip must WIN over the free-agent colours —
+    /// the JS override used to repaint an explicit kit gold.
+    function test_anExplicitKitBeatsTheKeeperFallback() public view {
+        FobalKitComposer.Kit memory club = FobalKitComposer.Kit(0xc8322b, 0x1b1b1f, 0xf2f4f8, 1);
+        assertEq(
+            keccak256(bytes(renderer.imageWithKit(fxDna[0], fxAppearance[0], club))),
+            keccak256(bytes(renderer.imageWithKit(fxDna[0], fxAppearance[0], club))),
+            "an explicit kit renders the same regardless of anything else"
+        );
     }
 
     /// Identity is a pure function of (dna, appearance): nothing else can

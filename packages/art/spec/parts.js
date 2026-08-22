@@ -149,16 +149,26 @@ export const NOSES = [
 
 // ============================================================ MOUTHS (local)
 // origin = (CX, mouthY), x relative to centre. 3-6px wide; the widest are
-// biased toward wide heads by the correlation pass.
-export const MOUTHS = [
-  { name: 'Neutral',   w: 4, rects: [r(-2, 0, 4, 1, SLOT.INK)] },
-  { name: 'Stern',     w: 6, rects: [r(-3, 0, 6, 1, SLOT.INK)] },
-  { name: 'Slight',    w: 5, rects: [r(-2, 0, 4, 1, SLOT.INK), r(-3, -1, 1, 1, SLOT.INK), r(2, -1, 1, 1, SLOT.INK)] },
-  { name: 'Wide Smile',w: 6, rects: [r(-3, 0, 6, 1, SLOT.INK), r(-2, 1, 4, 1, SLOT.INK), r(-2, 0, 4, 1, SLOT.WHITE)] },
-  { name: 'Open',      w: 4, rects: [r(-2, -1, 4, 3, SLOT.INK), r(-1, 0, 2, 1, SLOT.WHITE)] },
-  { name: 'Downturned',w: 5, rects: [r(-2, 0, 4, 1, SLOT.INK), r(-3, 1, 1, 1, SLOT.INK), r(2, 1, 1, 1, SLOT.INK)] },
-  { name: 'Compressed',w: 3, rects: [r(-1, 0, 3, 1, SLOT.INK), r(-1, -1, 3, 1, SLOT.SHADE)] },
+// restricted to wide heads by the compatibility pass.
+//
+// The width is DERIVED from the rects, never declared. Slight and Downturned
+// were hand-labelled 5 while spanning 6 columns, so the rule that keeps a wide
+// mouth off a narrow skull was being handed the wrong number by its own
+// metadata. Their corner pixels now sit inside the mouth line, which is what
+// the label always claimed.
+const MOUTH_SHAPES = [
+  { name: 'Neutral',    rects: [r(-2, 0, 4, 1, SLOT.INK)] },
+  { name: 'Stern',      rects: [r(-3, 0, 6, 1, SLOT.INK)] },
+  { name: 'Slight',     rects: [r(-2, 0, 5, 1, SLOT.INK), r(-2, -1, 1, 1, SLOT.INK), r(2, -1, 1, 1, SLOT.INK)] },
+  { name: 'Wide Smile', rects: [r(-3, 0, 6, 1, SLOT.INK), r(-2, 1, 4, 1, SLOT.INK), r(-2, 0, 4, 1, SLOT.WHITE)] },
+  { name: 'Open',       rects: [r(-2, -1, 4, 3, SLOT.INK), r(-1, 0, 2, 1, SLOT.WHITE)] },
+  { name: 'Downturned', rects: [r(-2, 0, 5, 1, SLOT.INK), r(-2, 1, 1, 1, SLOT.INK), r(2, 1, 1, 1, SLOT.INK)] },
+  { name: 'Compressed', rects: [r(-1, 0, 3, 1, SLOT.INK), r(-1, -1, 3, 1, SLOT.SHADE)] },
 ];
+/** the true horizontal footprint of a part, in local columns */
+export const footprint = (rects) =>
+  Math.max(...rects.map((q) => q[0] + q[2])) - Math.min(...rects.map((q) => q[0]));
+export const MOUTHS = MOUTH_SHAPES.map((m) => ({ ...m, w: footprint(m.rects) }));
 
 // ============================================================ BEARDS (local)
 // origin = (CX, chinY). The big ones EXTEND PAST the chin, changing the
