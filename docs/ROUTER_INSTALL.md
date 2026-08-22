@@ -34,6 +34,25 @@ update `docs/ONCHAIN_DEPLOYMENTS.md` first — that address is the undo button.
 Must report every existing token byte-identical. This test constructs the
 router against the live renderer and compares `tokenURI` hashes one by one.
 
+**2b. Rehearse the WHOLE sequence**, including the step that writes storage:
+
+    cd contracts && forge test --match-contract RouterInstallRehearsal \
+      --fork-url https://sepolia.base.org -vv
+
+This impersonates the recorded admin and actually performs step 5 against
+forked state, then rolls it back, so the first `setRenderer` on the real chain
+is not the first time anyone has watched it happen. It also proves the
+property the router exists for: with the default lane pointed at a renderer
+that reverts on every call, every token still resolves; with BOTH lanes
+broken, the inline identity card still answers.
+
+Last rehearsed 2026-08-22 against Base Sepolia — 11 tokens byte-identical
+before, through, and after the install; rollback restored them byte for byte;
+**the install itself costs 9,683 gas**.
+
+The rehearsal asserts the admin role still sits on the address recorded in
+`docs/ONCHAIN_DEPLOYMENTS.md` and fails with that instruction if it has moved.
+
 **3. Deploy the router** (deploying changes nothing on its own; it reads the
 live pointer itself so it cannot be wired to a stale address):
 
