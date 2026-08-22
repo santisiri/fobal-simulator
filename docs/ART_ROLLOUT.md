@@ -20,6 +20,26 @@ below.
 | `FobalRendererV2_1` | the renderer that ties them together |
 | `TimelockController` (48h) | holds routing + art-admin rights |
 
+## What a render costs
+
+Measured by `contracts/test/unit/RenderGas.t.sol`, which also holds the
+ceilings so a future change cannot double this quietly:
+
+| | gas |
+|---|--:|
+| one image (`imageWithKit`), mean over 68 fixtures | 762k |
+| one image, worst fixture | 920k |
+| `tokenURI` end to end through the router | **1.54M** |
+| caller budget below which the router serves the CARD instead | **1.73M** |
+
+The last row is the one to know before step 6. The router forwards
+`gasleft() - 250_000` and keeps the remainder so its fallback card can always
+run, so a caller who supplies less than ~1.73M gets a valid but plain token
+URI rather than the player. Node `eth_call` caps are typically 50M, so
+ordinary marketplace and indexer reads are far clear of it; a client that sets
+its own tight gas cap is not. Check any integration that passes an explicit
+gas limit to `tokenURI`.
+
 ## Order, and why
 
 Each phase is a separate transaction set with its own rollback. Do not batch
