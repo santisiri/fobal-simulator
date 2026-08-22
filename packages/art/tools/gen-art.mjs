@@ -22,6 +22,7 @@ import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IR
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
 import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, assertKitFits, assertShadingInsideHead } from '../src/render.js';
 import { assertConnected } from './connectivity.mjs';
+import { assertSquadsLegible } from './squad-lib.mjs';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 
@@ -80,6 +81,11 @@ for (const [cls, parts] of Object.entries(CLASSES)) {
       + (CUM[key].length < parts.length ? 'the extra parts can never be minted' : 'a weight selects nothing'));
   }
 }
+// Eleven players in ONE kit is the hardest case the product shows, and the
+// only one where team colour does no work at all. A pair counts as confusable
+// only when it is close on BOTH colour and construction.
+const squads = assertSquadsLegible();
+for (const b of squads.bad) fail.push(`squads: ${b}`);
 const shade = assertShadingInsideHead();
 for (const b of shade.bad.slice(0, 10)) fail.push(`shading: ${b}`);
 // And the property a byte-parity harness structurally cannot see — a mistake
@@ -525,5 +531,6 @@ console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`
   + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'}`
   + ` · kit-fits ${kit.pass ? 'PASS' : 'FAIL'} · shading-inside ${shade.pass ? 'PASS' : 'FAIL'} · connectivity ${conn.pass ? 'PASS' : 'FAIL'} (${conn.checked} renders)`
+  + ` · squads ${squads.pass ? 'PASS' : 'FAIL'} (${(squads.rate * 100).toFixed(2)}% confusable)`
   + ` · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

@@ -1,4 +1,6 @@
 import { auditAll } from '../tools/silhouette-lib.mjs';
+// @ts-expect-error — plain JS module
+import { assertSquadsLegible } from '../tools/squad-lib.mjs';
 import { assertConnected, detached } from '../tools/connectivity.mjs';
 // The parity harness. Three claims, each one a place the pipeline could
 // silently drift between the JS reference renderer and the chain:
@@ -259,6 +261,18 @@ describe('image-level properties the byte-parity harness cannot see', () => {
     const reports = auditAll();
     expect(reports.length).toBe(3 * HEAD_SPECS.length);
     expect(reports.flatMap((r) => r.collisions)).toEqual([]);
+  });
+
+  test('eleven players in one kit stay tellable apart', () => {
+    // the hub's actual view, and the only one where team colour does no work.
+    // A pair counts as confusable only when it is close on BOTH colour and
+    // construction — an earlier attempt measured ink line-work alone and
+    // scored two players 3px apart who differ in hair, brows, nose and mouth,
+    // because ink covers the outline but not hair or beard.
+    const r = assertSquadsLegible();
+    expect(r.examples.length).toBeLessThanOrEqual(5);
+    expect(r.bad).toEqual([]);
+    expect(r.pass).toBe(true);
   });
 
   test('the fixtures render EVERY part index, so parity has no holes', () => {

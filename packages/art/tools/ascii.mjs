@@ -23,6 +23,7 @@ export function ascii(svg) {
   return g.map((r, j) => String(j).padStart(2) + ' ' + r.join('')).join('\n')
     + '\n   ' + [...Array(32)].map((_, i) => i % 10).join('') + '\n   ' + legend;
 }
+if (import.meta.url === `file://${process.argv[1]}`) {
 const which = process.argv[2] ?? 'heads';
 if (which === 'heads') {
   for (let h = 0; h < HEADS.length; h++) {
@@ -35,4 +36,5 @@ if (which === 'heads') {
     console.log(`\n=== #${i} ${JSON.stringify(t)} ===`);
     console.log(ascii(renderPlayer({ ...idOf(i), kit: KIT })));
   }
+}
 }
