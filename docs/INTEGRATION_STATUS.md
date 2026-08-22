@@ -100,6 +100,13 @@ lobby task at boot. Without it the lobby stays on the SES backend.
   is **reported, never patched locally**.
 - Staging carries `-c aiSecrets=1 -c mintSigner=1`.
 - The engine stays authoritative.
+- **Never enumerate; describe by name.** The engineer policy grants
+  `Describe*` on known `fobal-*` resources but withholds account-wide
+  `List*` (`ecs:ListClusters`, `secretsmanager:ListSecrets`, …) — both
+  have now stopped a phase mid-run. Agent prompts must name resources
+  explicitly: cluster `fobal-staging-cluster`, service + task family
+  `fobal-staging-match-server`. An enumeration denial is a prompt bug,
+  not a missing permission.
 
 ## Open follow-ups
 
