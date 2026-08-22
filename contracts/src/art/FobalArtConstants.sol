@@ -12,56 +12,104 @@ library FobalArtConstants {
     uint8 internal constant BLOB_VERSION = 1;
 
     uint256 internal constant HEADS_COUNT = 6;
-    uint256 internal constant EYES_COUNT = 10;
-    uint256 internal constant BROWS_COUNT = 8;
-    uint256 internal constant NOSES_COUNT = 3;
-    uint256 internal constant MOUTHS_COUNT = 10;
+    uint256 internal constant SHADING_COUNT = 6;
+    uint256 internal constant EARS_COUNT = 3;
+    uint256 internal constant EYES_COUNT = 6;
+    uint256 internal constant BROWS_COUNT = 6;
+    uint256 internal constant NOSES_COUNT = 7;
+    uint256 internal constant MOUTHS_COUNT = 7;
     uint256 internal constant BEARDS_COUNT = 8;
-    uint256 internal constant HAIR_COUNT = 24;
-    uint256 internal constant HEADWEAR_COUNT = 10;
+    uint256 internal constant HAIR_COUNT = 21;
+    uint256 internal constant HEADWEAR_COUNT = 6;
+    uint256 internal constant NECKS_COUNT = 3;
+    uint256 internal constant BUILDS_COUNT = 4;
+    uint256 internal constant COLLARS_COUNT = 4;
 
-    uint256 internal constant HEADWEAR_COVERS_MASK = 760;
-    uint256 internal constant HEADWEAR_BAND_MASK = 262;
+    uint256 internal constant ART_CLASS_COUNT = 13;
 
-    function cumHead() internal pure returns (uint16[6] memory) {
-        return [uint16(686), uint16(1368), uint16(2050), uint16(2732), uint16(3414), uint16(4096)];
+    /// @notice Every art class, in blob order. Deploy scripts and tests
+    /// MUST iterate this rather than restating it. Dynamic on purpose: a
+    /// library constant is not accepted as a fixed-array length, and a
+    /// hand-written length is the very thing this function removes.
+    function classNames() internal pure returns (bytes32[] memory out) {
+        out = new bytes32[](13);
+        out[0] = bytes32("HEADS");
+        out[1] = bytes32("SHADING");
+        out[2] = bytes32("EARS");
+        out[3] = bytes32("EYES");
+        out[4] = bytes32("BROWS");
+        out[5] = bytes32("NOSES");
+        out[6] = bytes32("MOUTHS");
+        out[7] = bytes32("BEARDS");
+        out[8] = bytes32("HAIR");
+        out[9] = bytes32("HEADWEAR");
+        out[10] = bytes32("NECKS");
+        out[11] = bytes32("BUILDS");
+        out[12] = bytes32("COLLARS");
     }
-    function cumEyes() internal pure returns (uint16[10] memory) {
-        return [uint16(415), uint16(824), uint16(1233), uint16(1642), uint16(2051), uint16(2460), uint16(2869), uint16(3278), uint16(3687), uint16(4096)];
+
+    uint256 internal constant HEADWEAR_COVERS_MASK = 56;
+    uint256 internal constant HEADWEAR_BAND_MASK = 6;
+
+    // ---- anchor system
+    uint256 internal constant CX = 16;
+    uint256 internal constant HEAD_TOP = 4;
+    uint256 internal constant EYE_W = 4;
+    uint256 internal constant EAR_W = 4;
+    /// @dev 4 bytes per head: width, chinY, eyeY, eyeGap. Everything else
+    /// (headX, brow/nose/mouth/ear lines, eye x, width class) is DERIVED.
+    bytes internal constant HEAD_GEOM = hex"0e150c030c160c020f140c0410150c0510160b050f150b04";
+    /// @dev one byte per class, in blob order: HEADS, SHADING, EARS, EYES, BROWS, NOSES, MOUTHS, BEARDS, HAIR, HEADWEAR, NECKS, BUILDS, COLLARS
+    bytes internal constant CLASS_ATTACH = hex"00000301020405060707000000";
+    /// @dev mirror-box width per class; 0 means the part is drawn once
+    bytes internal constant CLASS_MIRROR = hex"00000404040000000000000000";
+
+    // ---- weight tables: 2 bytes per entry, indexed by CLS_* below
+    uint256 internal constant CLS_HEAD = 0;
+    uint256 internal constant CLS_EYES = 1;
+    uint256 internal constant CLS_BROWS = 2;
+    uint256 internal constant CLS_NOSE = 3;
+    uint256 internal constant CLS_MOUTH = 4;
+    uint256 internal constant CLS_EARS = 5;
+    uint256 internal constant CLS_BUILD = 6;
+    uint256 internal constant CLS_COLLAR = 7;
+    uint256 internal constant CLS_HAIR = 8;
+    uint256 internal constant CLS_BEARD = 9;
+    uint256 internal constant CLS_HEADWEAR = 10;
+    uint256 internal constant CLS_HAIRCOLOR = 11;
+    uint256 internal constant CLS_SKIN = 12;
+    uint256 internal constant CLS_BG = 13;
+    uint256 internal constant CLS_ACCENT = 14;
+    uint256 internal constant CLS_IRIS = 15;
+    uint256 internal constant CLS_COUNT = 16;
+    bytes internal constant CUM_DATA = hex"02ae055808020aac0d56100002ae055808020aac0d56100002ae055808020aac0d561000024a049306dc09250b6e0db71000024a049306dc09250b6e0db7100005dd0ccd1000039908ce0d34100004a308d80ca21000006a017302a203ab04a7057b066a0766082008bf095109bb0a670b060b8a0c6c0d260db80e720f39100004270669081a09b30b040d160edf10000b780ccb0dd70e9b0f2a1000028504d506f308e00a9c0c260d7f0ea7100002000400060008000a000c000e00100002000400060008000a000c000e00100002000400060008000a000c000e001000040008000c001000";
+    bytes internal constant CUM_OFFSET = hex"00000006000c00120019002000230027002b00400048004e0057005f0067006f";
+    bytes internal constant CUM_LEN = hex"06060607070304041508060908080804";
+
+    /// @notice The cumulative table for one class, unpacked.
+    function cumOf(uint256 cls) internal pure returns (uint16[] memory out) {
+        bytes memory off = CUM_OFFSET;
+        bytes memory len = CUM_LEN;
+        bytes memory data = CUM_DATA;
+        uint256 start = (uint256(uint8(off[cls * 2])) << 8) | uint256(uint8(off[cls * 2 + 1]));
+        uint256 n = uint256(uint8(len[cls]));
+        out = new uint16[](n);
+        for (uint256 k; k < n; ++k) {
+            uint256 j = (start + k) * 2;
+            out[k] = uint16((uint256(uint8(data[j])) << 8) | uint256(uint8(data[j + 1])));
+        }
     }
-    function cumBrows() internal pure returns (uint16[8] memory) {
-        return [uint16(512), uint16(1024), uint16(1536), uint16(2048), uint16(2560), uint16(3072), uint16(3584), uint16(4096)];
-    }
-    function cumNose() internal pure returns (uint16[3] memory) {
-        return [uint16(1366), uint16(2731), uint16(4096)];
-    }
-    function cumMouth() internal pure returns (uint16[10] memory) {
-        return [uint16(415), uint16(824), uint16(1233), uint16(1642), uint16(2051), uint16(2460), uint16(2869), uint16(3278), uint16(3687), uint16(4096)];
-    }
-    function cumHair() internal pure returns (uint16[24] memory) {
-        return [uint16(93), uint16(198), uint16(408), uint16(641), uint16(906), uint16(1139), uint16(1360), uint16(1546), uint16(1756), uint16(1977), uint16(2140), uint16(2280), uint16(2408), uint16(2501), uint16(2652), uint16(2792), uint16(2908), uint16(3106), uint16(3269), uint16(3397), uint16(3560), uint16(3735), uint16(3921), uint16(4096)];
-    }
-    function cumBeard() internal pure returns (uint16[8] memory) {
-        return [uint16(1063), uint16(1641), uint16(2074), uint16(2483), uint16(2820), uint16(3350), uint16(3807), uint16(4096)];
-    }
-    function cumHeadwear() internal pure returns (uint16[10] memory) {
-        return [uint16(2574), uint16(2830), uint16(3029), uint16(3257), uint16(3428), uint16(3542), uint16(3670), uint16(3769), uint16(3925), uint16(4096)];
-    }
-    function cumHairColor() internal pure returns (uint16[9] memory) {
-        return [uint16(645), uint16(1237), uint16(1779), uint16(2272), uint16(2716), uint16(3110), uint16(3455), uint16(3751), uint16(4096)];
-    }
-    function cumSkin() internal pure returns (uint16[8] memory) {
-        return [uint16(512), uint16(1024), uint16(1536), uint16(2048), uint16(2560), uint16(3072), uint16(3584), uint16(4096)];
-    }
-    function cumBg() internal pure returns (uint16[8] memory) {
-        return [uint16(512), uint16(1024), uint16(1536), uint16(2048), uint16(2560), uint16(3072), uint16(3584), uint16(4096)];
-    }
-    function cumAccent() internal pure returns (uint16[8] memory) {
-        return [uint16(512), uint16(1024), uint16(1536), uint16(2048), uint16(2560), uint16(3072), uint16(3584), uint16(4096)];
-    }
-    function cumIris() internal pure returns (uint16[4] memory) {
-        return [uint16(1024), uint16(2048), uint16(3072), uint16(4096)];
-    }
+
+    // ---- deterministic compatibility tables (item 16). Generated from the
+    // reference renderer, never restated by hand.
+    bytes internal constant HAIR_FALLBACK = hex"0001020304050607070101010d0d0e031111121302";
+    bytes internal constant NECK_OF_BUILD = hex"00010102";
+    /// @dev mouths a head of each width class may wear, concatenated
+    bytes internal constant MOUTH_ELIG = hex"000406000204050600010203040506";
+    bytes internal constant MOUTH_ELIG_LEN = hex"030507";
+    /// @dev x and width of each build's torso box, so the kit composer can
+    /// place a pattern from pure geometry without ever seeing a trait.
+    bytes internal constant BUILD_TORSO = hex"07120516031a021c";
 
     // palettes, packed 3 bytes per colour
     bytes internal constant SKIN_BASE = hex"fedfd1eac0aed3a28dba86719e6c59805444613f32432a23";

@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {FobalArtLibrary} from "../../src/FobalArtLibrary.sol";
+import {FobalArtConstants as K} from "../../src/art/FobalArtConstants.sol";
 import {FobalFaceComposer} from "../../src/art/FobalFaceComposer.sol";
 import {FobalKitComposer} from "../../src/art/FobalKitComposer.sol";
 import {FobalSquadRegistry} from "../../src/art/FobalSquadRegistry.sol";
@@ -14,7 +15,16 @@ import {FobalRendererV2_1, IPlayerReader2} from "../../src/art/FobalRendererV2_1
 /// the path players will actually be rendered through, across every pattern.
 contract KitParityTest is Test {
     FobalRendererV2_1 internal r2;
-    string[8] internal CLASSES = ["HEADS", "EYES", "BROWS", "NOSES", "MOUTHS", "BEARDS", "HAIR", "HEADWEAR"];
+    /// @dev the GENERATED install list — see FobalArtConstants.classNames()
+    bytes32[] internal CLASSES = K.classNames();
+
+    function _name(bytes32 k) internal pure returns (string memory) {
+        uint256 n;
+        while (n < 32 && k[n] != 0) ++n;
+        bytes memory b = new bytes(n);
+        for (uint256 i; i < n; ++i) b[i] = k[i];
+        return string(b);
+    }
 
     bytes32[] internal dna;
     uint256[] internal appearance;
@@ -28,9 +38,9 @@ contract KitParityTest is Test {
         FobalArtLibrary art = new FobalArtLibrary(address(this));
         for (uint256 i; i < CLASSES.length; ++i) {
             string memory h = vm.readFile(
-                string.concat(vm.projectRoot(), "/../packages/art/gen/blobs/", CLASSES[i], ".hex")
+                string.concat(vm.projectRoot(), "/../packages/art/gen/blobs/", _name(CLASSES[i]), ".hex")
             );
-            art.setClass(bytes32(bytes(CLASSES[i])), vm.parseBytes(vm.replace(h, "\n", "")));
+            art.setClass(CLASSES[i], vm.parseBytes(vm.replace(h, "\n", "")));
         }
         r2 = new FobalRendererV2_1(
             IPlayerReader2(address(0)),

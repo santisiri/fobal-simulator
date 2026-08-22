@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
+import {FobalArtConstants as K} from "../src/art/FobalArtConstants.sol";
 import {FobalArtLibrary} from "../src/FobalArtLibrary.sol";
 
 /// Deploys the art atlas and installs every generated class, verifying each
@@ -14,7 +15,18 @@ import {FobalArtLibrary} from "../src/FobalArtLibrary.sol";
 /// Sealing is deliberately NOT done here: seal only after the rendered output
 /// has been inspected on chain, because a sealed class is permanent.
 contract DeployArtLibrary is Script {
-    string[8] internal CLASSES = ["HEADS", "EYES", "BROWS", "NOSES", "MOUTHS", "BEARDS", "HAIR", "HEADWEAR"];
+    /// @dev NOT a hand-written list. It was one, in five places, and adding
+    /// classes left this script installing eight of thirteen — the rest
+    /// degrading to nothing on chain instead of failing loudly.
+    bytes32[] internal CLASSES = K.classNames();
+
+    function _name(bytes32 k) internal pure returns (string memory) {
+        uint256 n;
+        while (n < 32 && k[n] != 0) ++n;
+        bytes memory b = new bytes(n);
+        for (uint256 i; i < n; ++i) b[i] = k[i];
+        return string(b);
+    }
 
     function run() external returns (FobalArtLibrary lib) {
         address admin = vm.envAddress("FOBAL_ART_ADMIN");
@@ -22,22 +34,22 @@ contract DeployArtLibrary is Script {
         vm.startBroadcast();
         lib = new FobalArtLibrary(admin);
         for (uint256 i; i < CLASSES.length; ++i) {
-            bytes memory blob = _blob(CLASSES[i]);
-            lib.setClass(bytes32(bytes(CLASSES[i])), blob);
+            bytes memory blob = _blob(_name(CLASSES[i]));
+            lib.setClass(CLASSES[i], blob);
         }
         vm.stopBroadcast();
 
         // read-back verification, before any human is told this worked
         uint256 totalRects;
         for (uint256 i; i < CLASSES.length; ++i) {
-            bytes32 key = bytes32(bytes(CLASSES[i]));
-            bytes memory blob = _blob(CLASSES[i]);
+            bytes32 key = CLASSES[i];
+            bytes memory blob = _blob(_name(key));
             uint8 n = lib.partCount(key);
             require(n == uint8(blob[1]), "part count mismatch after write");
             for (uint8 p; p < n; ++p) {
                 totalRects += lib.part(key, p).length;
             }
-            console2.log(CLASSES[i], n, blob.length);
+            console2.log(_name(CLASSES[i]), n, blob.length);
         }
         console2.log("art library deployed", address(lib));
         console2.log("rects verified by read-back", totalRects);

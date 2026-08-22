@@ -9,6 +9,7 @@ import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error — plain JS modules, deliberately unbuilt
 import { CLASSES } from '../spec/parts.js';
+import { HEAD_SPECS } from '../spec/anchors.js';
 // @ts-expect-error
 import { CUM, DENOM, RAW, toCumulative, pickFromCum, assertWeights } from '../spec/weights.js';
 // @ts-expect-error
@@ -170,14 +171,43 @@ describe('generated artefacts agree with the spec', () => {
     }
     expect(solSrc).toContain(`WEIGHT_DENOM = ${DENOM};`);
     expect(solSrc).toContain(`BIAS = ${BIAS};`);
-    // spot-check a full table round-trips into Solidity syntax
-    expect(solSrc).toContain(CUM.hair.map((v: number) => `uint16(${v})`).join(', '));
+    // EVERY table, in the packed form Solidity now reads: 2 bytes per entry,
+    // concatenated in CUM key order. A spot check of one class let the other
+    // fifteen drift.
+    const b4 = (n: number) => n.toString(16).padStart(4, '0');
+    const keys = Object.keys(CUM);
+    expect(solSrc).toContain(`CUM_DATA = hex"${keys.map((k) => (CUM as any)[k].map(b4).join('')).join('')}"`);
+    expect(solSrc).toContain(`CUM_LEN = hex"${keys.map((k) => (CUM as any)[k].length.toString(16).padStart(2, '0')).join('')}"`);
+    keys.forEach((k, i) => expect(solSrc).toContain(`CLS_${k.toUpperCase()} = ${i};`));
+
+    // the install list must name every class, in blob order — the omission
+    // that would otherwise ship five classes short
+    Object.keys(CLASSES).forEach((name, i) => expect(solSrc).toContain(`out[${i}] = bytes32("${name}");`));
+    expect(solSrc).toContain(`ART_CLASS_COUNT = ${Object.keys(CLASSES).length};`);
+  });
+
+  test('the anchor table is generated, and the derived anchors are not stored', () => {
+    const solSrc = sol();
+    const b2 = (n: number) => n.toString(16).padStart(2, '0');
+    // FOUR integers per head reach the chain; the other ten anchors are
+    // recomputed on both sides (item 20)
+    expect(solSrc).toContain(
+      `HEAD_GEOM = hex"${HEAD_SPECS.map((h: any) => b2(h.w) + b2(h.bottom) + b2(h.eyeY) + b2(h.eyeGap)).join('')}"`
+    );
+    expect(solSrc).not.toContain('MOUTH_Y');
+    expect(solSrc).not.toContain('BROW_Y');
+    // and every class declares how it attaches and whether it mirrors
+    expect(solSrc).toMatch(/CLASS_ATTACH = hex"[0-9a-f]+"/);
+    expect(solSrc).toMatch(/CLASS_MIRROR = hex"[0-9a-f]+"/);
   });
 
   test('the web module carries the same part data (no hand-port drift)', () => {
     const web = gen('parts.web.js');
     const afro = (CLASSES as any).HAIR.find((h: any) => h.name === 'Afro');
     expect(web).toContain(JSON.stringify(afro.rects));
+    // the anchor table travels with the part data, or the browser cannot place it
+    expect(web).toContain('export const ANCHOR =');
+    expect(web).toContain('export const HEAD_SPECS =');
     expect(web).toContain(`export const CANVAS = 32;`);
   });
 });

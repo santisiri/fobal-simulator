@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {FobalArtConstants as K} from "../../src/art/FobalArtConstants.sol";
 import {FobalArtLibrary} from "../../src/FobalArtLibrary.sol";
 import {SSTORE2} from "../../src/libraries/SSTORE2.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -30,6 +31,14 @@ contract ArtLibraryTest is Test {
         return vm.parseBytes(vm.replace(hexStr, "\n", ""));
     }
 
+    function _name(bytes32 k) internal pure returns (string memory) {
+        uint256 n;
+        while (n < 32 && k[n] != 0) ++n;
+        bytes memory b = new bytes(n);
+        for (uint256 i; i < n; ++i) b[i] = k[i];
+        return string(b);
+    }
+
     function _install(bytes32 key, string memory className) internal returns (bytes memory blob) {
         blob = _blob(className);
         vm.prank(admin);
@@ -38,25 +47,66 @@ contract ArtLibraryTest is Test {
 
     // ------------------------------------------------- the cross-language proof
 
+    /// EVERY rect of EVERY class, replayed from the generated fixture. This
+    /// replaced three hand-picked spot checks that asserted literal counts and
+    /// coordinates — they broke the moment the atlas grew, and while they were
+    /// broken they were proving nothing about the other twelve classes.
     function test_decodesGeneratedBytesToTheExactJsRects() public {
-        _install(HAIR, "HAIR");
-        assertEq(lib.partCount(HAIR), 24, "class size must match the generated constant");
+        bytes32[] memory names = K.classNames();
+        for (uint256 i; i < names.length; ++i) {
+            _install(names[i], _name(names[i]));
+        }
 
-        // HAIR[10] "Afro" — the JS reference decodes this to
-        //   [[6,-1,20,10,4],[5,3,3,7,4],[24,3,3,7,4]]
-        // and it is the case that proves NEGATIVE coordinates survive the bias.
-        FobalArtLibrary.Rect[] memory afro = lib.part(HAIR, 10);
-        assertEq(afro.length, 3, "afro rect count");
-        assertEq(afro[0].x, int16(6));
-        assertEq(afro[0].y, int16(-1));      // above the canvas, on purpose
-        assertEq(afro[0].w, uint8(20));
-        assertEq(afro[0].h, uint8(10));
-        assertEq(afro[0].slot, uint8(4));
-        assertEq(afro[1].x, int16(5));
-        assertEq(afro[1].y, int16(3));
-        assertEq(afro[2].x, int16(24));
-        assertEq(afro[2].w, uint8(3));
-        assertEq(afro[2].h, uint8(7));
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/../packages/art/gen/fixtures/rects.json"));
+        string[] memory fxClass = vm.parseJsonStringArray(json, ".className");
+        uint256[] memory fxPart = vm.parseJsonUintArray(json, ".partIndex");
+        int256[] memory fxX = vm.parseJsonIntArray(json, ".x");
+        int256[] memory fxY = vm.parseJsonIntArray(json, ".y");
+        uint256[] memory fxW = vm.parseJsonUintArray(json, ".w");
+        uint256[] memory fxH = vm.parseJsonUintArray(json, ".h");
+        uint256[] memory fxSlot = vm.parseJsonUintArray(json, ".slot");
+        uint256[] memory fxCount = vm.parseJsonUintArray(json, ".partCount");
+
+        assertEq(fxCount.length, names.length, "fixture covers every class");
+        for (uint256 i; i < names.length; ++i) {
+            assertEq(uint256(lib.partCount(names[i])), fxCount[i], _name(names[i]));
+        }
+
+        // walk the flattened fixture, re-decoding a part only when it changes
+        uint256 k;
+        for (uint256 i; i < names.length; ++i) {
+            string memory cn = _name(names[i]);
+            for (uint8 p; p < lib.partCount(names[i]); ++p) {
+                FobalArtLibrary.Rect[] memory rects = lib.part(names[i], p);
+                for (uint256 r; r < rects.length; ++r) {
+                    assertLt(k, fxX.length, "fixture ran out of rects");
+                    assertEq(fxClass[k], cn, "class order");
+                    assertEq(fxPart[k], uint256(p), "part order");
+                    assertEq(int256(rects[r].x), fxX[k], string.concat(cn, " x"));
+                    assertEq(int256(rects[r].y), fxY[k], string.concat(cn, " y"));
+                    assertEq(uint256(rects[r].w), fxW[k], string.concat(cn, " w"));
+                    assertEq(uint256(rects[r].h), fxH[k], string.concat(cn, " h"));
+                    assertEq(uint256(rects[r].slot), fxSlot[k], string.concat(cn, " slot"));
+                    ++k;
+                }
+            }
+        }
+        assertEq(k, fxX.length, "every generated rect must be accounted for");
+        assertGt(k, 250, "the atlas must not have silently shrunk to nothing");
+    }
+
+    /// Negative coordinates must survive the bias — parts legitimately draw
+    /// outside the frame, and an unsigned decode would wrap them.
+    function test_negativeCoordinatesSurviveTheBias() public {
+        _install(bytes32("HAIR"), "HAIR");
+        bool sawNegative;
+        for (uint8 p; p < lib.partCount(bytes32("HAIR")); ++p) {
+            FobalArtLibrary.Rect[] memory rects = lib.part(bytes32("HAIR"), p);
+            for (uint256 r; r < rects.length; ++r) {
+                if (rects[r].x < 0 || rects[r].y < 0) sawNegative = true;
+            }
+        }
+        assertTrue(sawNegative, "hair draws above and beside the skull; the bias must carry that");
     }
 
     function test_emptyPartDecodesToNoRects() public {
@@ -66,14 +116,17 @@ contract ArtLibraryTest is Test {
 
     function test_decodesASecondClassIndependently() public {
         _install(NOSES, "NOSES");
-        assertEq(lib.partCount(NOSES), 3);
-        FobalArtLibrary.Rect[] memory broad = lib.part(NOSES, 1);
-        assertEq(broad.length, 2);
-        assertEq(broad[0].x, int16(14));
-        assertEq(broad[0].y, int16(16));
-        assertEq(broad[0].w, uint8(4));
-        assertEq(broad[1].x, int16(15));
-        assertEq(broad[1].slot, uint8(2));
+        assertEq(uint256(lib.partCount(NOSES)), K.NOSES_COUNT, "count must track the generated constant");
+        // whatever the atlas holds, a second class must decode on its own
+        // rather than inheriting the first one's offsets
+        FobalArtLibrary.Rect[] memory first = lib.part(NOSES, 0);
+        FobalArtLibrary.Rect[] memory last = lib.part(NOSES, uint8(K.NOSES_COUNT - 1));
+        assertGt(first.length, 0);
+        assertGt(last.length, 0);
+        assertTrue(
+            first.length != last.length || first[0].x != last[0].x || first[0].y != last[0].y,
+            "two different noses must not decode identically"
+        );
     }
 
     /// every part of every generated class must decode without reverting and
@@ -171,7 +224,9 @@ contract ArtLibraryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(FobalArtLibrary.UnknownClass.selector, bytes32("NOPE")));
         lib.part(bytes32("NOPE"), 0);
         _install(NOSES, "NOSES");
-        vm.expectRevert(abi.encodeWithSelector(FobalArtLibrary.PartOutOfRange.selector, uint8(3), uint8(3)));
-        lib.part(NOSES, 3);
+        // one past the end, whatever the end currently is
+        uint8 n = uint8(K.NOSES_COUNT);
+        vm.expectRevert(abi.encodeWithSelector(FobalArtLibrary.PartOutOfRange.selector, n, n));
+        lib.part(NOSES, n);
     }
 }

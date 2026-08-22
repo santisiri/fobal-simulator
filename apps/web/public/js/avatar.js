@@ -114,49 +114,119 @@ const ACCENT = ["e8e2d4","1b1b1f","d8342c","e0a02a","2f8f4e","2f6fd0","8a5cf6","
 const INK = "0f0b09";
 const EYE_WHITE = "f4f1ea";
 const IRIS = ["3b2a1c","2a3d52","3d5240","5a4632"];
-const CUM = {"head":[686,1368,2050,2732,3414,4096],"eyes":[415,824,1233,1642,2051,2460,2869,3278,3687,4096],"brows":[512,1024,1536,2048,2560,3072,3584,4096],"nose":[1366,2731,4096],"mouth":[415,824,1233,1642,2051,2460,2869,3278,3687,4096],"hair":[93,198,408,641,906,1139,1360,1546,1756,1977,2140,2280,2408,2501,2652,2792,2908,3106,3269,3397,3560,3735,3921,4096],"beard":[1063,1641,2074,2483,2820,3350,3807,4096],"headwear":[2574,2830,3029,3257,3428,3542,3670,3769,3925,4096],"hairColor":[645,1237,1779,2272,2716,3110,3455,3751,4096],"skin":[512,1024,1536,2048,2560,3072,3584,4096],"bg":[512,1024,1536,2048,2560,3072,3584,4096],"accent":[512,1024,1536,2048,2560,3072,3584,4096],"iris":[1024,2048,3072,4096]};
+const CUM = {"head":[686,1368,2050,2732,3414,4096],"eyes":[686,1368,2050,2732,3414,4096],"brows":[686,1368,2050,2732,3414,4096],"nose":[586,1171,1756,2341,2926,3511,4096],"mouth":[586,1171,1756,2341,2926,3511,4096],"ears":[1501,3277,4096],"build":[921,2254,3380,4096],"collar":[1187,2264,3234,4096],"hair":[106,371,674,939,1191,1403,1642,1894,2080,2239,2385,2491,2663,2822,2954,3180,3366,3512,3698,3897,4096],"beard":[1063,1641,2074,2483,2820,3350,3807,4096],"headwear":[2936,3275,3543,3739,3882,4096],"hairColor":[645,1237,1779,2272,2716,3110,3455,3751,4096],"skin":[512,1024,1536,2048,2560,3072,3584,4096],"bg":[512,1024,1536,2048,2560,3072,3584,4096],"accent":[512,1024,1536,2048,2560,3072,3584,4096],"iris":[1024,2048,3072,4096]};
 const DENOM = 4096;
-const CANVAS = 32;
-const FACE = {"cx":16,"top":4,"bottom":21,"browY":11,"eyeY":12,"noseY":15,"mouthY":18};
 const SLOT = {"INK":0,"SKIN":1,"SHADE":2,"LIGHT":3,"HAIR":4,"HAIRD":5,"WHITE":6,"IRIS":7,"ACCENT":8,"KIT1":9,"KIT2":10,"KIT3":11};
-const HEADS = [{"name":"Narrow","rects":[[9,3,14,14,0],[10,4,12,13,1],[10,17,12,1,0],[11,17,10,1,1],[11,18,10,1,0],[12,18,8,1,1],[12,19,8,1,0],[13,19,6,1,1],[13,20,6,1,0],[10,4,12,1,3],[20,5,2,11,2],[8,11,2,4,0],[22,11,2,4,0],[8,12,1,2,1],[23,12,1,2,2]],"tags":[]},{"name":"Oval","rects":[[8,3,16,14,0],[9,4,14,13,1],[9,17,14,1,0],[10,17,12,1,1],[10,18,12,1,0],[11,18,10,1,1],[11,19,10,1,0],[12,19,8,1,1],[12,20,8,1,0],[9,4,14,1,3],[21,5,2,11,2],[7,11,2,4,0],[23,11,2,4,0],[7,12,1,2,1],[24,12,1,2,2]],"tags":[]},{"name":"Round","rects":[[8,3,16,14,0],[9,4,14,13,1],[8,17,16,1,0],[9,17,14,1,1],[9,18,14,1,0],[10,18,12,1,1],[9,19,14,1,0],[10,19,12,1,1],[10,20,12,1,0],[9,4,14,1,3],[21,5,2,11,2],[7,11,2,4,0],[23,11,2,4,0],[7,12,1,2,1],[24,12,1,2,2]],"tags":[]},{"name":"Square","rects":[[7,3,18,14,0],[8,4,16,13,1],[7,17,18,1,0],[8,17,16,1,1],[8,18,16,1,0],[9,18,14,1,1],[8,19,16,1,0],[9,19,14,1,1],[8,20,16,1,0],[8,4,16,1,3],[22,5,2,11,2],[6,11,2,4,0],[24,11,2,4,0],[6,12,1,2,1],[25,12,1,2,2]],"tags":[]},{"name":"Broad","rects":[[7,3,18,14,0],[8,4,16,13,1],[8,17,16,1,0],[9,17,14,1,1],[9,18,14,1,0],[10,18,12,1,1],[10,19,12,1,0],[11,19,10,1,1],[11,20,10,1,0],[8,4,16,1,3],[22,5,2,11,2],[6,11,2,4,0],[24,11,2,4,0],[6,12,1,2,1],[25,12,1,2,2]],"tags":[]},{"name":"Angular","rects":[[8,3,16,14,0],[9,4,14,13,1],[10,17,12,1,0],[11,17,10,1,1],[11,18,10,1,0],[12,18,8,1,1],[13,19,6,1,0],[14,19,4,1,1],[14,20,4,1,0],[9,4,14,1,3],[21,5,2,11,2],[7,11,2,4,0],[23,11,2,4,0],[7,12,1,2,1],[24,12,1,2,2]],"tags":[]}];
-const EYES = [{"name":"Neutral","rects":[[10,12,4,2,6],[11,12,2,2,7],[18,12,4,2,6],[19,12,2,2,7]],"tags":[]},{"name":"Narrow","rects":[[10,13,4,1,6],[11,13,2,1,7],[18,13,4,1,6],[19,13,2,1,7]],"tags":[]},{"name":"Wide","rects":[[10,11,4,3,6],[11,12,2,2,7],[18,11,4,3,6],[19,12,2,2,7]],"tags":[]},{"name":"Sleepy","rects":[[10,13,4,1,0],[18,13,4,1,0]],"tags":[]},{"name":"Focused","rects":[[10,12,4,2,6],[12,12,2,2,7],[18,12,4,2,6],[18,12,2,2,7]],"tags":[]},{"name":"Smiling","rects":[[10,13,4,1,0],[10,12,4,1,2],[18,13,4,1,0],[18,12,4,1,2]],"tags":[]},{"name":"Intense","rects":[[10,12,4,2,6],[11,12,2,2,7],[10,11,4,1,0],[18,12,4,2,6],[19,12,2,2,7],[18,11,4,1,0]],"tags":[]},{"name":"Deep-set","rects":[[10,12,4,2,2],[11,12,2,2,7],[18,12,4,2,2],[19,12,2,2,7]],"tags":[]},{"name":"Close-set","rects":[[11,12,4,2,6],[12,12,2,2,7],[17,12,4,2,6],[18,12,2,2,7]],"tags":[]},{"name":"Wide-set","rects":[[9,12,4,2,6],[10,12,2,2,7],[19,12,4,2,6],[20,12,2,2,7]],"tags":[]}];
-const BROWS = [{"name":"Straight","rects":[[10,11,4,1,4],[18,11,4,1,4]],"tags":[]},{"name":"Thick","rects":[[10,10,4,2,4],[18,10,4,2,4]],"tags":[]},{"name":"Arched","rects":[[10,10,2,1,4],[12,11,2,1,4],[20,10,2,1,4],[18,11,2,1,4]],"tags":[]},{"name":"Angry","rects":[[12,10,2,1,4],[10,11,2,1,4],[18,10,2,1,4],[20,11,2,1,4]],"tags":[]},{"name":"Raised","rects":[[10,9,4,1,4],[18,9,4,1,4]],"tags":[]},{"name":"Thin","rects":[[11,11,3,1,4],[19,11,3,1,4]],"tags":[]},{"name":"Furrowed","rects":[[10,11,4,1,4],[13,12,1,1,4],[18,11,4,1,4],[18,12,1,1,4]],"tags":[]},{"name":"Slit","rects":[[10,10,4,2,4],[18,10,4,2,4],[11,10,1,2,1]],"tags":[]}];
-const NOSES = [{"name":"Small","rects":[[15,15,2,2,2]],"tags":[]},{"name":"Broad","rects":[[14,16,4,1,2],[15,15,2,1,2]],"tags":[]},{"name":"Long","rects":[[15,14,2,3,2]],"tags":[]}];
-const MOUTHS = [{"name":"Neutral","rects":[[14,18,4,1,0]],"tags":[]},{"name":"Slight Smile","rects":[[14,18,4,1,0],[13,17,1,1,0],[18,17,1,1,0]],"tags":[]},{"name":"Broad Smile","rects":[[13,18,6,2,0],[14,18,4,1,6]],"tags":[]},{"name":"Smirk","rects":[[14,18,4,1,0],[18,17,1,1,0]],"tags":[]},{"name":"Open","rects":[[14,17,4,3,0],[15,18,2,1,6]],"tags":[]},{"name":"Stern","rects":[[13,18,6,1,0]],"tags":[]},{"name":"Gritted","rects":[[13,18,6,2,0],[14,18,4,1,6],[16,18,1,1,0]],"tags":[]},{"name":"Tired","rects":[[14,19,4,1,0],[13,18,1,1,0]],"tags":[]},{"name":"Shouting","rects":[[14,17,5,4,0],[15,18,3,2,6]],"tags":[]},{"name":"Pursed","rects":[[15,18,3,1,0]],"tags":[]}];
-const BEARDS = [{"name":"None","rects":[],"tags":[]},{"name":"Stubble","rects":[[11,17,10,4,5]],"tags":[]},{"name":"Moustache","rects":[[13,16,6,1,4]],"tags":[]},{"name":"Goatee","rects":[[14,20,4,2,4]],"tags":[]},{"name":"Chinstrap","rects":[[9,15,2,6,4],[21,15,2,6,4],[11,19,10,2,4]],"tags":[]},{"name":"Short Beard","rects":[[10,16,12,5,4],[13,16,6,1,4]],"tags":[]},{"name":"Full Beard","rects":[[9,14,14,8,4],[13,16,6,1,4],[14,18,4,1,0]],"tags":[]},{"name":"Long Beard","rects":[[9,14,14,9,4],[12,23,8,3,4],[13,16,6,1,4]],"tags":[]}];
-const HAIR = [{"name":"Bald","rects":[],"tags":[]},{"name":"Shaved","rects":[[9,3,14,3,5]],"tags":[]},{"name":"Buzz","rects":[[8,3,16,3,4]],"tags":[]},{"name":"Crop","rects":[[8,3,16,4,4]],"tags":[]},{"name":"Short","rects":[[8,3,16,4,4],[8,7,2,3,4],[22,7,2,3,4]],"tags":[]},{"name":"Side Part","rects":[[8,3,16,4,4],[8,3,7,6,4]],"tags":[]},{"name":"Swept","rects":[[8,3,16,4,4],[19,1,6,4,4]],"tags":[]},{"name":"Quiff","rects":[[8,3,16,3,4],[12,-1,8,4,4]],"tags":[]},{"name":"Messy","rects":[[8,3,16,4,4],[10,0,3,3,4],[16,-1,4,4,4],[21,1,3,3,4]],"tags":[]},{"name":"Curly","rects":[[8,3,16,5,4],[7,5,3,5,4],[22,5,3,5,4],[11,1,10,3,4]],"tags":[]},{"name":"Afro","rects":[[6,-1,20,10,4],[5,3,3,7,4],[24,3,3,7,4]],"tags":[]},{"name":"High Top","rects":[[8,3,16,3,4],[10,-4,12,7,4]],"tags":[]},{"name":"Flat Top","rects":[[8,3,16,3,4],[9,-2,14,5,4]],"tags":[]},{"name":"Mohawk","rects":[[14,-3,5,9,4],[9,3,14,2,5]],"tags":[]},{"name":"Dreads","rects":[[8,3,16,4,4],[8,7,2,8,4],[12,7,2,11,4],[16,7,2,14,4],[20,7,2,8,4],[24,7,2,11,4]],"tags":[]},{"name":"Braids","rects":[[8,3,16,4,4],[9,7,2,5,5],[13,7,2,5,5],[17,7,2,5,5],[21,7,2,5,5]],"tags":[]},{"name":"Cornrows","rects":[[8,3,2,6,4],[11,3,2,6,4],[14,3,2,6,4],[17,3,2,6,4],[20,3,2,6,4]],"tags":[]},{"name":"Long","rects":[[8,3,16,4,4],[7,7,3,12,4],[22,7,3,12,4]],"tags":[]},{"name":"Ponytail","rects":[[8,3,16,4,4],[23,7,3,7,4],[24,12,2,4,4]],"tags":[]},{"name":"Topknot","rects":[[8,3,16,4,4],[14,-1,5,4,4]],"tags":[]},{"name":"Undercut","rects":[[8,3,16,4,4],[8,7,16,2,5]],"tags":[]},{"name":"Receding","rects":[[10,3,12,3,4],[8,5,3,4,4],[21,5,3,4,4]],"tags":[]},{"name":"Widow Peak","rects":[[8,3,16,3,4],[15,6,2,2,4]],"tags":[]},{"name":"Wavy","rects":[[8,3,16,4,4],[8,1,5,3,4],[17,1,5,3,4]],"tags":[]}];
-const HEADWEAR = [{"name":"None","rects":[],"tags":[]},{"name":"Headband","rects":[[8,6,16,2,8]],"tags":["band"]},{"name":"Sweatband","rects":[[8,5,16,3,8],[8,6,16,1,9]],"tags":["band"]},{"name":"Cap","rects":[[8,1,16,5,9],[7,5,18,2,9],[7,7,18,1,0]],"tags":["covers"]},{"name":"Beanie","rects":[[8,0,16,7,8],[8,5,16,2,10]],"tags":["covers"]},{"name":"Keeper Cap","rects":[[8,1,16,4,10],[6,5,20,2,10]],"tags":["covers"]},{"name":"Bucket Hat","rects":[[9,0,14,5,8],[6,5,20,2,8]],"tags":["covers"]},{"name":"Scrum Cap","rects":[[8,1,16,8,8],[8,9,2,4,8],[22,9,2,4,8]],"tags":["covers"]},{"name":"Visor","rects":[[7,5,18,2,8],[7,7,18,1,0]],"tags":["band"]},{"name":"Bandana","rects":[[8,3,16,4,8],[21,6,4,5,8]],"tags":["covers"]}];
+const ANCHOR = {"HEADS":{"at":"absolute","mirror":false},"SHADING":{"at":"absolute","mirror":false},"EARS":{"at":"ears","mirror":true},"EYES":{"at":"eyes","mirror":true},"BROWS":{"at":"brows","mirror":true},"NOSES":{"at":"nose","mirror":false},"MOUTHS":{"at":"mouth","mirror":false},"BEARDS":{"at":"chin","mirror":false},"HAIR":{"at":"top","mirror":false},"HEADWEAR":{"at":"top","mirror":false},"NECKS":{"at":"absolute","mirror":false},"BUILDS":{"at":"absolute","mirror":false},"COLLARS":{"at":"absolute","mirror":false}};
+
+// ---- the anchor resolver, verbatim from spec/anchors.js
+// Per-head face architecture.
+//
+// v2's mistake: every face was drawn at the SAME coordinates regardless of
+// head shape, so choosing a head changed the outline and nothing inside it.
+// A wide head and a narrow head had identically-spaced eyes.
+//
+// Here a head carries an anchor set, and face parts are authored in LOCAL
+// space and TRANSLATED onto it. That means head choice moves the whole facial
+// architecture — eye spacing, brow line, nose height, mouth line, ear height
+// — for ZERO extra atlas bytes, because the parts are stored once and offset
+// at render time.
+//
+// STORED vs DERIVED (item 20): only what cannot be recomputed is stored.
+// Seven small integers per head; everything else falls out of them.
+
+const EYE_W = 4;   // authored eye width, local space
+const EAR_W = 4;   // mirror box for ears; local x=3 sits against the skull
+const CANVAS = 32;
+const CX = 16;          // faces are centred; noseX is therefore never stored
+
+/** w        skull width (even)
+ *  bottom   chin row — long vs short faces, not just wide vs narrow
+ *  jaw      taper per row toward the chin
+ *  eyeY     eye top row
+ *  eyeGap   pixels of skin BETWEEN the two eyes (drives spacing)
+ *  mouthY   mouth row
+ *  earY     ear top row  */
+const HEAD_SPECS = [
+  { name: 'Oval',      w: 14, bottom: 21, jaw: 1.0, eyeY: 12, eyeGap: 3 },
+  { name: 'Long',      w: 12, bottom: 22, jaw: 0.8, eyeY: 12, eyeGap: 2 },
+  { name: 'Round',     w: 15, bottom: 20, jaw: 0.3, eyeY: 12, eyeGap: 4 },
+  { name: 'Square',    w: 16, bottom: 21, jaw: 0.2, eyeY: 12, eyeGap: 5 },
+  { name: 'Heavy Jaw', w: 16, bottom: 22, jaw: 0.0, eyeY: 11, eyeGap: 5 },
+  { name: 'Tapered',   w: 15, bottom: 21, jaw: 1.6, eyeY: 11, eyeGap: 4 },
+];
+
+const HEAD_TOP = 4;
+
+/** Everything a face part needs to place itself. Derived values are computed
+ *  identically in Solidity — no stored redundancy, no divergence. */
+function anchorsOf(headIndex) {
+  const h = HEAD_SPECS[headIndex];
+  const x = CX - (h.w >> 1);
+  const gapHalf = h.eyeGap >> 1;
+  return {
+    name: h.name,
+    headX: x,
+    headW: h.w,
+    top: HEAD_TOP,
+    bottom: h.bottom,
+    jaw: h.jaw,
+    // eyes sit symmetrically about the centre, separated by eyeGap
+    leftEyeX: CX - gapHalf - EYE_W,
+    rightEyeX: CX + gapHalf + (h.eyeGap & 1),
+    eyeY: h.eyeY,
+    browY: h.eyeY - 3,                    // derived: leaves one skin row
+                                          // between brow and lid, so a heavy brow
+                                          // does not fuse into the eye
+    noseX: CX,                            // derived: faces are centred
+    noseY: h.eyeY + 2,                    // derived
+    // DERIVED, not stored: pinning the mouth three rows above the chin is what
+    // lets one authored beard fit all six skulls without covering the mouth.
+    mouthY: h.bottom - 3,
+    chinY: h.bottom,
+    earY: h.eyeY,                         // derived: ears align with the eye line
+    earLeftX: x - 3,
+    earRightX: x + h.w - 1,
+    hairlineY: HEAD_TOP,                  // derived
+    // a wide head can carry a wider mouth; a narrow one cannot. Used to BIAS
+    // variant selection rather than to stretch geometry (item 17: correlate
+    // on geometry, never on human traits).
+    widthClass: h.w <= 12 ? 0 : h.w <= 14 ? 1 : 2,
+  };
+}
+
+const HEADS = [{"name":"Oval","rects":[[8,3,16,14,0],[9,4,14,13,1],[9,17,14,1,0],[10,17,12,1,1],[10,18,12,1,0],[11,18,10,1,1],[11,19,10,1,0],[12,19,8,1,1],[12,20,8,1,0]],"tags":[]},{"name":"Long","rects":[[9,3,14,15,0],[10,4,12,14,1],[10,18,12,1,0],[11,18,10,1,1],[11,19,10,1,0],[12,19,8,1,1],[11,20,10,1,0],[12,20,8,1,1],[12,21,8,1,0]],"tags":[]},{"name":"Round","rects":[[8,3,17,13,0],[9,4,15,12,1],[8,16,17,1,0],[9,16,15,1,1],[9,17,15,1,0],[10,17,13,1,1],[9,18,15,1,0],[10,18,13,1,1],[9,19,15,1,0]],"tags":[]},{"name":"Square","rects":[[7,3,18,14,0],[8,4,16,13,1],[7,17,18,1,0],[8,17,16,1,1],[7,18,18,1,0],[8,18,16,1,1],[8,19,16,1,0],[9,19,14,1,1],[8,20,16,1,0]],"tags":[]},{"name":"Heavy Jaw","rects":[[7,3,18,15,0],[8,4,16,14,1],[7,18,18,1,0],[8,18,16,1,1],[7,19,18,1,0],[8,19,16,1,1],[7,20,18,1,0],[8,20,16,1,1],[7,21,18,1,0]],"tags":[]},{"name":"Tapered","rects":[[8,3,17,14,0],[9,4,15,13,1],[10,17,13,1,0],[11,17,11,1,1],[11,18,11,1,0],[12,18,9,1,1],[13,19,7,1,0],[14,19,5,1,1],[14,20,5,1,0]],"tags":[]}];
+const SHADING = [{"name":"Oval shading","rects":[[10,4,12,1,3],[21,5,2,12,2],[9,5,1,3,2],[11,15,2,2,2],[19,15,2,2,2],[12,20,8,1,2]],"tags":[]},{"name":"Long shading","rects":[[11,4,10,1,3],[20,5,2,13,2],[10,5,1,3,2],[12,15,2,2,2],[18,15,2,2,2],[13,21,6,1,2]],"tags":[]},{"name":"Round shading","rects":[[10,4,13,1,3],[22,5,2,11,2],[9,5,1,3,2],[10,15,2,2,2],[21,15,2,2,2],[11,19,11,1,2]],"tags":[]},{"name":"Square shading","rects":[[9,4,14,1,3],[22,5,2,12,2],[8,5,1,3,2],[9,15,2,2,2],[21,15,2,2,2],[9,20,14,1,2]],"tags":[]},{"name":"Heavy Jaw shading","rects":[[9,4,14,1,3],[22,5,2,13,2],[8,5,1,3,2],[9,14,2,2,2],[21,14,2,2,2],[9,21,14,1,2]],"tags":[]},{"name":"Tapered shading","rects":[[10,4,13,1,3],[22,5,2,12,2],[9,5,1,3,2],[12,14,2,2,2],[19,14,2,2,2],[13,20,7,1,2]],"tags":[]}];
+const EARS = [{"name":"Small","rects":[[2,1,2,2,1],[1,1,1,2,0],[2,2,1,1,2]],"tags":[]},{"name":"Normal","rects":[[2,0,2,4,1],[1,1,1,3,0],[2,0,2,1,0],[2,1,1,2,2]],"tags":[]},{"name":"Protruding","rects":[[1,0,3,5,1],[0,1,1,3,0],[1,0,3,1,0],[1,4,3,1,0],[1,1,1,3,2]],"tags":[]}];
+const EYES = [{"name":"Neutral","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,0]],"tags":[]},{"name":"Deep-set","rects":[[0,0,4,2,6],[1,0,2,2,7],[0,-1,4,1,2],[0,-2,4,1,2]],"tags":[]},{"name":"Wide","rects":[[0,-1,4,3,6],[1,0,2,2,7],[0,-2,4,1,0]],"tags":[]},{"name":"Narrow","rects":[[0,0,4,1,6],[1,0,2,1,7],[0,-1,4,1,0]],"tags":[]},{"name":"Heavy Lid","rects":[[0,1,4,1,6],[1,1,2,1,7],[0,-1,4,2,0]],"tags":[]},{"name":"Round","rects":[[0,-1,4,3,6],[1,-1,2,3,7],[0,-2,4,1,0]],"tags":[]}];
+const BROWS = [{"name":"Flat","rects":[[0,0,4,1,4]],"tags":[]},{"name":"Heavy","rects":[[0,-1,4,2,4]],"tags":[]},{"name":"Raised","rects":[[0,-1,4,1,4]],"tags":[]},{"name":"Angry","rects":[[0,0,2,1,4],[2,1,2,1,4]],"tags":[]},{"name":"Arched","rects":[[0,1,1,1,4],[1,0,3,1,4]],"tags":[]},{"name":"Thick Low","rects":[[0,0,4,1,4],[1,1,3,1,4]],"tags":[]}];
+const NOSES = [{"name":"Straight","rects":[[-1,0,1,3,2],[-1,3,2,1,2]],"tags":[]},{"name":"Short","rects":[[-1,1,1,2,2],[-1,3,2,1,2]],"tags":[]},{"name":"Long","rects":[[-1,-1,1,5,2],[-1,4,2,1,2]],"tags":[]},{"name":"Broad Tip","rects":[[-1,0,1,3,2],[-2,3,4,1,2],[-1,2,1,1,3]],"tags":[]},{"name":"Narrow","rects":[[0,0,1,3,2],[0,3,1,1,2]],"tags":[]},{"name":"Hooked","rects":[[-1,0,1,2,2],[-1,2,2,2,2]],"tags":[]},{"name":"Flat","rects":[[-2,2,4,1,2],[-1,1,1,1,2]],"tags":[]}];
+const MOUTHS = [{"name":"Neutral","w":4,"rects":[[-2,0,4,1,0]],"tags":[]},{"name":"Stern","w":6,"rects":[[-3,0,6,1,0]],"tags":[]},{"name":"Slight","w":5,"rects":[[-2,0,4,1,0],[-3,-1,1,1,0],[2,-1,1,1,0]],"tags":[]},{"name":"Wide Smile","w":6,"rects":[[-3,0,6,1,0],[-2,1,4,1,0],[-2,0,4,1,6]],"tags":[]},{"name":"Open","w":4,"rects":[[-2,-1,4,3,0],[-1,0,2,1,6]],"tags":[]},{"name":"Downturned","w":5,"rects":[[-2,0,4,1,0],[-3,1,1,1,0],[2,1,1,1,0]],"tags":[]},{"name":"Compressed","w":3,"rects":[[-1,0,3,1,0],[-1,-1,3,1,2]],"tags":[]}];
+const BEARDS = [{"name":"None","rects":[],"tags":[]},{"name":"Stubble","rects":[[-6,-5,2,4,5],[4,-5,2,4,5],[-5,-2,10,2,5]],"tags":[]},{"name":"Moustache","rects":[[-3,-4,6,1,4],[-4,-4,1,2,4],[3,-4,1,2,4]],"tags":[]},{"name":"Goatee","rects":[[-3,-4,6,1,4],[-2,-2,4,3,4]],"tags":[]},{"name":"Chinstrap","rects":[[-7,-6,2,7,4],[5,-6,2,7,4],[-5,0,10,1,4]],"tags":[]},{"name":"Short Beard","rects":[[-3,-4,6,1,4],[-7,-5,2,5,4],[5,-5,2,5,4],[-5,-2,10,2,4],[-4,0,8,1,4]],"tags":[]},{"name":"Full Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,1,4],[-4,1,8,1,4],[-3,2,6,1,5]],"tags":[]},{"name":"Long Beard","rects":[[-3,-4,6,1,4],[-7,-6,2,6,4],[5,-6,2,6,4],[-6,-2,12,2,4],[-5,0,10,2,4],[-4,2,8,2,4],[-3,4,6,1,4],[-2,5,4,1,5]],"tags":[]}];
+const HAIR = [{"name":"Bald","rects":[],"tags":[]},{"name":"Buzz","rects":[[-9,-1,18,3,4]],"tags":[]},{"name":"Short","rects":[[-9,-1,18,4,4],[-9,3,2,3,4],[7,3,2,3,4]],"tags":[]},{"name":"Side Part","rects":[[-9,-1,18,4,4],[-9,-1,7,6,4],[-2,3,1,1,5]],"tags":[]},{"name":"Swept","rects":[[-9,-1,18,4,4],[3,-3,7,4,4]],"tags":[]},{"name":"Quiff","rects":[[-9,-1,18,3,4],[-4,-5,8,4,4]],"tags":[]},{"name":"Messy","rects":[[-9,-1,18,4,4],[-7,-4,3,3,4],[-1,-5,4,4,4],[5,-3,3,3,4]],"tags":[]},{"name":"Curly","rects":[[-9,-1,18,5,4],[-10,1,3,5,4],[7,1,3,5,4],[-5,-3,10,3,4]],"tags":[]},{"name":"Afro","rects":[[-11,-5,22,10,4],[-12,-1,3,7,4],[9,-1,3,7,4]],"tags":[]},{"name":"High Top","rects":[[-9,-1,18,3,4],[-6,-8,12,7,4]],"tags":[]},{"name":"Flat Top","rects":[[-9,-1,18,3,4],[-8,-6,16,5,4]],"tags":[]},{"name":"Mohawk","rects":[[-2,-7,5,9,4],[-8,-1,16,2,5]],"tags":[]},{"name":"Dreads","rects":[[-9,-1,18,4,4],[-10,3,2,7,4],[-8,3,2,11,4],[6,3,2,7,4],[8,3,2,11,4]],"tags":[]},{"name":"Braids","rects":[[-9,-1,18,4,4],[-9,3,2,4,5],[-6,3,2,4,5],[4,3,2,4,5],[7,3,2,4,5],[-9,7,2,5,4],[7,7,2,5,4]],"tags":[]},{"name":"Cornrows","rects":[[-9,-1,18,6,5],[-9,-1,2,6,4],[-6,-1,2,6,4],[-3,-1,2,6,4],[0,-1,2,6,4],[3,-1,2,6,4],[6,-1,2,6,4]],"tags":[]},{"name":"Long","rects":[[-9,-1,18,4,4],[-10,3,3,13,4],[7,3,3,13,4]],"tags":[]},{"name":"Ponytail","rects":[[-9,-1,18,4,4],[8,2,3,9,4],[9,9,3,5,4]],"tags":[]},{"name":"Topknot","rects":[[-9,-1,18,4,4],[-2,-5,5,4,4]],"tags":[]},{"name":"Undercut","rects":[[-7,-4,14,7,4],[-9,3,18,2,5]],"tags":[]},{"name":"Receding","rects":[[-6,-1,12,3,4],[-9,1,3,4,4],[6,1,3,4,4]],"tags":[]},{"name":"Wavy","rects":[[-9,-1,18,4,4],[-9,-3,6,2,4],[-4,-4,7,2,4],[2,-3,7,2,4]],"tags":[]}];
+const HEADWEAR = [{"name":"None","rects":[],"tags":[]},{"name":"Headband","rects":[[-9,2,18,2,8],[-9,3,18,1,11],[6,1,3,4,8]],"tags":["band"]},{"name":"Sweatband","rects":[[-9,1,18,3,8],[-9,2,18,1,9],[-2,1,4,1,9]],"tags":["band"]},{"name":"Keeper Cap","rects":[[-8,-3,16,4,10],[-8,-3,16,1,11],[-10,1,20,1,10],[-9,2,18,1,10],[-9,3,18,1,2]],"tags":["covers"]},{"name":"Scrum Cap","rects":[[-8,-3,16,7,8],[-8,0,16,1,9],[-10,1,2,6,8],[8,1,2,6,8],[-10,6,2,1,0],[8,6,2,1,0]],"tags":["covers"]},{"name":"Bandana","rects":[[-9,-1,18,4,8],[-9,2,18,1,11],[7,2,3,3,8],[9,4,2,3,8]],"tags":["covers"]}];
+const NECKS = [{"name":"Narrow","rects":[[14,21,4,4,2],[15,22,2,3,1]],"tags":[]},{"name":"Normal","rects":[[13,21,6,4,2],[14,22,4,3,1]],"tags":[]},{"name":"Thick","rects":[[12,21,8,4,2],[13,22,6,3,1]],"tags":[]}];
+const BUILDS = [{"name":"Slim","rects":[[6,24,20,1,0],[7,25,18,7,9]],"tags":[]},{"name":"Normal","rects":[[4,24,24,1,0],[5,25,22,7,9]],"tags":[]},{"name":"Broad","rects":[[2,24,28,1,0],[3,25,26,7,9]],"tags":[]},{"name":"Very Broad","rects":[[1,23,30,1,0],[2,24,28,8,9]],"tags":[]}];
+const COLLARS = [{"name":"Crew","rects":[[12,24,8,2,8],[13,24,6,1,0]],"tags":[]},{"name":"V-Neck","rects":[[12,24,8,1,8],[13,25,6,1,8],[14,26,4,1,0]],"tags":[]},{"name":"Contrast V","rects":[[11,24,10,1,11],[13,25,6,2,11],[14,25,4,1,0]],"tags":[]},{"name":"Polo","rects":[[11,24,10,2,11],[13,24,6,1,0],[11,26,2,1,11],[19,26,2,1,11]],"tags":[]}];
 const pickFromCum = (cum, r) => { for (let i = 0; i < cum.length; i++) if (r < cum[i]) return i; return cum.length - 1; };
 
 // ---- the reference renderer, verbatim
-// FOBAL art v2 — trait engine + compositor (the TS/JS reference renderer).
+// FOBAL art — trait engine + compositor (the reference renderer).
 //
-// Structured exactly as the Solidity will be, so the two can be asserted
+// Structured exactly as the Solidity is, so the two can be asserted
 // byte-identical: derive lanes from one seed, resolve a TraitVector through
-// weighted CDFs + a constraint pass, resolve a palette, then splice authored
-// part rects in a fixed layer order.
+// weighted CDFs and a constraint pass, resolve a palette, then splice
+// authored rects in a fixed layer order — TRANSLATED onto the anchors of the
+// chosen head, which is what makes head choice restructure the whole face.
 
 // ------------------------------------------------------------------ lanes
-// KECCAK, not a convenience hash: byte-identical output is impossible
-// unless JS and Solidity derive lanes the same way. The Solidity is
-//   s0   = keccak256(abi.encodePacked(DOMAIN, dna, appearance))
-//   lane = uint256(keccak256(abi.encodePacked(s0, TAG)))
-// and this is the same computation over the same bytes.
-//
-// The seed excludes tokenId on purpose: the same (dna, appearance) must
-// render the same player forever, wherever it is read from — which is also
-// why a token can be re-rendered by a new renderer without re-identifying.
-
 const DOMAIN = keccak_256(new TextEncoder().encode('fobal.art.v2'));
-
 const u256 = (v) => {
   const out = new Uint8Array(32);
   let x = BigInt(v);
   for (let i = 31; i >= 0 && x > 0n; i--) { out[i] = Number(x & 0xffn); x >>= 8n; }
   return out;
 };
-const hexToBytes32 = (hex) => u256(BigInt(hex));
 const cat = (...parts) => {
   const n = parts.reduce((a, p) => a + p.length, 0);
   const out = new Uint8Array(n);
@@ -164,33 +234,24 @@ const cat = (...parts) => {
   for (const p of parts) { out.set(p, o); o += p.length; }
   return out;
 };
-const toBig = (bytes) => bytes.reduce((a, b) => (a << 8n) | BigInt(b), 0n);
+const toBig = (b) => b.reduce((a, x) => (a << 8n) | BigInt(x), 0n);
 
-/** s0 for a player. `dna` is a 0x-prefixed 32-byte hex string and
- *  `appearance` a uint256 — exactly what FobalPlayer.playerView returns. */
 function seedOf(dna, appearance) {
-  return keccak_256(cat(DOMAIN, hexToBytes32(dna), u256(appearance)));
+  return keccak_256(cat(DOMAIN, u256(BigInt(dna)), u256(appearance)));
 }
-
-const TAG = new TextEncoder();
-const lane = (s0, tag) => toBig(keccak_256(cat(s0, TAG.encode(tag))));
-
-/** Selection walks the SAME cumulative-4096 table the Solidity composer
- *  will walk (spec/weights.js), so JS and chain cannot disagree about which
- *  part a seed picks. Defining the weights in two places is precisely the
- *  drift this slice exists to remove. */
+const TE = new TextEncoder();
+const lane = (s0, tag) => toBig(keccak_256(cat(s0, TE.encode(tag))));
 const cdfPick = (s0, tag, cls) => pickFromCum(CUM[cls], Number(lane(s0, tag) % BigInt(DENOM)));
-
 
 // ------------------------------------------------------------- traits
 function traitsOf(s0) {
   const t = {
     head:      cdfPick(s0, 'HEAD', 'head'),
     skin:      cdfPick(s0, 'SKIN', 'skin'),
+    ears:      cdfPick(s0, 'EARS', 'ears'),
     eyes:      cdfPick(s0, 'EYES', 'eyes'),
     brows:     cdfPick(s0, 'BROWS', 'brows'),
     nose:      cdfPick(s0, 'NOSE', 'nose'),
-    mouth:     cdfPick(s0, 'MOUTH', 'mouth'),
     hair:      cdfPick(s0, 'HAIR', 'hair'),
     hairColor: cdfPick(s0, 'HAIRC', 'hairColor'),
     beard:     cdfPick(s0, 'BEARD', 'beard'),
@@ -198,14 +259,66 @@ function traitsOf(s0) {
     bg:        cdfPick(s0, 'BG', 'bg'),
     accent:    cdfPick(s0, 'ACCENT', 'accent'),
     iris:      cdfPick(s0, 'IRIS', 'iris'),
+    build:     cdfPick(s0, 'BUILD', 'build'),
+    collar:    cdfPick(s0, 'COLLAR', 'collar'),
   };
+
+  // ---- GEOMETRY CORRELATIONS (never human-trait correlations).
+  // A wide skull can carry a wide mouth; a narrow one cannot. Rather than
+  // stretching geometry, the head's width class restricts which mouths are
+  // eligible, and the lane chooses within that set — still deterministic.
+  const eligible = mouthEligible(anchorsOf(t.head).widthClass);
+  t.mouth = eligible[Number(lane(s0, 'MOUTH') % BigInt(eligible.length))];
+
+  // Neck follows shoulders — a slim player with a thick neck reads as a bug,
+  // and deriving it costs one fewer lane.
+  t.neck = NECK_OF_BUILD[t.build];
+  // Shading is indexed BY HEAD: each skull gets its own tonal planes.
+  t.shading = t.head;
+
   // ---- CONSTRAINT PASS (total: every branch resolves, nothing reverts)
   const hw = HEADWEAR[t.headwear];
-  if (hw.tags?.includes('covers') && t.hair >= 10) t.hair = 3;     // big hair under a hat -> crop
-  if (t.hair === 0 && hw.tags?.includes('band')) t.headwear = 0;   // bald + headband reads wrong
-  if (t.beard >= 6 && t.mouth === 8) t.mouth = 5;                  // shouting inside a full beard
+  const covers = hw.tags?.includes('covers');
+  if (covers) t.hair = HEADWEAR_HAIR_FALLBACK[t.hair];   // deterministic, name-keyed
+  if (t.hair === 0 && hw.tags?.includes('band')) t.headwear = 0;         // bald + band
+  // An open mouth inside a full beard reads as a hole. Fall back to Neutral,
+  // NOT Stern: Stern is 6px and would be illegal on a narrow skull, which is
+  // how a constraint pass quietly undoes the compatibility rule above it.
+  if (t.beard >= 6 && t.mouth === 4) t.mouth = 0;
+  if (t.beard >= 6 && t.collar === 3) t.collar = 0;                      // long beard over a polo
+  if (t.ears === 2 && covers) t.ears = 1;                                // hat over protruding ears
   return t;
 }
+
+/** Item 16 — the compatibility matrix, as data. A wide skull can carry a wide
+ *  mouth and a narrow one cannot, so the head's width class RESTRICTS the
+ *  eligible set and the lane picks within it. Never a reroll: the same seed on
+ *  a narrower head lands on a defined narrower mouth, not on a different draw. */
+function mouthEligible(widthClass) {
+  const maxW = widthClass === 0 ? 4 : widthClass === 1 ? 5 : 6;
+  const out = [];
+  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxW) out.push(i);
+  return out;
+}
+
+/** Shoulders decide the neck; one fewer lane and no impossible pairings. */
+const NECK_OF_BUILD = [0, 1, 1, 2];
+
+/** Stable fallbacks, not a reroll: a covered head keeps a RELATED silhouette
+ *  instead of jumping to an unrelated one. Keyed by NAME and resolved to
+ *  indices at load, so cutting a hairstyle can never silently rewire the map
+ *  into pointing at whatever slid into that slot. */
+const HEADWEAR_HAIR_FALLBACK = (() => {
+  const byName = Object.fromEntries(HAIR.map((h, i) => [h.name, i]));
+  const PAIRS = {
+    'Afro': 'Curly', 'High Top': 'Buzz', 'Flat Top': 'Buzz', 'Mohawk': 'Buzz',
+    'Dreads': 'Braids', 'Long': 'Side Part', 'Ponytail': 'Topknot', 'Wavy': 'Short',
+  };
+  return HAIR.map((h) => {
+    const target = PAIRS[h.name];
+    return target === undefined ? byName[h.name] : byName[target];
+  });
+})();
 
 // ------------------------------------------------------------- palette
 function resolvePalette(t, kit) {
@@ -220,16 +333,8 @@ function resolvePalette(t, kit) {
   };
 }
 
-// ----------------------------------------------------------------- kit
-// Team state, never token state. The composer that draws the face is a
-// different function and cannot see this object — the identity/kit split
-// expressed structurally.
 const KIT_PATTERNS = ['Solid', 'Sleeves', 'Stripes', 'Hoops', 'Halves', 'Sash', 'Chevron'];
 
-/** P3 renders players as FREE AGENTS: the kit is derived from the seed, so
- *  the renderer needs no team lookup at all and can be proven standalone.
- *  P4 replaces this with a registry read; the face is untouched either way,
- *  which is the whole point of keeping the two composers separate. */
 function freeAgentKit(s0) {
   return {
     primary: ACCENT[Number(lane(s0, 'KIT1') % 8n)],
@@ -239,65 +344,116 @@ function freeAgentKit(s0) {
   };
 }
 
-function kitRects(kit, accentSlot) {
-  const y = 24, out = [];
-  out.push([0, y - 1, CANVAS, 1, SLOT.INK]);                       // shoulder line
-  out.push([2, y, 28, 8, SLOT.KIT1]);                              // torso
+/** Patterns sized for EIGHT rows: 3px stripes and 2px hoops, never 1px
+ *  alternation, which is noise at 48px. Drawn inside the build's torso box. */
+function kitPattern(kit, x0, w) {
+  const y = 25, out = [];
   switch (kit.pattern) {
-    case 1: out.push([2, y, 5, 8, SLOT.KIT2], [25, y, 5, 8, SLOT.KIT2]); break;
-    case 2: for (let i = 0; i < 5; i++) out.push([4 + i * 6, y, 3, 8, SLOT.KIT2]); break;
-    case 3: out.push([2, y + 2, 28, 2, SLOT.KIT2], [2, y + 6, 28, 2, SLOT.KIT2]); break;
-    case 4: out.push([16, y, 14, 8, SLOT.KIT2]); break;
-    case 5: for (let i = 0; i < 8; i++) out.push([6 + i * 2, y + i, 4, 1, SLOT.KIT2]); break;
-    case 6: for (let i = 0; i < 4; i++) out.push([14 - i * 2, y + 2 + i, 3, 1, SLOT.KIT2], [16 + i * 2, y + 2 + i, 3, 1, SLOT.KIT2]); break;
+    case 1: out.push([x0, y, 3, 7, SLOT.KIT2], [x0 + w - 3, y, 3, 7, SLOT.KIT2]); break;
+    case 2: for (let i = 0; i < 4; i++) out.push([x0 + 2 + i * 6, y, 3, 7, SLOT.KIT2]); break;
+    case 3: out.push([x0, y + 1, w, 2, SLOT.KIT2], [x0, y + 5, w, 2, SLOT.KIT2]); break;
+    case 4: out.push([x0 + (w >> 1), y, w - (w >> 1), 7, SLOT.KIT2]); break;
+    case 5: for (let i = 0; i < 7; i++) out.push([x0 + 3 + i * 2, y + i, 5, 1, SLOT.KIT2]); break;
+    case 6: for (let i = 0; i < 4; i++) out.push([x0 + (w >> 1) - 4 + i, y + 1 + i, 4, 1, SLOT.KIT2],
+      [x0 + (w >> 1) + i, y + 1 + i, 4, 1, SLOT.KIT2]); break;
   }
-  // collar + cuffs in the PLAYER's accent — the personal colour axis that
-  // survives team ownership (without it a squad collapses to one colour)
-  out.push([12, y, 8, 2, accentSlot]);
-  out.push([2, y + 6, 3, 2, accentSlot], [27, y + 6, 3, 2, accentSlot]);
-  out.push([13, y, 6, 1, SLOT.INK]);                               // neck hole
   return out;
 }
 
 // -------------------------------------------------------------- compose
-const emit = (rects, pal) => rects.map(([x, y, w, h, slot]) =>
-  `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#${pal[slot]}"/>`).join('');
+const emit = (rects, pal, dx = 0, dy = 0) => rects.map(([x, y, w, h, slot]) =>
+  `<rect x="${x + dx}" y="${y + dy}" width="${w}" height="${h}" fill="#${pal[slot]}"/>`).join('');
 
-/** THE FACE COMPOSER — takes no kit parameter, by design. */
-function faceRects(t) {
+/** Place a class's part using its declared anchor, mirroring where required. */
+function place(className, part, a, pal) {
+  const cfg = ANCHOR[className];
+  const rects = part.rects ?? [];
+  if (!rects.length) return '';
+  switch (cfg.at) {
+    case 'absolute': return emit(rects, pal);
+    case 'eyes':     return emit(rects, pal, a.leftEyeX, a.eyeY)
+                          + emit(mirror(rects, EYE_W), pal, a.rightEyeX, a.eyeY);
+    case 'brows':    return emit(rects, pal, a.leftEyeX, a.browY)
+                          + emit(mirror(rects, EYE_W), pal, a.rightEyeX, a.browY);
+    case 'ears':     return emit(rects, pal, a.earLeftX, a.earY)
+                          + emit(mirror(rects, EAR_W), pal, a.earRightX, a.earY);
+    case 'nose':     return emit(rects, pal, a.noseX, a.noseY);
+    case 'mouth':    return emit(rects, pal, a.noseX, a.mouthY);
+    case 'chin':     return emit(rects, pal, a.noseX, a.chinY);
+    case 'top':      return emit(clampToSkull(rects, a), pal, a.noseX, a.top);
+    default:         return emit(rects, pal);
+  }
+}
+
+/** Right-hand parts are the LEFT art reflected inside a box of the class's
+ *  own width — so an angled brow pair converges and the right ear faces out,
+ *  from one stored copy. */
+const mirror = (rects, boxW) => rects.map(([x, y, w, h, s]) => [boxW - x - w, y, w, h, s]);
+
+/** Item 11 — hair follows head geometry. Hair is authored against the WIDEST
+ *  skull; on a narrow one the overhang would be 25% of the head. Clipping to
+ *  the skull ±2 makes one authored cap fit six heads. Rects that vanish are
+ *  dropped, which is why a zero-width rect can never reach the SVG. */
+function clampToSkull(rects, a) {
+  const lo = a.headX - a.noseX - 2, hi = a.headX + a.headW - a.noseX + 2;   // local space
   const out = [];
-  out.push(...HEADS[t.head].rects);
-  out.push(...NOSES[t.nose].rects);
-  out.push(...EYES[t.eyes].rects);
-  out.push(...BROWS[t.brows].rects);
-  out.push(...MOUTHS[t.mouth].rects);
+  for (const [x, y, w, h, s] of rects) {
+    const x0 = x < lo ? lo : x, x1 = x + w > hi ? hi : x + w;
+    if (x1 > x0) out.push([x0, y, x1 - x0, h, s]);
+  }
   return out;
 }
 
-/** @param dna 0x-prefixed 32-byte hex, @param appearance uint256 — the two
- *  immutable identity fields FobalPlayer stores at mint. */
+/** THE FACE COMPOSER — takes no kit parameter, by design. */
+function faceLayers(t, pal) {
+  const a = anchorsOf(t.head);
+  return [
+    place('HEADS', HEADS[t.head], a, pal),
+    place('SHADING', SHADING[t.shading], a, pal),
+    place('EARS', EARS[t.ears], a, pal),
+    place('NOSES', NOSES[t.nose], a, pal),
+    place('EYES', EYES[t.eyes], a, pal),
+    place('BROWS', BROWS[t.brows], a, pal),
+    place('MOUTHS', MOUTHS[t.mouth], a, pal),
+    place('BEARDS', BEARDS[t.beard], a, pal),
+    place('HAIR', HAIR[t.hair], a, pal),
+    place('HEADWEAR', HEADWEAR[t.headwear], a, pal),
+  ].join('');
+}
+
 function renderPlayer({ dna, appearance, kit, position = 2 }) {
   const s0 = seedOf(dna, appearance);
   const t = traitsOf(s0);
   kit = kit ?? freeAgentKit(s0);
-  const gkKit = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
-  const worn = position === 0 ? gkKit : kit;
-  const pal = resolvePalette(t, worn);
-  const layers = [
-    // every rect is emitted in the same uniform shape, including this one:
-    // an attribute the reference omits is an attribute Solidity has to guess
-    `<rect x="0" y="0" width="${CANVAS}" height="${CANVAS}" fill="#${BG[t.bg]}"/>`,
-    emit(kitRects(worn, SLOT.ACCENT), pal),
-    emit([[13, 21, 6, 3, SLOT.SHADE]], pal),                        // neck
-    emit(faceRects(t), pal),
-    emit(BEARDS[t.beard].rects, pal),
-    emit(HAIR[t.hair].rects, pal),
-    emit(HEADWEAR[t.headwear].rects, pal),
-  ];
+  if (position === 0) kit = { primary: 'e0c04a', secondary: '1b1b1f', accent: '1b1b1f', pattern: 0 };
+  const pal = resolvePalette(t, kit);
+  const a = anchorsOf(t.head);
+  const build = BUILDS[t.build];
+  const torso = build.rects[1];               // [x, y, w, h, KIT1]
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" `
-    + `shape-rendering="crispEdges" width="100%" height="100%">${layers.join('')}</svg>`;
+    + `shape-rendering="crispEdges" width="100%" height="100%">`
+    + `<rect x="0" y="0" width="${CANVAS}" height="${CANVAS}" fill="#${BG[t.bg]}"/>`
+    + emit(build.rects, pal)
+    + emit(kitPattern(kit, torso[0], torso[2]), pal)
+    + emit(NECKS[t.neck].rects, pal)
+    + emit(COLLARS[t.collar].rects, pal)
+    + faceLayers(t, pal)
+    + `</svg>`;
 }
 
+
+/** Debug only (contact sheets): force a head index to prove the anchor system. */
+function renderPlayerWithHead({ dna, appearance, kit }, headIndex) {
+  const s0 = seedOf(dna, appearance);
+  const t = traitsOf(s0); t.head = headIndex; t.shading = headIndex;
+  const pal = resolvePalette(t, kit ?? freeAgentKit(s0));
+  const build = BUILDS[t.build], torso = build.rects[1];
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CANVAS} ${CANVAS}" shape-rendering="crispEdges" width="100%" height="100%">`
+    + `<rect x="0" y="0" width="${CANVAS}" height="${CANVAS}" fill="#${BG[t.bg]}"/>`
+    + emit(build.rects, pal) + emit(kitPattern(kit ?? freeAgentKit(s0), torso[0], torso[2]), pal)
+    + emit(NECKS[t.neck].rects, pal) + emit(COLLARS[t.collar].rects, pal)
+    + faceLayers(t, pal) + `</svg>`;
+}
 
 
 // ---- the public API. Two names, because the distinction matters:
@@ -308,9 +464,29 @@ export function avatarSvgOnchain({ dna, appearance, position = 2 }) {
   return renderPlayer({ dna, appearance, position });
 }
 
+/** The app carries kits as CSS colours ("#22c55e") and often only two of
+ *  them. The renderer, like the chain, wants BARE hex and a full three
+ *  colour kit with a pattern. Normalising at the boundary is why a UI kit
+ *  can no longer reach the renderer half-formed: passing one straight
+ *  through emitted fill="##22c55e" — invalid, and black in every browser. */
+export function toRenderKit(kit) {
+  if (!kit) return undefined;
+  const hex = (v, fallback) => {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(v ?? ""));
+    return m ? m[1].toLowerCase() : fallback;
+  };
+  const secondary = hex(kit.secondary, "f2f4f8");
+  return {
+    primary: hex(kit.primary, "2f6fd0"),
+    secondary,
+    accent: hex(kit.accent, secondary),
+    pattern: Number.isFinite(Number(kit.pattern)) ? Math.abs(Number(kit.pattern)) % 7 : 0,
+  };
+}
+
 /** The same identity wearing a specific club kit. */
 export function avatarSvgDressed({ dna, appearance, position = 2 }, kit) {
-  return renderPlayer({ dna, appearance, kit, position });
+  return renderPlayer({ dna, appearance, kit: toRenderKit(kit), position });
 }
 
 export function avatarDataUri(p, kit) {
@@ -318,4 +494,4 @@ export function avatarDataUri(p, kit) {
   return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
 }
 
-export { traitsOf, seedOf, freeAgentKit, CANVAS };
+export { traitsOf, seedOf, freeAgentKit, anchorsOf, CANVAS };

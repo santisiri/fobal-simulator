@@ -62,15 +62,12 @@ export function traitsOf(s0) {
   // A wide skull can carry a wide mouth; a narrow one cannot. Rather than
   // stretching geometry, the head's width class restricts which mouths are
   // eligible, and the lane chooses within that set — still deterministic.
-  const wc = anchorsOf(t.head).widthClass;
-  const maxMouthW = wc === 0 ? 4 : wc === 1 ? 5 : 6;
-  const eligible = [];
-  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxMouthW) eligible.push(i);
+  const eligible = mouthEligible(anchorsOf(t.head).widthClass);
   t.mouth = eligible[Number(lane(s0, 'MOUTH') % BigInt(eligible.length))];
 
   // Neck follows shoulders — a slim player with a thick neck reads as a bug,
   // and deriving it costs one fewer lane.
-  t.neck = t.build === 0 ? 0 : t.build === 3 ? 2 : 1;
+  t.neck = NECK_OF_BUILD[t.build];
   // Shading is indexed BY HEAD: each skull gets its own tonal planes.
   t.shading = t.head;
 
@@ -79,17 +76,34 @@ export function traitsOf(s0) {
   const covers = hw.tags?.includes('covers');
   if (covers) t.hair = HEADWEAR_HAIR_FALLBACK[t.hair];   // deterministic, name-keyed
   if (t.hair === 0 && hw.tags?.includes('band')) t.headwear = 0;         // bald + band
-  if (t.beard >= 6 && t.mouth === 4) t.mouth = 1;                        // open mouth in a full beard
+  // An open mouth inside a full beard reads as a hole. Fall back to Neutral,
+  // NOT Stern: Stern is 6px and would be illegal on a narrow skull, which is
+  // how a constraint pass quietly undoes the compatibility rule above it.
+  if (t.beard >= 6 && t.mouth === 4) t.mouth = 0;
   if (t.beard >= 6 && t.collar === 3) t.collar = 0;                      // long beard over a polo
   if (t.ears === 2 && covers) t.ears = 1;                                // hat over protruding ears
   return t;
 }
 
+/** Item 16 — the compatibility matrix, as data. A wide skull can carry a wide
+ *  mouth and a narrow one cannot, so the head's width class RESTRICTS the
+ *  eligible set and the lane picks within it. Never a reroll: the same seed on
+ *  a narrower head lands on a defined narrower mouth, not on a different draw. */
+export function mouthEligible(widthClass) {
+  const maxW = widthClass === 0 ? 4 : widthClass === 1 ? 5 : 6;
+  const out = [];
+  for (let i = 0; i < MOUTHS.length; i++) if (MOUTHS[i].w <= maxW) out.push(i);
+  return out;
+}
+
+/** Shoulders decide the neck; one fewer lane and no impossible pairings. */
+export const NECK_OF_BUILD = [0, 1, 1, 2];
+
 /** Stable fallbacks, not a reroll: a covered head keeps a RELATED silhouette
  *  instead of jumping to an unrelated one. Keyed by NAME and resolved to
  *  indices at load, so cutting a hairstyle can never silently rewire the map
  *  into pointing at whatever slid into that slot. */
-const HEADWEAR_HAIR_FALLBACK = (() => {
+export const HEADWEAR_HAIR_FALLBACK = (() => {
   const byName = Object.fromEntries(HAIR.map((h, i) => [h.name, i]));
   const PAIRS = {
     'Afro': 'Curly', 'High Top': 'Buzz', 'Flat Top': 'Buzz', 'Mohawk': 'Buzz',
