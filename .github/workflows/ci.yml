@@ -77,8 +77,21 @@ jobs:
       - name: art codegen is current (gates + round-trip run inside)
         run: |
           node packages/art/tools/gen-art.mjs
-          git diff --exit-code -- packages/art/gen contracts/src/art/FobalArtConstants.sol \
-            || { echo "::error::generated art is stale — run node packages/art/tools/gen-art.mjs and commit"; exit 1; }
+          node packages/art/tools/atlas-doc.mjs
+          # EVERY generated artefact, including the browser module — it is
+          # emitted by gen-art.mjs and was previously outside this diff, so a
+          # hand edit to it would have survived CI.
+          git diff --exit-code -- \
+            packages/art/gen \
+            contracts/src/art/FobalArtConstants.sol \
+            apps/web/public/js/avatar.js \
+            docs/ART_ATLAS_V2.md \
+            || { echo "::error::generated art is stale — run node packages/art/tools/gen-art.mjs && node packages/art/tools/atlas-doc.mjs and commit"; exit 1; }
+      # colour is what flatters a weak silhouette. This strips it and measures
+      # every pair of hair, headwear and beard masks; gen-art gates on the same
+      # library, this step surfaces WHICH pair collided.
+      - name: silhouette separation
+        run: node packages/art/tools/silhouette.mjs
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
