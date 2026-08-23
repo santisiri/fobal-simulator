@@ -118,6 +118,8 @@ writeFileSync(join(outDir, 'market.html'), rewrite('market.html', market, [
   ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
   ["from '../src/ui/playerCard.js'", "from './src/ui/playerCard.js'"],
   ["from '../src/ui/money.js'", "from './src/ui/money.js'"],
+  ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
+  ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 

@@ -10,7 +10,7 @@
 //   POST /account/team                {teamName} rename my team
 //   GET  /squad                       my players + kit (defaults annotated)
 //   POST /squad                       {colors?, players?} edit names/kit
-//   GET  /market                      what is for sale, with the players\n//   GET  /market/:tokenId             one player's listing + price history\n//   GET  /sheet                       my team sheet + the squad to pick from
+//   GET  /market                      what is for sale, with the players\n//   POST /market/prepare              unsigned list/cancel/buy for my wallet\n//   GET  /market/:tokenId             one player's listing + price history\n//   GET  /sheet                       my team sheet + the squad to pick from
 //   PUT  /sheet                       set the XI, bench, formation, tactics
 //   DELETE /sheet                     back to the squad's own order
 //   POST /challenges                  {to, rematchOf?} challenge a player
@@ -37,6 +37,7 @@ import { ChainReader, ChainReadError } from './chain.js';
 import { IdentityResolver } from './identity.js';
 import { MarketReader } from './market.js';
 import { MintError, MintProgress, MintService, PlayerSeedInput } from './mint.js';
+import { TradeError, TradeService } from './trade.js';
 import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
 export interface LobbyServerOptions {
@@ -87,6 +88,9 @@ export interface LobbyServerOptions {
   market?: MarketReader | null;
   /** how stale the index may be before a request refreshes it (default 15s) */
   marketRefreshMs?: number;
+  /** I2: prepares list/cancel/buy calldata for the player's OWN wallet to
+   *  send. Absent → POST /market/prepare answers 501. Holds no keys. */
+  trade?: TradeService | null;
   /** email invitations: the outbound-mail seam (createSesProvider /
    *  createResendProvider). Absent → POST /invites answers 501. */
   emailProvider?: EmailProvider | null;
@@ -646,6 +650,35 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         });
       }
 
+      // I2 — prepare a trade. Session + wallet required (it acts for one
+      // address); the response is unsigned calldata the player's own wallet
+      // sends. Nothing here can move a footballer.
+      if (req.method === 'POST' && url.pathname === '/market/prepare'){
+        const me2 = authed(req);
+        if (!me2) return json(res, 401, { error: 'session token required' });
+        if (!me2.wallet) return json(res, 403, { error: 'trading needs a wallet login' });
+        if (!options.trade) return json(res, 501, { error: 'trading is not configured on this lobby' });
+        let body: { action?: unknown; tokenId?: unknown; price?: unknown; expiry?: unknown };
+        try { body = JSON.parse(await readBody(req)) as typeof body; }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        if (body.action !== 'list' && body.action !== 'cancel' && body.action !== 'buy')
+          return json(res, 400, { error: 'action must be list, cancel or buy' });
+        if (typeof body.tokenId !== 'string' && typeof body.tokenId !== 'number')
+          return json(res, 400, { error: 'tokenId is required' });
+        try {
+          const plan = await options.trade.prepare(me2.wallet, {
+            action: body.action,
+            tokenId: String(body.tokenId),
+            price: body.price === undefined ? undefined : String(body.price),
+            expiry: body.expiry === undefined ? undefined : Number(body.expiry),
+          });
+          return json(res, 200, plan);
+        } catch (err){
+          if (err instanceof TradeError) return json(res, err.status, { error: err.message });
+          return json(res, 502, { error: 'could not prepare that trade — try again shortly' });
+        }
+      }
+
       // I — the market. Public, like /players: these are chain events, and
       // chain events belong to everyone. The index is refreshed lazily on
       // read (throttled) rather than by a background timer, so a lobby with
@@ -655,7 +688,9 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
         if (!options.market)
           return json(res, 501, { error: 'the market is not configured on this lobby' });
         try {
-          if (Date.now() - marketRefreshedAt > marketRefreshMs){
+          const fresh = url.searchParams.get('fresh') === '1';
+          const wait = fresh ? Math.min(marketRefreshMs, 2_000) : marketRefreshMs;
+          if (Date.now() - marketRefreshedAt > wait){
             await options.market.refresh();
             marketRefreshedAt = Date.now();
           }
