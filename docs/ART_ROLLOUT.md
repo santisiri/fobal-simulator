@@ -40,6 +40,22 @@ ordinary marketplace and indexer reads are far clear of it; a client that sets
 its own tight gas cap is not. Check any integration that passes an explicit
 gas limit to `tokenURI`.
 
+## Both flags, every time
+
+`forge script` needs **`--account` AND `--sender`**. `--account` only supplies
+the signing key at broadcast; the SIMULATION runs as Foundry's default sender
+unless `--sender` says otherwise, and the run then aborts with *"You seem to be
+using Foundry's default sender"* — after writing a broadcast file, having sent
+nothing.
+
+That is not merely cosmetic here. `DeployArtLibrary` branches on whether the
+art admin IS the deployer, so simulating as the wrong account exercises the
+wrong path and reports a handover that will not happen. Check the log line:
+with `--sender` set correctly it reads *"art admin stays with the deployer"*.
+
+`cast send` is different — it takes the sender from `--account` alone, which is
+why step 1 worked without it.
+
 ## Rehearsed end to end, 2026-08-23
 
 Before spending any gas, the whole sequence was run against forked Base
@@ -108,8 +124,9 @@ to set a class or ever be sealed.
 
 ```bash
 FOBAL_ART_ADMIN=0x26250e47500943464290A77ae3508a3001d9B69d \
-  forge script script/DeployArtLibrary.s.sol \
-  --rpc-url base_sepolia --account fobal-admin --broadcast --verify
+  forge script script/DeployArtLibrary.s.sol --rpc-url base_sepolia \
+  --account fobal-admin --sender 0x26250e47500943464290A77ae3508a3001d9B69d \
+  --broadcast --verify
 ```
 
 The script installs every class in `FobalArtConstants.classNames()` — the
@@ -130,7 +147,8 @@ FOBAL_PLAYER=0x52F5828dA509D6043c2619F048687BEdfA4789d4 \
 FOBAL_TEAM_REGISTRY=0x22d6518ee6f80d9D772f56D52b0EA9E08A9aad90 \
 FOBAL_ART_LIBRARY=<from step 2> \
 forge script script/DeployKits.s.sol --rpc-url base_sepolia \
-  --account fobal-admin --broadcast --verify
+  --account fobal-admin --sender 0x26250e47500943464290A77ae3508a3001d9B69d \
+  --broadcast --verify
 ```
 
 Now inspect the output **before** any token points at it — the renderer reads
