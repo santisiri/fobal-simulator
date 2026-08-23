@@ -10,7 +10,7 @@
 //   POST /account/team                {teamName} rename my team
 //   GET  /squad                       my players + kit (defaults annotated)
 //   POST /squad                       {colors?, players?} edit names/kit
-//   GET  /sheet                       my team sheet + the squad to pick from
+//   GET  /market                      what is for sale, with the players\n//   GET  /market/:tokenId             one player's listing + price history\n//   GET  /sheet                       my team sheet + the squad to pick from
 //   PUT  /sheet                       set the XI, bench, formation, tactics
 //   DELETE /sheet                     back to the squad's own order
 //   POST /challenges                  {to, rematchOf?} challenge a player
@@ -35,6 +35,7 @@ import { buildManifest, buildTeam } from './teams.js';
 import { nameAllowed } from './names.js';
 import { ChainReader, ChainReadError } from './chain.js';
 import { IdentityResolver } from './identity.js';
+import { MarketReader } from './market.js';
 import { MintError, MintProgress, MintService, PlayerSeedInput } from './mint.js';
 import { ADDRESS_RE, challengeMessage, recoverPersonalSigner } from './wallet.js';
 
@@ -81,6 +82,11 @@ export interface LobbyServerOptions {
   /** M5: the mint step machine (createMintService). Absent → POST
    *  /mint/prepare answers 501. Requires the generator signer key. */
   mintService?: MintService | null;
+  /** I: the marketplace index (createMarketReader). Absent → the /market
+   *  routes answer 501. Reads only; it never signs or holds anything. */
+  market?: MarketReader | null;
+  /** how stale the index may be before a request refreshes it (default 15s) */
+  marketRefreshMs?: number;
   /** email invitations: the outbound-mail seam (createSesProvider /
    *  createResendProvider). Absent → POST /invites answers 501. */
   emailProvider?: EmailProvider | null;
@@ -161,6 +167,29 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
   const resultEvery = options.resultCheckEveryMs ?? 20_000;
   const matchUrl = options.matchServer.url.replace(/\/+$/, '');
   const publicMatchUrl = (options.matchServer.publicUrl ?? matchUrl).replace(/\/+$/, '');
+
+  // market: lazy refresh + a short-lived player cache. Player facts change
+  // only on progression, so a few seconds of staleness is cosmetic — and it
+  // keeps a browse page from firing one RPC per listing on every poll.
+  const marketRefreshMs = options.marketRefreshMs ?? 15_000;
+  let marketRefreshedAt = 0;
+  const playerCache = new Map<string, { at: number; brief: unknown }>();
+  const PLAYER_CACHE_MS = 60_000;
+  const MARKET_PAGE = 60;
+  async function playerBrief(tokenId: string): Promise<unknown> {
+    const hit = playerCache.get(tokenId);
+    if (hit && Date.now() - hit.at < PLAYER_CACHE_MS) return hit.brief;
+    if (!options.chainReader) return null;
+    try {
+      const p = await options.chainReader.readPlayer(BigInt(tokenId));
+      const brief = {
+        tokenId: p.tokenId, name: p.name, role: p.role, overall: p.overall,
+        level: p.level, owner: p.owner, ratings: p.ratings, career: p.career,
+      };
+      playerCache.set(tokenId, { at: Date.now(), brief });
+      return brief;
+    } catch { return null; }        // a player the chain cannot read is listed bare
+  }
 
   const loginCodes = new Map<string, LoginCode>();
   // D2: one-shot wallet challenges keyed by lowercase address
@@ -614,6 +643,45 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
           accounts: store.accountCount,
           online: store.listAccounts().filter(a => online(a.accountId)).length,
           uptimeSeconds: Math.round(process.uptime()),
+        });
+      }
+
+      // I — the market. Public, like /players: these are chain events, and
+      // chain events belong to everyone. The index is refreshed lazily on
+      // read (throttled) rather than by a background timer, so a lobby with
+      // no market traffic does no market work.
+      const marketMatch = req.method === 'GET' && url.pathname.match(/^\/market(?:\/(\d{1,20}))?$/);
+      if (marketMatch){
+        if (!options.market)
+          return json(res, 501, { error: 'the market is not configured on this lobby' });
+        try {
+          if (Date.now() - marketRefreshedAt > marketRefreshMs){
+            await options.market.refresh();
+            marketRefreshedAt = Date.now();
+          }
+        } catch {
+          // a refresh failure serves what we already have: a slightly stale
+          // shop window beats an error page, and nothing here is authoritative
+        }
+
+        if (marketMatch[1]){
+          const tokenId = marketMatch[1];
+          return json(res, 200, {
+            tokenId,
+            listing: options.market.listingFor(tokenId),
+            history: options.market.salesFor(tokenId),
+            player: await playerBrief(tokenId),
+          });
+        }
+
+        const listings = options.market.listings().slice(0, MARKET_PAGE);
+        return json(res, 200, {
+          ...options.market.summary(),
+          listings: await Promise.all(listings.map(async listing => ({
+            ...listing,
+            lastSale: options.market!.salesFor(listing.tokenId).at(-1) ?? null,
+            player: await playerBrief(listing.tokenId),
+          }))),
         });
       }
 

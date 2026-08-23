@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="FOBAL market — footballers for sale, what they cost, and what they have gone for.">
+<meta name="theme-color" content="#0a0f1e">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<title>FOBAL — Market</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="../src/ui/ui.css">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0a0f1e; --bg-2: #070b16; --panel: #0d1428; --panel-2: #111a33;
+    --ink: #f8fafc; --dim: rgba(248,250,252,0.56); --faint: rgba(248,250,252,0.34);
+    --green: #22c55e; --green-ink: #041a0c; --purple: #a855f7; --red: #f87171; --amber: #f59e0b;
+    --line: rgba(120,150,200,0.16); --line-strong: rgba(120,150,200,0.3);
+    --sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 50% -10%, rgba(168,85,247,0.07), transparent 60%),
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 44px 100%,
+      var(--bg);
+  }
+  header { display: flex; gap: 14px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .brand { font-family: var(--display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+  .brand span { color: var(--green); }
+  .brandTag { font-family: var(--mono); font-size: 11px; letter-spacing: 2.4px; color: var(--purple); text-transform: uppercase; }
+  header .spacer { flex: 1; }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+
+  .card { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-family: var(--mono); font-weight: 600; font-size: 11px; letter-spacing: 2.4px; text-transform: uppercase; color: var(--dim); margin: 0 0 12px; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .7px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
+  button:hover { border-color: var(--purple); transform: translateY(-1px); }
+  button:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+  button.sm { padding: 6px 10px; font-size: 12px; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+  .muted { color: var(--dim); font-size: 13px; }
+  .err { color: var(--red); font-size: 13px; }
+  .hidden { display: none; }
+
+  /* the ticker: what the market is doing right now */
+  .ticker { display: flex; flex-wrap: wrap; gap: 26px; align-items: baseline; }
+  .stat .k { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--faint); display: block; }
+  .stat .v { font-family: var(--display); font-weight: 800; font-size: 22px; }
+  .stat .v small { font-size: 12px; color: var(--dim); font-weight: 500; margin-left: 4px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .lot { text-align: left; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius); border: 1px solid var(--line); background: linear-gradient(180deg, var(--panel-2), var(--panel)); font-family: var(--sans); font-weight: 400; }
+  .lot:hover { border-color: var(--purple); }
+  .lot .head { display: flex; align-items: center; gap: 10px; }
+  .lot .nm { font-family: var(--display); font-weight: 700; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lot .rl { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--dim); }
+  .lot .price { font-family: var(--display); font-weight: 800; font-size: 20px; color: var(--green); }
+  .lot .price small { font-size: 11px; color: var(--dim); font-weight: 600; margin-left: 3px; }
+  .lot .last { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .up { color: var(--green); } .down { color: var(--red); } .flat { color: var(--dim); }
+
+  .drawerScrim.on { display: block; }
+  .sheet { position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100%); background: var(--panel); border-left: 1px solid var(--line-strong); padding: 20px; overflow-y: auto; z-index: 40; transform: translateX(100%); transition: transform .2s ease; }
+  .sheet.on { transform: none; }
+  .sheet h3 { font-family: var(--display); font-weight: 800; font-size: 22px; margin: 0 0 2px; }
+  .histRow { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12px; }
+  .histRow:last-child { border-bottom: 0; }
+  .ratings { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 12px 0; }
+  .rt { display: flex; justify-content: space-between; font-size: 12px; }
+  .rt .k { color: var(--dim); font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+  .rt .v { font-family: var(--mono); font-weight: 700; }
+  .soon { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 12px; margin-top: 16px; }
+
+  @media (prefers-reduced-motion: reduce) { .sheet { transition: none; } button { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">FOBAL<span>.ai</span></div>
+  <div class="brandTag">Market</div>
+  <div class="spacer"></div>
+  <button class="ghost sm" id="backBtn">← LOBBY</button>
+</header>
+
+<main>
+  <div class="card">
+    <h2>The market</h2>
+    <div class="ticker" id="ticker"><span class="muted">Reading the chain…</span></div>
+  </div>
+  <div class="err" id="err"></div>
+  <div class="grid" id="grid"></div>
+  <div class="muted hidden" id="empty">Nothing is for sale right now. When a manager lists a footballer, he appears here.</div>
+</main>
+
+<div class="drawerScrim" id="scrim"></div>
+<aside class="sheet" id="sheet" aria-hidden="true"></aside>
+
+<script type="module">
+  import { avatarTile } from '../src/ui/playerCard.js';
+  import { formatEth, assetLabel, priceLabel, priceMove } from '../src/ui/money.js';
+
+  const $ = id => document.getElementById(id);
+  const SESSION_KEY = 'fobal.lobby.session';
+  let session = null;
+  try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch {}
+  const params = new URLSearchParams(location.search);
+  const lobbyUrl = (params.get('lobby') ?? session?.url ?? window.FOBAL_CONFIG?.lobbyUrl ?? 'http://localhost:8475')
+    .replace(/\/+$/, '');
+  const devQuery = params.get('lobby') ? `?lobby=${encodeURIComponent(lobbyUrl)}` : '';
+  $('backBtn').onclick = () => { location.href = `lobby.html${devQuery}`; };
+
+  // the market is public chain data — no session needed to window-shop
+  const api = path => fetch(`${lobbyUrl}${path}`);
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function stat(k, v, sub){
+    const el = document.createElement('div');
+    el.className = 'stat';
+    const key = document.createElement('span'); key.className = 'k'; key.textContent = k;
+    const val = document.createElement('span'); val.className = 'v'; val.textContent = v;
+    if (sub){ const s = document.createElement('small'); s.textContent = sub; val.appendChild(s); }
+    el.append(key, val);
+    return el;
+  }
+
+  async function load(){
+    let out;
+    try {
+      const res = await api('/market');
+      if (res.status === 501){
+        $('ticker').replaceChildren();
+        $('err').textContent = 'This lobby has no market configured yet.';
+        return;
+      }
+      if (!res.ok) throw new Error(`the market answered ${res.status}`);
+      out = await res.json();
+    } catch (err){
+      $('ticker').replaceChildren();
+      $('err').textContent = `Could not reach the market: ${err.message ?? err}`;
+      return;
+    }
+
+    $('ticker').replaceChildren(
+      stat('For sale', String(out.listed)),
+      stat('Floor', out.floor ? formatEth(out.floor) : '—', out.floor ? ' ETH' : ''),
+      stat('Sales', String(out.sales)),
+      stat('Indexed to block', String(out.lastBlock)),
+    );
+
+    const grid = $('grid');
+    grid.replaceChildren();
+    $('empty').classList.toggle('hidden', out.listings.length > 0);
+    for (const lot of out.listings){
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'lot';
+      card.dataset.token = lot.tokenId;
+
+      const head = document.createElement('div');
+      head.className = 'head';
+      // the tile carries the TOKEN id; the overall gets its own label rather
+      // than a badge, or the two numbers read as one (#7 + 55 → "755")
+      head.appendChild(avatarTile({ role: lot.player?.role ?? '', shirtNumber: lot.tokenId }, undefined));
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = lot.player?.name ?? `Player #${lot.tokenId}`;
+      const rl = document.createElement('span');
+      rl.className = 'rl';
+      rl.textContent = lot.player
+        ? `${lot.player.role} · OVR ${lot.player.overall}`
+        : `#${lot.tokenId}`;
+      head.append(nm, rl);
+
+      const price = document.createElement('div');
+      price.className = 'price';
+      price.textContent = formatEth(lot.price);
+      const unit = document.createElement('small');
+      unit.textContent = assetLabel(lot.asset);
+      price.appendChild(unit);
+
+      const last = document.createElement('div');
+      last.className = 'last';
+      if (lot.lastSale){
+        const move = priceMove(lot.lastSale.price, lot.price);
+        last.textContent = `last sold ${formatEth(lot.lastSale.price)}`;
+        if (move && move.direction !== 'flat'){
+          const tag = document.createElement('span');
+          tag.className = ` ${move.direction}`;
+          tag.textContent = ` ${move.direction === 'up' ? '▲' : '▼'} ${move.percent}%`;
+          last.appendChild(tag);
+        }
+      } else {
+        last.textContent = 'never sold';
+      }
+
+      card.append(head, price, last);
+      card.onclick = () => openSheet(lot.tokenId);
+      grid.appendChild(card);
+    }
+  }
+
+  // ---- one player: the listing, the history, the numbers ------------------
+  async function openSheet(tokenId){
+    const sheet = $('sheet');
+    sheet.replaceChildren(Object.assign(document.createElement('div'),
+      { className: 'muted', textContent: 'Reading the chain…' }));
+    sheet.classList.add('on');
+    sheet.setAttribute('aria-hidden', 'false');
+    $('scrim').classList.add('on');
+
+    const res = await api(`/market/${tokenId}`);
+    if (!res.ok){
+      sheet.replaceChildren(Object.assign(document.createElement('div'),
+        { className: 'err', textContent: 'That player could not be read.' }));
+      return;
+    }
+    const out = await res.json();
+    sheet.replaceChildren();
+
+    const close = document.createElement('button');
+    close.className = 'ghost sm';
+    close.textContent = 'CLOSE';
+    close.onclick = closeSheet;
+    sheet.appendChild(close);
+
+    const h = document.createElement('h3');
+    h.textContent = out.player?.name ?? `Player #${out.tokenId}`;
+    const sub = document.createElement('div');
+    sub.className = 'muted';
+    sub.textContent = out.player
+      ? `${out.player.role} · overall ${out.player.overall} · level ${out.player.level} · token #${out.tokenId}`
+      : `token #${out.tokenId}`;
+    sheet.append(h, sub);
+
+    if (out.listing){
+      const p = document.createElement('div');
+      p.className = 'price';
+      p.style.marginTop = '12px';
+      p.textContent = priceLabel(out.listing.price, out.listing.asset);
+      sheet.appendChild(p);
+    } else {
+      const p = document.createElement('div');
+      p.className = 'muted';
+      p.style.marginTop = '12px';
+      p.textContent = 'Not for sale right now.';
+      sheet.appendChild(p);
+    }
+
+    if (out.player?.ratings){
+      const wrap = document.createElement('div');
+      wrap.className = 'ratings';
+      for (const [k, v] of Object.entries(out.player.ratings)){
+        const row = document.createElement('div');
+        row.className = 'rt';
+        const key = document.createElement('span'); key.className = 'k'; key.textContent = k;
+        const val = document.createElement('span'); val.className = 'v'; val.textContent = String(v);
+        row.append(key, val);
+        wrap.appendChild(row);
+      }
+      sheet.appendChild(wrap);
+    }
+
+    const hist = document.createElement('div');
+    const ht = document.createElement('div');
+    ht.className = 'muted';
+    ht.style.margin = '14px 0 6px';
+    ht.textContent = out.history.length ? 'What he has gone for' : 'Never sold — this would be his first transfer.';
+    hist.appendChild(ht);
+    let previous = null;
+    for (const sale of out.history){
+      const row = document.createElement('div');
+      row.className = 'histRow';
+      const left = document.createElement('span');
+      left.textContent = `block ${sale.block}`;
+      const right = document.createElement('span');
+      right.textContent = priceLabel(sale.price, sale.asset);
+      const move = previous ? priceMove(previous, sale.price) : null;
+      if (move && move.direction !== 'flat'){
+        right.className = move.direction;
+        right.textContent += ` ${move.direction === 'up' ? '▲' : '▼'}${move.percent}%`;
+      }
+      previous = sale.price;
+      row.append(left, right);
+      hist.appendChild(row);
+    }
+    sheet.appendChild(hist);
+
+    // honest about what this slice does and does not do
+    const soon = document.createElement('div');
+    soon.className = 'soon';
+    const soonTitle = document.createElement('div');
+    soonTitle.style.fontWeight = '700';
+    soonTitle.textContent = 'Buying arrives next';
+    const soonBody = document.createElement('div');
+    soonBody.className = 'muted';
+    soonBody.textContent = 'Today the market is a window: prices and history are read straight from the chain. Listing and buying — signed by your own wallet — are the next slice.';
+    const buy = document.createElement('button');
+    buy.className = 'sm';
+    buy.disabled = true;
+    buy.style.marginTop = '10px';
+    buy.textContent = out.listing ? `BUY FOR ${priceLabel(out.listing.price, out.listing.asset)}` : 'MAKE AN OFFER';
+    soon.append(soonTitle, soonBody, buy);
+    sheet.appendChild(soon);
+  }
+
+  function closeSheet(){
+    $('sheet').classList.remove('on');
+    $('sheet').setAttribute('aria-hidden', 'true');
+    $('scrim').classList.remove('on');
+  }
+  $('scrim').onclick = closeSheet;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+  load();
+</script>
+</body>
+</html>
