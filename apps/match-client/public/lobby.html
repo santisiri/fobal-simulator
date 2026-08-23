@@ -66,6 +66,10 @@
   button.danger:hover { border-color: var(--red); }
   button.ghost { background: transparent; }
   button.sm { padding: 6px 11px; font-size: 12px; }
+  #clubLink { font-family: var(--display); font-weight: 700; font-size: 12px; letter-spacing: 0.7px;
+    padding: 6px 11px; border-radius: 10px; border: 1px solid var(--line-strong); color: var(--ink); }
+  #clubLink:hover { border-color: var(--green); }
+  #clubLink:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 
   input { padding: 11px 13px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--line-strong); color: var(--ink); font-family: var(--sans); font-size: 15px; }
   input:focus { outline: none; border-color: var(--green); }
@@ -145,6 +149,7 @@
   <div class="brand">FOBAL<span>.ai</span></div>
   <div class="brandTag">Matchday Lobby</div>
   <span class="who" id="who"></span>
+  <a id="clubLink" class="hidden" href="hub.html" title="Your club">← CLUB</a>
   <button id="logoutBtn" class="ghost sm hidden">LOG OUT</button>
 </header>
 <main>
@@ -201,6 +206,7 @@
         <button id="roomBtn" class="sm primary">SQUAD ROOM</button>
         <button id="marketBtn" class="sm purple">MARKET</button>
       </div>
+      <div class="muted" id="clubNote"></div>
       <div id="squadPanel" class="hidden">
         <div class="row" style="margin-top:14px;">
           <span class="muted">Kit</span>
@@ -263,6 +269,7 @@
   import { createSquadView } from '../src/ui/squadView.js';
   import { createTxFlow, txStateLine } from '../src/ui/tx.js';
   import { normalizeWalletError } from '../src/ui/errors.js';
+  import { claimPendingClub } from '../src/clubClaim.js';
   const $ = id => document.getElementById(id);
   const SESSION_KEY = 'fobal.lobby.session';
   // team names are free text typed by OTHER players — never let them into
@@ -293,6 +300,7 @@
     $('loginView').classList.toggle('hidden', view !== 'login');
     $('lobbyView').classList.toggle('hidden', view !== 'lobby');
     $('logoutBtn').classList.toggle('hidden', view !== 'lobby');
+    $('clubLink').classList.toggle('hidden', view !== 'lobby');
   }
 
   function logout(){
@@ -413,7 +421,29 @@
     } catch { /* keep defaults */ }
   }
 
+  // The club a player named in onboarding lives in localStorage until they
+  // first sign in here; then the SERVER account becomes the one club. Runs
+  // off the poll (which is where `me` arrives) and settles after one
+  // outcome — a transient failure leaves the draft for the next tick, so a
+  // network blip can never lose the name someone chose.
+  let clubClaim = { done: false, busy: false };
+  function adoptNamedClub(me){
+    if (clubClaim.done || clubClaim.busy) return;
+    clubClaim.busy = true;
+    claimPendingClub({ api, account: me })
+      .then(out => {
+        if (!out) return;
+        clubClaim.done = true;
+        $('clubNote').textContent = out.ok
+          ? `${out.teamName ?? 'Your club'} is now your club online.`
+          : out.reason;
+        poll();
+      })
+      .finally(() => { clubClaim.busy = false; });
+  }
+
   function render(state){
+    adoptNamedClub(state.me);
     $('who').textContent = `${nameOf(state.me)} · ${state.me.teamName}`;
     $('who').title = state.me.wallet ?? '';
     $('teamName').innerHTML = `${esc(state.me.teamName)} &nbsp;${rec(state.me.record)}`;

@@ -95,6 +95,7 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ["from '../src/ui/squadView.js'", "from './src/ui/squadView.js'"],
   ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
   ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
+  ["from '../src/clubClaim.js'", "from './src/clubClaim.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 

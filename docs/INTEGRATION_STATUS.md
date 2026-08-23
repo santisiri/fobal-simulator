@@ -56,19 +56,26 @@ deliberately separate:
 Do not batch the art phases, and do not `seal()` before visual
 inspection — the runbook says both, and both are irreversible mistakes.
 
-## ⚠️ Finding 2 — the identity schism (unchanged, still open)
+## ✅ Finding 2 — the identity schism (CLOSED)
 
-Still true, one sweep later: `apps/web`'s `localStorage['fobal.club']`
-and the lobby's server `Account` are disconnected universes.
-`lobby.html` has **0** references to `fobal.club` and **0** links back to
-`hub.html`; `apps/web` never calls the lobby server. A player names a
-club, meets 11 players, clicks PLAY ONLINE, and becomes a different
-manager with a different squad and no way home.
+Fixed: the server account is now canonical and the web club is its view.
 
-Smallest coherent fix (unclaimed by any workstream): make the server
-account canonical and the web club a *view* of it — onboarding's name +
-kit POST to `/account/team` + `/squad` on first sign-in, hub reads the
-lobby session, lobby gains a "← CLUB" link.
+- `apps/match-client/src/clubClaim.js` — the one-way, one-shot handoff.
+  The club named in onboarding is adopted onto the account the first time
+  its author signs in. Two safety rules, both tested: **never clobber** a
+  club already named online, and **claim once per browser** (not per
+  account — email in one tab and a wallet in another must not mint twin
+  clubs). A refused name is consumed with its reason; a network blip
+  leaves the draft claimable, so the name someone chose is never lost.
+- `apps/web/public/js/session.js` + hub — when this browser holds a lobby
+  session, the hub renders the SERVER club: name, kit, real record.
+- The lobby gained a **← CLUB** link; the journey is a loop again.
+
+Verified end to end against the built client: onboarding → SKY COMETS
+(purple kit) → sign in → `santi · SKY COMETS` with the server holding the
+name and colors → ← CLUB → hub agrees. Renaming server-side then
+reloading the hub shows the new name while the stale local draft is
+ignored — the canonical direction, proven.
 
 ## Deploy state
 

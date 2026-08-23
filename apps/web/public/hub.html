@@ -139,6 +139,7 @@
 <script type="module">
   import { requireClub, clubOverall, crestInitials, clubRecord } from './js/club.js';
   import { avatarSvgDressed } from './js/avatar.js';
+  import { fetchClubView } from './js/session.js';
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -167,6 +168,26 @@
   const r = clubRecord(club);
   $('statRecord').textContent = `${r.w}-${r.d}-${r.l}`;
   $('squadCount').textContent = `${club.squad.players.length} players`;
+
+  // When this browser is signed in, the LOBBY is the truth: the club name
+  // opponents see, the real record, the kit that walks out. The local draft
+  // renders instantly above; this corrects it a moment later if they differ
+  // (a rename or a kit change made from the lobby, or on another device).
+  fetchClubView().then(view => {
+    if (!view) return;
+    if (view.teamName){
+      $('clubName').textContent = view.teamName;
+      $('clubchip').textContent = view.teamName;
+      $('crestIni').textContent = crestInitials(view.teamName);
+    }
+    if (view.colors?.primary || view.colors?.secondary){
+      const p = view.colors.primary ?? kit.primary;
+      const sec = view.colors.secondary ?? kit.secondary;
+      $('crestStripe').style.background = `linear-gradient(135deg, ${p} 0 50%, ${sec} 50% 100%)`;
+      $('kitChip').textContent = `${p} · ${sec}`;
+    }
+    if (view.record) $('statRecord').textContent = `${view.record.w}-${view.record.d}-${view.record.l}`;
+  });
 
   // squad strip
   const strip = $('strip');
