@@ -51,7 +51,9 @@ export interface Listing {
   asset: string;
   /** wei, decimal string */
   price: string;
-  /** unix seconds; 0 means no expiry */
+  /** unix seconds. The contract refuses expiry <= now, so a real listing
+   *  always carries a future one; 0 is treated as "no expiry" only so a
+   *  malformed log can never hide a listing outright. */
   expiry: number;
   block: number;
 }

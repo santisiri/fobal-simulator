@@ -12,6 +12,8 @@ export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFro
 export type { NormalizedPlayer } from './chain.js';
 export { playerName, squadNames } from './playerNames.js';
 export { createMarketReader } from './market.js';
+export { createTradeService, TradeError } from './trade.js';
+export type { TradeService, TradeServiceOptions, TradePlan, TradeTx, TradeRequest } from './trade.js';
 export type { MarketReader, MarketReaderOptions, Listing, Sale } from './market.js';
 export { createMintService, MintError, validateSeeds, signSquadMint, encodeSeedsStandalone } from './mint.js';
 export type { MintService, MintServiceOptions, MintPlan, MintProgress, PlayerSeedInput, PreparedTx } from './mint.js';
@@ -158,6 +160,19 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
       fromBlock: process.env.FOBAL_MARKET_FROM_BLOCK ?? '0' }));
   }
 
+  // I2 — trade preparation. Same three addresses the index and reader use;
+  // it signs nothing, so it needs no key.
+  let trade = null;
+  if (process.env.FOBAL_CHAIN_MARKETPLACE && process.env.FOBAL_RPC_URL && process.env.FOBAL_CHAIN_PLAYER){
+    const { createTradeService } = await import('./trade.js');
+    trade = createTradeService({
+      rpcUrl: process.env.FOBAL_RPC_URL,
+      marketplaceAddress: process.env.FOBAL_CHAIN_MARKETPLACE,
+      playerAddress: process.env.FOBAL_CHAIN_PLAYER,
+    });
+    console.log(JSON.stringify({ msg: 'trade_service', marketplace: process.env.FOBAL_CHAIN_MARKETPLACE }));
+  }
+
   // wallet identity (ENS) — on by default: it degrades to shortened
   // addresses on any failure and never blocks a request
   let identity = null;
@@ -175,6 +190,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     chainReader,
     mintService,
     market,
+    trade,
     emailProvider,
     inviteBaseUrl: process.env.FOBAL_INVITE_BASE_URL,
     emailWebhookSecret: process.env.FOBAL_EMAIL_WEBHOOK_SECRET,
