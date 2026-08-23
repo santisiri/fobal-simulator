@@ -1,3 +1,5 @@
+import { dedupeSquad, confusablePairs } from './avatar.js';
+
 // Deterministic starter-squad generation for onboarding. Mirrors the shape
 // the FobalPlayerGenerator would sign and FobalPlayer would mint: 11 players,
 // each with a dna, packed appearance, per-position skills (0-100), a position
@@ -90,11 +92,35 @@ export function generateSquad({ clubName, kit, tier = 0.5 }) {
     }
     return `${FIRST[Math.floor(rnd() * FIRST.length)]} ${LAST[Math.floor(rnd() * LAST.length)]} ${usedNames.size}`;
   };
+  // dna is a '0x' hex STRING (JSON-serializable; BigInt(dna) parses it where
+  // the avatar renderer needs a bigint). The salt is what lets a clashing
+  // player be re-derived deterministically below.
+  const dnaFor = (i, salt = 0) => '0x' + [...(salt ? `${clubName}:${i}:fobal#${salt}` : `${clubName}:${i}:fobal`)]
+    .reduce((h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, '0').repeat(8);
+  const idAt = (i, salt = 0) => {
+    const d = dnaFor(i, salt);
+    return { dna: d, appearance: BigInt(d) & 0xffffffffn };
+  };
+
+  // THE MINT-TIME CHECK. Eleven players in one kit is the only view where
+  // team colour does nothing to tell them apart, and about one squad in four
+  // hundred came out with a pair a viewer could confuse. The renderer cannot
+  // fix that — it sees one token at a time, from a hash, and knows nothing
+  // about teammates. Only the code that CHOOSES the dna can, and once minted
+  // the dna is immutable, so it has to happen here.
+  //
+  // Deterministic: same club, same squad, always. It re-derives the LATER
+  // player so earlier shirt numbers stay put, and in practice touches about
+  // one player in four thousand.
+  const gkKit = kit && kit.gk ? kit.gk : kit;
+  const kitAt = (i) => (FORMATION_433[i].pos === 0 ? gkKit : kit);
+  const positions = FORMATION_433.map((s) => s.pos);
+  const { ids: chosen, rerolled } = dedupeSquad(
+    FORMATION_433.map((_, i) => idAt(i)), kitAt, positions, (i, salt) => idAt(i, salt),
+  );
+
   const players = FORMATION_433.map((slot, i) => {
-    // dna is a '0x' hex STRING (JSON-serializable; BigInt(dna) parses it
-    // where the avatar renderer needs a bigint)
-    const dna = '0x' + [...`${clubName}:${i}:fobal`].reduce(
-      (h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7).toString(16).padStart(8, '0').repeat(8);
+    const dna = chosen[i].dna;
     // 32 bits, matching PlayerCodec.APPEARANCE_MASK. This was 24 bits, so
     // trait slots 6 and 7 were always zero and the preview could never show
     // an accessory the chain would mint.
@@ -107,5 +133,5 @@ export function generateSquad({ clubName, kit, tier = 0.5 }) {
       overall: overall(s), shirt: i + 1,
     };
   });
-  return { clubName, kit, players };
+  return { clubName, kit, players, rerolled };
 }

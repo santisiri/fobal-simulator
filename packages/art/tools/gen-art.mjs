@@ -369,6 +369,9 @@ const avatarJs = [
   '}',
   '',
   'export { traitsOf, seedOf, freeAgentKit, anchorsOf, CANVAS };',
+  '// the mint-time check: only whoever CHOOSES the dna can fix a clash,',
+  '// and after the mint nobody can.',
+  'export { comparePlayers, confusablePairs, dedupeSquad, CONFUSABLE_COLOUR, CONFUSABLE_STRUCTURE };',
   '',
 ].join('\n');
 writeFileSync(new URL('../../apps/web/public/js/avatar.js', A), avatarJs);
@@ -531,6 +534,6 @@ console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`
   + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'}`
   + ` · kit-fits ${kit.pass ? 'PASS' : 'FAIL'} · shading-inside ${shade.pass ? 'PASS' : 'FAIL'} · connectivity ${conn.pass ? 'PASS' : 'FAIL'} (${conn.checked} renders)`
-  + ` · squads ${squads.pass ? 'PASS' : 'FAIL'} (${(squads.rate * 100).toFixed(2)}% confusable)`
+  + ` · squads ${squads.pass ? 'PASS' : 'FAIL'} (${(squads.rate * 100).toFixed(2)}% raw -> ${squads.cleanedWithPair} after the check)`
   + ` · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

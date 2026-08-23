@@ -7,63 +7,35 @@
 // the kit rows (identical across a squad by definition), and count differing
 // pixels between every pair of teammates. The number that matters is the
 // WORST pair in a squad, because that is the pair a viewer confuses.
-import { renderPlayer, faceLayers, traitsOf, seedOf } from '../src/render.js';
+// the RENDERER's implementations, not copies. This tool grew its own raster,
+// distance and slot-mapping code, and a second copy of a rule is a second
+// thing to keep in step.
+import {
+  renderPlayer, rasterOf, structureRaster, comparePlayers, confusablePairs as pairsOf,
+  dedupeSquad, FACE_ROWS, CONFUSABLE_COLOUR, CONFUSABLE_STRUCTURE,
+} from '../src/render.js';
 import { keccak_256 } from '@noble/hashes/sha3';
 
-const RE = /<rect x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)" fill="#(\w+)"\/>/g;
-/** rows 0..22 — head, hair, face and neck. Rows 23+ are kit and identical. */
-export const FACE_ROWS = 23;
+export { FACE_ROWS, CONFUSABLE_COLOUR, CONFUSABLE_STRUCTURE, dedupeSquad };
+export const raster = rasterOf;
+export const slotRaster = (id) => structureRaster(id);
 
-export function raster(svg) {
-  const px = new Array(1024).fill('');
-  for (const m of svg.matchAll(RE)) {
-    const [, x, y, w, h, c] = m;
-    for (let j = +y; j < +y + +h; j++) {
-      for (let i = +x; i < +x + +w; i++) {
-        if (i >= 0 && i < 32 && j >= 0 && j < 32) px[j * 32 + i] = c;
-      }
-    }
-  }
-  return px;
-}
-
-/** differing pixels above the collar */
-export function faceDistance(a, b) {
+const differing = (a, b) => {
   let d = 0;
   for (let k = 0; k < FACE_ROWS * 32; k++) if (a[k] !== b[k]) d++;
   return d;
-}
-
-/** STRUCTURAL raster: every pixel carries the palette SLOT that painted it,
- *  not the colour. Colour distance alone rewards a different skin tone on an
- *  identical face, which is not what stops a viewer confusing two teammates —
- *  so this strips colour and compares construction.
- *
- *  An earlier attempt compared only INK pixels. That was wrong and said so
- *  loudly: it scored two players 3px apart who differ in hair, brows, nose,
- *  mouth and colouring, because ink covers the outline and features but NOT
- *  hair or beard — the two biggest structural cues in the system. Rendering
- *  through a sentinel palette catches every layer. */
-const SENTINEL = Array.from({ length: 12 }, (_, i) => 'ff00' + i.toString(16).padStart(2, '0'));
-
-export function slotRaster(id, position) {
-  const t = traitsOf(seedOf(id.dna, id.appearance));
-  return raster('<svg>' + faceLayers(t, SENTINEL) + '</svg>');
-}
-
-export function structureDistance(a, b) {
-  let d = 0;
-  for (let k = 0; k < FACE_ROWS * 32; k++) if (a[k] !== b[k]) d++;
-  return d;
-}
+};
+export const faceDistance = differing;
+export const structureDistance = differing;
 
 /** The app's own derivation, copied so the audit measures what SHIPS.
  *  A 32-bit hash repeated eight times to fill 256 bits, with appearance taken
  *  from the low word of that same value. */
-export function appSquadIds(clubName, size = 11) {
+export function appSquadIds(clubName, size = 11, salt = 0) {
   const out = [];
   for (let i = 0; i < size; i++) {
-    const dna = '0x' + [...`${clubName}:${i}:fobal`]
+    const tag = salt === 0 ? `${clubName}:${i}:fobal` : `${clubName}:${i}:fobal#${salt}`;
+    const dna = '0x' + [...tag]
       .reduce((h, c) => ((h * 131 + c.charCodeAt(0)) >>> 0), 7)
       .toString(16).padStart(8, '0').repeat(8);
     out.push({ dna, appearance: BigInt(dna) & 0xffffffffn });
@@ -141,46 +113,63 @@ export const kitFor = (club, i) => (POSITIONS[i % POSITIONS.length] === 0 && clu
  *  rather than demanding zero — a change that makes squads meaningfully worse
  *  fails, and pushing it lower needs either more variety or a check at mint
  *  time, which is a product decision and not the renderer's to make. */
-export const CONFUSABLE_COLOUR = 220;
-export const CONFUSABLE_STRUCTURE = 40;
+export const confusablePairs = (ids, kit) =>
+  pairsOf(ids, (i) => kitFor(kit, i), POSITIONS);
 
-export function confusablePairs(ids, kit) {
-  const colour = ids.map((id, i) =>
-    raster(renderPlayer({ ...id, kit: kitFor(kit, i), position: POSITIONS[i % POSITIONS.length] })));
-  const structure = ids.map((id, i) => slotRaster(id, POSITIONS[i % POSITIONS.length]));
-  const found = [];
-  for (let i = 0; i < ids.length; i++) {
-    for (let j = i + 1; j < ids.length; j++) {
-      const c = faceDistance(colour[i], colour[j]);
-      const st = structureDistance(structure[i], structure[j]);
-      if (c < CONFUSABLE_COLOUR && st < CONFUSABLE_STRUCTURE) found.push({ i, j, colour: c, structure: st });
-    }
-  }
-  return found;
+/** what the squad builder should mint: the same lineup with any clash
+ *  deterministically re-derived */
+export function cleanSquad(clubName, kit) {
+  const ids = appSquadIds(clubName);
+  return dedupeSquad(ids, (i) => kitFor(kit, i), POSITIONS,
+    (i, salt) => appSquadIds(clubName, POSITIONS.length, salt)[i]);
 }
 
 /** the fixed panel the gate measures, so the rate is comparable run to run */
 export const GATE_CLUBS = Array.from({ length: 400 }, (_, i) => `Club ${i}`);
 
-/** GATE. */
-export function assertSquadsLegible(clubNames = GATE_CLUBS, maxRate = 0.015, derive = appSquadIds) {
-  let squadsWithPair = 0;
-  const examples = [];
+/** GATE. Two numbers, because they answer different questions.
+ *
+ *  RAW is the rate before the mint-time check — a property of the trait space,
+ *  so it is held to a ceiling rather than to zero. If a change to the art makes
+ *  squads meaningfully worse, this is what notices.
+ *
+ *  CLEANED is the rate after the check. That one must be exactly zero, because
+ *  it is the whole point of having the check: a squad the builder is willing
+ *  to sign must not contain a pair a viewer could confuse. */
+export function assertSquadsLegible(clubNames = GATE_CLUBS, maxRawRate = 0.015, derive = appSquadIds) {
+  let raw = 0, cleaned = 0, rerolled = 0, deepestSalt = 0;
+  const examples = [], survivors = [];
   clubNames.forEach((name, i) => {
-    const found = confusablePairs(derive(name), CLUBS[i % CLUBS.length]);
+    const kit = CLUBS[i % CLUBS.length];
+    const found = confusablePairs(derive(name), kit);
     if (found.length) {
-      squadsWithPair++;
+      raw++;
       if (examples.length < 5) {
         const f = found[0];
         examples.push(`${name}: shirts ${f.i + 1} and ${f.j + 1} (colour ${f.colour}, structure ${f.structure})`);
       }
     }
+    const clean = cleanSquad(name, kit);
+    rerolled += clean.rerolled;
+    deepestSalt = Math.max(deepestSalt, ...clean.salts);
+    const left = confusablePairs(clean.ids, kit);
+    if (left.length) {
+      cleaned++;
+      if (survivors.length < 5) survivors.push(`${name}: shirts ${left[0].i + 1} and ${left[0].j + 1}`);
+    }
   });
-  const rate = squadsWithPair / clubNames.length;
+  const rawRate = raw / clubNames.length;
+  const bad = [];
+  if (rawRate > maxRawRate) {
+    bad.push(`${raw}/${clubNames.length} squads (${(rawRate * 100).toFixed(2)}%) contain a confusable pair`
+      + ` before the mint-time check, over the ${(maxRawRate * 100).toFixed(1)}% ceiling`);
+  }
+  if (cleaned > 0) {
+    bad.push(`the mint-time check let ${cleaned} squad(s) through: ${survivors.join('; ')}`);
+  }
   return {
-    pass: rate <= maxRate, rate, squadsWithPair, squads: clubNames.length, examples,
-    bad: rate <= maxRate ? []
-      : [`${squadsWithPair}/${clubNames.length} squads (${(rate * 100).toFixed(1)}%) contain a`
-        + ` confusable pair, over the ${(maxRate * 100).toFixed(1)}% the atlas held when this gate was set`],
+    pass: bad.length === 0, bad, examples, survivors,
+    rate: rawRate, squadsWithPair: raw, squads: clubNames.length,
+    cleanedWithPair: cleaned, rerolled, deepestSalt, players: clubNames.length * POSITIONS.length,
   };
 }

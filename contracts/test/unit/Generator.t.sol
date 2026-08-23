@@ -76,6 +76,42 @@ contract GeneratorTest is BaseFixture {
         generator.mintSquad(alice, 0, 1, deadline, seeds, sig);
     }
 
+    /// Two players in a squad may not share an identity. Whether teammates
+    /// merely LOOK alike is a judgement about rendered pixels and is made off
+    /// chain, where the dna is chosen — reproducing it here would mean
+    /// rendering every pair at roughly a million gas each. Identical dna is
+    /// not a judgement, it is a duplicate.
+    function test_duplicateDna_isRejected() public {
+        FobalTypes.PlayerSeed[] memory seeds = makeSquad(3);
+        seeds[2].dna = seeds[0].dna;
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = signSquad(alice, 0, 1, 0, deadline, seeds);
+        vm.expectRevert(abi.encodeWithSelector(FobalPlayerGenerator.DuplicateDna.selector, 0, 2));
+        generator.mintSquad(alice, 0, 1, deadline, seeds, sig);
+    }
+
+    /// ...and a squad of genuinely distinct players still mints, so the guard
+    /// is not simply rejecting everything.
+    function test_distinctDna_stillMints() public {
+        FobalTypes.PlayerSeed[] memory seeds = makeSquad(11);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = signSquad(alice, 0, 1, 0, deadline, seeds);
+        uint256[] memory ids = generator.mintSquad(alice, 0, 1, deadline, seeds, sig);
+        assertEq(ids.length, 11);
+    }
+
+    /// The full 23-player squad is 253 pair comparisons; it must stay cheap.
+    function test_duplicateScanIsAffordableAtMaxSquadSize() public {
+        FobalTypes.PlayerSeed[] memory seeds = makeSquad(23);
+        uint256 deadline = block.timestamp + 1 hours;
+        bytes memory sig = signSquad(alice, 0, 1, 0, deadline, seeds);
+        uint256 before = gasleft();
+        generator.mintSquad(alice, 0, 1, deadline, seeds, sig);
+        uint256 used = before - gasleft();
+        emit log_named_uint("23-player mint gas", used);
+        assertLt(used, 6_000_000, "the duplicate scan must not dominate a squad mint");
+    }
+
     function test_squadSizeBounds() public {
         FobalTypes.PlayerSeed[] memory none = new FobalTypes.PlayerSeed[](0);
         uint256 deadline = block.timestamp + 1 hours;
