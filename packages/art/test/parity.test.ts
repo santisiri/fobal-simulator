@@ -1,6 +1,6 @@
 import { auditAll } from '../tools/silhouette-lib.mjs';
 // @ts-expect-error — plain JS module
-import { assertSquadsLegible } from '../tools/squad-lib.mjs';
+import { assertSquadsLegible, cleanSquad, appSquadIds, CLUBS, SAMPLE_CLUBS } from '../tools/squad-lib.mjs';
 import { assertConnected, detached } from '../tools/connectivity.mjs';
 // The parity harness. Three claims, each one a place the pipeline could
 // silently drift between the JS reference renderer and the chain:
@@ -263,13 +263,42 @@ describe('image-level properties the byte-parity harness cannot see', () => {
     expect(reports.flatMap((r) => r.collisions)).toEqual([]);
   });
 
+  // ONE audit, shared. Each call renders every pair in every squad, so the
+  // full 400-squad sweep takes ~34s — it runs in its own CI step
+  // (tools/squad-sheet.mjs). Calling it per-test blocked the vitest worker
+  // long enough that its RPC timed out, with every test still passing.
+  const squadAudit = assertSquadsLegible(SAMPLE_CLUBS(40));
+
+  test('the mint-time check removes every confusable pair, and barely fires', () => {
+    // The renderer cannot fix a clash — it sees one token at a time, from an
+    // immutable hash, and knows nothing about teammates. Only the code that
+    // CHOOSES the dna can, and after the mint nobody can.
+    const r = squadAudit;
+    expect(r.cleanedWithPair).toBe(0);
+    // and it must not be achieving that by rewriting half the collection
+    expect(r.rerolled / r.players).toBeLessThan(0.01);
+  });
+
+  test('re-deriving is deterministic — the same club always yields the same squad', () => {
+    const a = cleanSquad('Sky City FC', CLUBS[0]);
+    const b = cleanSquad('Sky City FC', CLUBS[0]);
+    expect(a.ids).toEqual(b.ids);
+    expect(a.salts).toEqual(b.salts);
+    // earlier shirt numbers are never disturbed by a later clash
+    const raw = appSquadIds('Sky City FC');
+    const firstChanged = a.salts.findIndex((s: number) => s > 0);
+    if (firstChanged > 0) {
+      for (let i = 0; i < firstChanged; i++) expect(a.ids[i]).toEqual(raw[i]);
+    }
+  });
+
   test('eleven players in one kit stay tellable apart', () => {
     // the hub's actual view, and the only one where team colour does no work.
     // A pair counts as confusable only when it is close on BOTH colour and
     // construction — an earlier attempt measured ink line-work alone and
     // scored two players 3px apart who differ in hair, brows, nose and mouth,
     // because ink covers the outline but not hair or beard.
-    const r = assertSquadsLegible();
+    const r = squadAudit;
     expect(r.examples.length).toBeLessThanOrEqual(5);
     expect(r.bad).toEqual([]);
     expect(r.pass).toBe(true);

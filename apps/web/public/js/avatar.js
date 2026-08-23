@@ -527,6 +527,101 @@ function renderPlayerWithHead({ dna, appearance, kit }, headIndex) {
     + faceLayers(t, pal) + `</svg>`;
 }
 
+// ==================================================== SQUAD CONFUSABILITY
+// A squad is eleven players in ONE kit, so team colour does nothing to tell
+// them apart. This lives beside the renderer rather than in a tool because
+// the SQUAD BUILDER needs it before it picks a dna, and a second copy of the
+// rule would be a second thing to keep in step.
+
+/** rows above the collar; everything below is kit, identical across a squad */
+const FACE_ROWS = 23;
+const RECT_RE = /<rect x="(-?\d+)" y="(-?\d+)" width="(\d+)" height="(\d+)" fill="#(\w+)"\/>/g;
+
+function rasterOf(svg) {
+  const px = new Array(1024).fill('');
+  for (const m of svg.matchAll(RECT_RE)) {
+    const [, x, y, w, h, c] = m;
+    for (let j = +y; j < +y + +h; j++) {
+      for (let i = +x; i < +x + +w; i++) {
+        if (i >= 0 && i < 32 && j >= 0 && j < 32) px[j * 32 + i] = c;
+      }
+    }
+  }
+  return px;
+}
+
+/** Structure with COLOUR REMOVED: render the face through a sentinel palette
+ *  so each pixel carries the slot that painted it. Comparing ink alone was
+ *  tried and was wrong — ink covers the outline and features but not hair or
+ *  beard, the two biggest structural cues here. */
+const SENTINEL = Array.from({ length: 12 }, (_, i) => 'ff00' + i.toString(16).padStart(2, '0'));
+function structureRaster({ dna, appearance }) {
+  return rasterOf('<svg>' + faceLayers(traitsOf(seedOf(dna, appearance)), SENTINEL) + '</svg>');
+}
+
+const differing = (a, b) => {
+  let d = 0;
+  for (let k = 0; k < FACE_ROWS * CANVAS; k++) if (a[k] !== b[k]) d++;
+  return d;
+};
+
+/** Thresholds from the measured distribution: colour median 277, structure
+ *  median 89, each cut to roughly a third. A pair counts only when it is
+ *  close on BOTH — either alone flags pairs that are plainly distinct. */
+const CONFUSABLE_COLOUR = 220;
+const CONFUSABLE_STRUCTURE = 40;
+
+function comparePlayers(a, b, kitA, kitB, posA = 2, posB = 2) {
+  const colour = differing(
+    rasterOf(renderPlayer({ ...a, kit: kitA, position: posA })),
+    rasterOf(renderPlayer({ ...b, kit: kitB, position: posB })),
+  );
+  const structure = differing(structureRaster(a), structureRaster(b));
+  return { colour, structure, confusable: colour < CONFUSABLE_COLOUR && structure < CONFUSABLE_STRUCTURE };
+}
+
+/** Every confusable pair in a lineup. `kitAt(i)` supplies the shirt, which
+ *  differs for the goalkeeper. */
+function confusablePairs(ids, kitAt, positions) {
+  const out = [];
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const r = comparePlayers(ids[i], ids[j], kitAt(i), kitAt(j), positions[i], positions[j]);
+      if (r.confusable) out.push({ i, j, ...r });
+    }
+  }
+  return out;
+}
+
+/** THE MINT-TIME CHECK. Walks the lineup and, whenever a player is confusable
+ *  with a teammate already placed, asks for the next candidate identity for
+ *  that slot until one is clear.
+ *
+ *  Deterministic, not random: `rederive(index, salt)` must be a pure function,
+ *  so the same club always produces the same squad and anyone can reproduce
+ *  it. Re-derives the LATER player so earlier shirt numbers stay stable.
+ *
+ *  This belongs here and not in the renderer's output path: the renderer sees
+ *  one token at a time, from an immutable hash, and cannot know about
+ *  teammates. Only whoever CHOOSES the dna can fix a clash, and after the mint
+ *  nobody can. */
+function dedupeSquad(ids, kitAt, positions, rederive, maxSalt = 64) {
+  const out = ids.slice();
+  const salts = new Array(ids.length).fill(0);
+  for (let i = 1; i < out.length; i++) {
+    for (let salt = 1; salt <= maxSalt; salt++) {
+      let clash = false;
+      for (let j = 0; j < i && !clash; j++) {
+        if (comparePlayers(out[i], out[j], kitAt(i), kitAt(j), positions[i], positions[j]).confusable) clash = true;
+      }
+      if (!clash) break;
+      out[i] = rederive(i, salt);
+      salts[i] = salt;
+    }
+  }
+  return { ids: out, salts, rerolled: salts.filter((s) => s > 0).length };
+}
+
 
 // ---- the public API. Two names, because the distinction matters:
 // what the CHAIN renders, and what a club kit would look like.
@@ -567,3 +662,6 @@ export function avatarDataUri(p, kit) {
 }
 
 export { traitsOf, seedOf, freeAgentKit, anchorsOf, CANVAS };
+// the mint-time check: only whoever CHOOSES the dna can fix a clash,
+// and after the mint nobody can.
+export { comparePlayers, confusablePairs, dedupeSquad, CONFUSABLE_COLOUR, CONFUSABLE_STRUCTURE };

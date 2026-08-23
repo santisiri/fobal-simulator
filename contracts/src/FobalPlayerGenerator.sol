@@ -53,6 +53,7 @@ contract FobalPlayerGenerator is AccessControl, Pausable, ReentrancyGuard, EIP71
     error WrongNonce(uint256 expected, uint256 given);
     error SquadSizeInvalid(uint256 size);
     error PowerBudgetExceeded(uint256 total, uint256 budget);
+    error DuplicateDna(uint256 first, uint256 second);
 
     constructor(IFobalPlayer playerContract, address admin, address signer)
         EIP712("FobalPlayerGenerator", "1")
@@ -90,6 +91,20 @@ contract FobalPlayerGenerator is AccessControl, Pausable, ReentrancyGuard, EIP71
         );
         if (!SignatureChecker.isValidSignatureNow(generatorSigner, digest, signature)) {
             revert InvalidSignature();
+        }
+
+        // Protocol invariant: no two players in a squad share an identity.
+        // Whether teammates merely LOOK alike is a judgement about rendered
+        // pixels and belongs off chain, where the dna is chosen — reproducing
+        // it here would mean rendering every pair, at roughly a million gas
+        // each. Identical dna is not a judgement, it is a duplicate, and a
+        // squad containing one is always a bug in whatever built it. At
+        // 23 players that is 253 word comparisons, which is affordable where
+        // the pixel test is not.
+        for (uint256 i; i < seeds.length; ++i) {
+            for (uint256 j = i + 1; j < seeds.length; ++j) {
+                if (seeds[i].dna == seeds[j].dna) revert DuplicateDna(i, j);
+            }
         }
 
         // protocol invariant: total power stays inside the configured budget

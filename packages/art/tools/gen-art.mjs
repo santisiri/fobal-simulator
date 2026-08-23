@@ -22,7 +22,7 @@ import { validatePalettes, SKIN, SKIN_BASE, HAIR, BG, ACCENT, INK, EYE_WHITE, IR
 import { encodeClass, decodePart, partCount, toHex, BIAS, BLOB_VERSION } from '../src/blob.js';
 import { renderPlayer, seedOf, traitsOf, freeAgentKit, HEADWEAR_HAIR_FALLBACK, NECK_OF_BUILD, assertKitFits, assertShadingInsideHead } from '../src/render.js';
 import { assertConnected } from './connectivity.mjs';
-import { assertSquadsLegible } from './squad-lib.mjs';
+import { assertSquadsLegible, SAMPLE_CLUBS } from './squad-lib.mjs';
 import { keccak_256 } from '@noble/hashes/sha3';
 
 
@@ -84,7 +84,9 @@ for (const [cls, parts] of Object.entries(CLASSES)) {
 // Eleven players in ONE kit is the hardest case the product shows, and the
 // only one where team colour does no work at all. A pair counts as confusable
 // only when it is close on BOTH colour and construction.
-const squads = assertSquadsLegible();
+// a SAMPLE here — the full 400-squad sweep is ~34s and belongs in its own CI
+// step (tools/squad-sheet.mjs), not in a command developers run constantly
+const squads = assertSquadsLegible(SAMPLE_CLUBS(60));
 for (const b of squads.bad) fail.push(`squads: ${b}`);
 const shade = assertShadingInsideHead();
 for (const b of shade.bad.slice(0, 10)) fail.push(`shading: ${b}`);
@@ -369,6 +371,9 @@ const avatarJs = [
   '}',
   '',
   'export { traitsOf, seedOf, freeAgentKit, anchorsOf, CANVAS };',
+  '// the mint-time check: only whoever CHOOSES the dna can fix a clash,',
+  '// and after the mint nobody can.',
+  'export { comparePlayers, confusablePairs, dedupeSquad, CONFUSABLE_COLOUR, CONFUSABLE_STRUCTURE };',
   '',
 ].join('\n');
 writeFileSync(new URL('../../apps/web/public/js/avatar.js', A), avatarJs);
@@ -531,6 +536,6 @@ console.log(`  ${'head geometry'.padEnd(14)}       ${String(HEAD_SPECS.length * 
 console.log(`gates: palettes ${pal.pass ? 'PASS' : 'FAIL'} · weights ${wts.pass ? 'PASS' : 'FAIL'}`
   + ` · silhouette ${sil.every(r => !r.collisions.length) ? 'PASS' : 'FAIL'}`
   + ` · kit-fits ${kit.pass ? 'PASS' : 'FAIL'} · shading-inside ${shade.pass ? 'PASS' : 'FAIL'} · connectivity ${conn.pass ? 'PASS' : 'FAIL'} (${conn.checked} renders)`
-  + ` · squads ${squads.pass ? 'PASS' : 'FAIL'} (${(squads.rate * 100).toFixed(2)}% confusable)`
+  + ` · squads ${squads.pass ? 'PASS' : 'FAIL'} (${squads.squads} sampled, ${squads.cleanedWithPair} confusable after the check)`
   + ` · round-trip ${fail.length ? 'FAIL' : 'PASS'}`);
 if (fail.length) { console.error('\nFAILURES:\n  ' + fail.join('\n  ')); process.exit(1); }

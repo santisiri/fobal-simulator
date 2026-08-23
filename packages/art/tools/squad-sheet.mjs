@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { renderPlayer } from '../src/render.js';
 import {
   CLUBS, POSITIONS, appSquadIds, confusablePairs, assertSquadsLegible,
-  auditSquad, GATE_CLUBS, kitFor,
+  auditSquad, GATE_CLUBS, kitFor, cleanSquad,
 } from './squad-lib.mjs';
 
 const OUT = new URL('../out/', import.meta.url);
@@ -24,8 +24,8 @@ const SPOTS = [
 const cell = (id, i, kit, cls = 'c') =>
   `<div class="${cls}">${renderPlayer({ ...id, kit: kitFor(kit, i), position: POSITIONS[i] })}</div>`;
 
-function lineup(name, kit) {
-  const ids = appSquadIds(name);
+function lineup(name, kit, useCheck = true) {
+  const ids = useCheck ? cleanSquad(name, kit).ids : appSquadIds(name);
   const flagged = new Set(confusablePairs(ids, kit).flatMap((f) => [f.i, f.j]));
   const r = auditSquad(ids, kit);
   const row = ids.map((id, i) =>
@@ -40,7 +40,8 @@ function lineup(name, kit) {
   </section>`;
 }
 
-const gate = assertSquadsLegible();
+// the FULL sweep — this step exists to be thorough
+const gate = assertSquadsLegible(GATE_CLUBS);
 // the squad the audit likes least, shown deliberately rather than hidden
 let worstName = GATE_CLUBS[0], worstKit = CLUBS[0], worstScore = Infinity;
 GATE_CLUBS.forEach((n, i) => {
@@ -79,18 +80,25 @@ where team colour stops doing any work. A pair is flagged only when it is close 
 axes — colour and construction — because either alone is a bad test.</p>
 <div class="gate">
   <span class="${gate.pass ? 'pass' : 'fail'}">${gate.pass ? 'PASS' : 'FAIL'}</span>
-  &nbsp;${gate.squadsWithPair}/${gate.squads} squads contain a confusable pair
-  (${(gate.rate * 100).toFixed(2)}%)
+  &nbsp;before the mint-time check: ${gate.squadsWithPair}/${gate.squads} squads contain a
+  confusable pair (${(gate.rate * 100).toFixed(2)}%)
   ${gate.examples.length ? '<br>&nbsp;&nbsp;' + gate.examples.join('<br>&nbsp;&nbsp;') : ''}
+  <br>&nbsp;after: <span class="${gate.cleanedWithPair === 0 ? 'pass' : 'fail'}">${gate.cleanedWithPair}/${gate.squads}</span>
+  &nbsp;&mdash; ${gate.rerolled} of ${gate.players} players re-derived, deepest salt ${gate.deepestSalt}
 </div>
 ${CLUBS.map((c) => lineup(c.name, c)).join('')}
-<h2>The worst squad the audit can find <em>shown on purpose</em></h2>
+<h2>The worst squad the audit can find <em>shown on purpose, after the check</em></h2>
 ${lineup(worstName, worstKit)}
+<h2>...and the same squad WITHOUT the check <em>for comparison</em></h2>
+${lineup(worstName, worstKit, false)}
 `);
 
-console.log(`squad legibility: ${gate.pass ? 'PASS' : 'FAIL'}`
-  + ` — ${gate.squadsWithPair}/${gate.squads} squads with a confusable pair (${(gate.rate * 100).toFixed(2)}%)`);
-gate.examples.forEach((e) => console.log('  ' + e));
+console.log(`squad legibility: ${gate.pass ? 'PASS' : 'FAIL'}`);
+console.log(`  before the mint-time check: ${gate.squadsWithPair}/${gate.squads}`
+  + ` (${(gate.rate * 100).toFixed(2)}%)`);
+gate.examples.forEach((e) => console.log('    ' + e));
+console.log(`  after:  ${gate.cleanedWithPair}/${gate.squads}`
+  + ` — ${gate.rerolled}/${gate.players} players re-derived, deepest salt ${gate.deepestSalt}`);
 console.log(`worst squad: ${worstName}`);
 console.log('wrote out/squads.html');
 process.exit(gate.pass ? 0 : 1);
