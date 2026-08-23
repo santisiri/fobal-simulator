@@ -40,7 +40,8 @@ function lineup(name, kit, useCheck = true) {
   </section>`;
 }
 
-const gate = assertSquadsLegible();
+// the FULL sweep — this step exists to be thorough
+const gate = assertSquadsLegible(GATE_CLUBS);
 // the squad the audit likes least, shown deliberately rather than hidden
 let worstName = GATE_CLUBS[0], worstKit = CLUBS[0], worstScore = Infinity;
 GATE_CLUBS.forEach((n, i) => {

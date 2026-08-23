@@ -124,8 +124,12 @@ export function cleanSquad(clubName, kit) {
     (i, salt) => appSquadIds(clubName, POSITIONS.length, salt)[i]);
 }
 
-/** the fixed panel the gate measures, so the rate is comparable run to run */
+/** The fixed panel the gate measures, so the rate is comparable run to run.
+ *  A full sweep is ~34s: thorough enough for the dedicated CI step, far too
+ *  slow for codegen or a unit suite, both of which take a prefix. Prefixes of
+ *  one list rather than separate lists, so every sample is comparable. */
 export const GATE_CLUBS = Array.from({ length: 400 }, (_, i) => `Club ${i}`);
+export const SAMPLE_CLUBS = (n) => GATE_CLUBS.slice(0, n);
 
 /** GATE. Two numbers, because they answer different questions.
  *
