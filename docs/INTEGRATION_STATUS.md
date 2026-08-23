@@ -72,9 +72,21 @@ lobby session, lobby gains a "← CLUB" link.
 
 ## Deploy state
 
-Staging last confirmed on image `38b964e` (2026-08-16). A redeploy to
-`3c00e6b` was prepared; whether the intermediate `ffb4e5c` deploy ran is
-unconfirmed — the phase prompt asks Sairi to report the live tag first.
+**Staging is LIVE on `40326b0`** (deployed 2026-08-22, from `38b964e` —
+44 commits of catch-up). Both services rolled cleanly: match-server task
+def `:9`, lobby-server `:7`, each `1/1` running, rollout `COMPLETED`.
+Client rebuilt, synced, CloudFront invalidation completed.
+
+All six smokes passed: both `/health` endpoints, wallet-auth challenge,
+the three boot markers (`chain_reader` · `mint_service` ·
+`identity_resolver`), the lobby title marker, and `invite.html`.
+
+**Verified:** the deployed tree is byte-for-byte the code reviewed green
+at `3c00e6b` — the intervening commits touched only contract tests and
+docs. No unreviewed application code is serving staging.
+
+Drift since the deploy is `packages/art` tooling and CI only; nothing
+client-facing, so no redeploy is owed.
 
 **Standing staging contexts**: `-c aiSecrets=1 -c mintSigner=1`.
 **Do NOT pass `-c emailSecrets=1`** — it injects Resend secrets that do
