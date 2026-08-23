@@ -10,6 +10,9 @@
 //   POST /account/team                {teamName} rename my team
 //   GET  /squad                       my players + kit (defaults annotated)
 //   POST /squad                       {colors?, players?} edit names/kit
+//   GET  /sheet                       my team sheet + the squad to pick from
+//   PUT  /sheet                       set the XI, bench, formation, tactics
+//   DELETE /sheet                     back to the squad's own order
 //   POST /challenges                  {to, rematchOf?} challenge a player
 //   POST /challenges/:id/accept       creates the authoritative match
 //   POST /challenges/:id/decline      decline (or cancel your own)
@@ -24,7 +27,7 @@
 // full time, so nobody has to click LEAVE).
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { TeamSnapshot } from '@fobal/protocol';
+import { applyTeamSheet, defaultSheetFor, TeamSheet, TeamSnapshot } from '@fobal/protocol';
 import { signSession, verifySession } from './sessions.js';
 import { Account, Invitation, LobbyStore, MatchRecord, SquadCustomization } from './store.js';
 import { EmailProvider } from './email.js';
@@ -1114,6 +1117,52 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       // unlink: back to the generated squad
       if (req.method === 'DELETE' && url.pathname === '/squad/chain'){
         const { chainTeam: _dropped, ...rest } = me;
+        store.saveAccount(rest);
+        return json(res, 200, { ok: true });
+      }
+
+      // H — the team sheet: the eleven you pick and the shape you set.
+      // The roster is always served UNSHEETED so the editor sees every
+      // player it may pick, and a saved sheet that no longer fits is
+      // reported rather than hidden (a sold player makes it stale).
+      if (req.method === 'GET' && url.pathname === '/sheet'){
+        const roster = buildTeam({ ...me, teamSheet: undefined });
+        const saved = me.teamSheet;
+        const applied = saved ? applyTeamSheet(roster, saved) : null;
+        return json(res, 200, {
+          sheet: saved ?? defaultSheetFor(roster),
+          saved: saved !== undefined,
+          ...(applied && !applied.ok ? { issue: applied.reason } : {}),
+          squad: roster.players.map(p => ({
+            playerId: p.playerId, name: p.name, shirtNumber: p.shirtNumber,
+            role: p.role, ratings: p.ratings,
+          })),
+        });
+      }
+
+      if (req.method === 'PUT' && url.pathname === '/sheet'){
+        let body: unknown;
+        try { body = JSON.parse(await readBody(req)); }
+        catch { return json(res, 400, { error: 'invalid JSON body' }); }
+        const parsed = TeamSheet.safeParse(body);
+        if (!parsed.success)
+          return json(res, 400, { error: parsed.error.issues[0]?.message ?? 'that is not a team sheet' });
+        // validated against the CURRENT squad — the same gate kickoff uses
+        const applied = applyTeamSheet(buildTeam({ ...me, teamSheet: undefined }), parsed.data);
+        if (!applied.ok) return json(res, 400, { error: applied.reason });
+        store.saveAccount({ ...me, teamSheet: parsed.data });
+        return json(res, 200, {
+          sheet: parsed.data,
+          xi: applied.team.players.slice(0, 11).map(p => ({
+            playerId: p.playerId, name: p.name, shirtNumber: p.shirtNumber, role: p.role,
+          })),
+          formation: applied.team.formation ?? null,
+        });
+      }
+
+      // back to the squad's own order
+      if (req.method === 'DELETE' && url.pathname === '/sheet'){
+        const { teamSheet: _dropped, ...rest } = me;
         store.saveAccount(rest);
         return json(res, 200, { ok: true });
       }

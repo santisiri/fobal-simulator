@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ObjectStore } from '@fobal/match-server';
-import type { TeamSnapshot } from '@fobal/protocol';
+import type { TeamSheet, TeamSnapshot } from '@fobal/protocol';
 
 /** Player-identity overrides on top of the generated squad. Ratings and
  *  roles are NOT here on purpose — self-buffing is not a feature. */
@@ -36,6 +36,9 @@ export interface Account {
   /** D1: the protocol-validated squad read from the chain registry; when
    *  present it REPLACES the generated squad in every manifest */
   chainTeam?: TeamSnapshot;
+  /** H: the eleven you picked and the shape you set — applied to every
+   *  manifest this account plays (see teams.ts buildTeam) */
+  teamSheet?: TeamSheet;
 }
 
 /** Cached POINTER to the signed result — the match server remains the sole

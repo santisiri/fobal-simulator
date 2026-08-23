@@ -2,7 +2,7 @@
 // derived from its handle — the placeholder behind the roadmap's "player team
 // storage". Real team building (and eventually Phase D NFT-fed teams)
 // replaces this generator; the MatchManifest contract stays.
-import { MatchManifest, PROTOCOL_VERSION } from '@fobal/protocol';
+import { applyTeamSheet, MatchManifest, PROTOCOL_VERSION } from '@fobal/protocol';
 import type { PlayerSnapshot, TeamSnapshot } from '@fobal/protocol';
 import type { Account } from './store.js';
 import { squadNames } from './playerNames.js';
@@ -37,7 +37,7 @@ function player(account: Account, i: number, role: PlayerSnapshot['role'], name:
   };
 }
 
-export function buildTeam(account: Account, { customized = true } = {}): TeamSnapshot {
+function buildSquad(account: Account, customized: boolean): TeamSnapshot {
   // D1: a linked chain squad replaces the generated one wholesale — the
   // NFTs ARE the team. Kit colors remain a cosmetic overlay (customizing
   // them buffs nothing); names/ratings/roles come from the chain alone.
@@ -69,6 +69,18 @@ export function buildTeam(account: Account, { customized = true } = {}): TeamSna
     formation: '442',
     players,
   };
+}
+
+/** The team as it takes the field: the account's squad, with its saved
+ *  team sheet applied (H). A sheet that no longer fits the squad — a sold
+ *  player, a roster that changed underneath it — is IGNORED rather than
+ *  fatal: a stale sheet must never stop a match from being created. The
+ *  squad room surfaces the staleness; kickoff just uses the squad order. */
+export function buildTeam(account: Account, { customized = true } = {}): TeamSnapshot {
+  const squad = buildSquad(account, customized);
+  if (!customized || !account.teamSheet) return squad;
+  const applied = applyTeamSheet(squad, account.teamSheet);
+  return applied.ok ? applied.team : squad;
 }
 
 /** Frozen match input from two accounts. Parsed here so a bad build fails in
