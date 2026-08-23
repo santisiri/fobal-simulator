@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="FOBAL squad room — pick your eleven, set your shape, brief your team.">
+<meta name="theme-color" content="#0a0f1e">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+<title>FOBAL — Squad Room</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="../src/ui/ui.css">
+<style>
+  /* brand tokens — kept in step with lobby.html and apps/web/styles/fobal.css */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0f1e; --bg-2: #070b16; --panel: #0d1428; --panel-2: #111a33;
+    --ink: #f8fafc; --dim: rgba(248,250,252,0.56); --faint: rgba(248,250,252,0.34);
+    --green: #22c55e; --green-ink: #041a0c; --purple: #a855f7; --red: #f87171;
+    --line: rgba(120,150,200,0.16); --line-strong: rgba(120,150,200,0.3);
+    --sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+    --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 50% -10%, rgba(34,197,94,0.06), transparent 60%),
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 44px 100%,
+      var(--bg);
+    padding-bottom: 76px;
+  }
+  header { display: flex; gap: 14px; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .brand { font-family: var(--display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+  .brand span { color: var(--green); }
+  .brandTag { font-family: var(--mono); font-size: 11px; letter-spacing: 2.4px; color: var(--dim); text-transform: uppercase; }
+  header .who { margin-left: auto; font-family: var(--mono); font-size: 11px; letter-spacing: 1px; color: var(--dim); }
+  main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 30px; }
+
+  .card { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  .card h2 { font-family: var(--mono); font-weight: 600; font-size: 11px; letter-spacing: 2.4px; text-transform: uppercase; color: var(--dim); margin: 0 0 12px; }
+  button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .7px; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
+  button:hover { border-color: var(--green); transform: translateY(-1px); }
+  button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  button.primary { background: var(--green); color: var(--green-ink); border-color: var(--green); }
+  button.ghost { background: transparent; }
+  button.sm { padding: 6px 10px; font-size: 12px; }
+  button.on { border-color: var(--green); color: var(--green); }
+  .muted { color: var(--dim); font-size: 13px; }
+  .err { color: var(--red); font-size: 13px; }
+  .hidden { display: none; }
+
+  /* ---- the room ---- */
+  .room { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); gap: 14px; }
+  .formbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+
+  /* the pitch: slots placed by formation, attacking upward */
+  .roompitch {
+    position: relative; width: 100%; aspect-ratio: 4 / 5; border-radius: 10px;
+    border: 1px solid var(--line-strong);
+    background:
+      linear-gradient(0deg, rgba(34,197,94,.07), rgba(34,197,94,.02)),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.028) 0 8%, transparent 8% 16%),
+      var(--bg-2);
+    overflow: hidden;
+  }
+  .roompitch::before, .roompitch::after {
+    content: ""; position: absolute; left: 22%; right: 22%; height: 13%;
+    border: 1px solid rgba(255,255,255,.12);
+  }
+  .roompitch::before { top: -1px; border-top: 0; }
+  .roompitch::after { bottom: -1px; border-bottom: 0; }
+  .halfway { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid rgba(255,255,255,.12); }
+  .centre { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; transform: translate(-50%,-50%); border: 1px solid rgba(255,255,255,.12); border-radius: 50%; }
+
+  .slot { position: absolute; transform: translate(-50%, 50%); width: 74px; text-align: center; }
+  .slot .slotLabel { font-family: var(--mono); font-size: 9px; letter-spacing: 1.4px; color: var(--faint); margin-top: 3px; }
+  .slot.target .pcard { border-color: var(--green); box-shadow: 0 0 0 2px rgba(34,197,94,.35); }
+  .slot.oop .slotLabel { color: #f59e0b; }
+
+  .listrow { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--line); width: 100%; text-align: left; background: none; border-radius: 0; font-family: var(--sans); font-weight: 500; }
+  .listrow:hover { border-color: var(--line); background: rgba(255,255,255,.03); transform: none; }
+  .listrow:last-child { border-bottom: 0; }
+  .listrow.sel { background: rgba(34,197,94,.1); box-shadow: inset 2px 0 0 var(--green); }
+  .listrow .n { font-family: var(--mono); font-size: 11px; color: var(--faint); width: 22px; }
+  .listrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .listrow .rl { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--dim); }
+  .listrow .ov { font-family: var(--mono); font-weight: 700; font-size: 12px; }
+  .sublabel { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--faint); margin: 12px 0 4px; }
+
+  /* ---- tactics ---- */
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
+  .choice { display: flex; flex-direction: column; gap: 5px; }
+  .choice label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--dim); }
+  .choice .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px,1fr)); gap: 16px; margin-top: 14px; }
+  .grp h3 { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: var(--green); margin: 0 0 10px; font-weight: 600; }
+  .fld { margin-bottom: 12px; }
+  .fld .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .fld .ends { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9px; color: var(--faint); letter-spacing: .5px; }
+  .fld input[type=range] { width: 100%; accent-color: var(--green); margin: 0; }
+  .fld .val { font-family: var(--mono); color: var(--dim); font-size: 11px; }
+
+  /* ---- save bar ---- */
+  .savebar { position: fixed; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: rgba(7,11,22,.92); backdrop-filter: blur(8px); border-top: 1px solid var(--line); }
+  .savebar .status { flex: 1; font-size: 13px; color: var(--dim); }
+  .savebar .status.ok { color: var(--green); }
+  .savebar .status.bad { color: var(--red); }
+
+  @media (max-width: 860px) {
+    .room { grid-template-columns: 1fr; }
+    .slot { width: 62px; }
+    main { padding: 14px 10px 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">FOBAL<span>.ai</span></div>
+  <div class="brandTag">Squad Room</div>
+  <span class="who" id="who"></span>
+  <button class="ghost sm" id="backBtn">← LOBBY</button>
+</header>
+
+<main>
+  <div class="err" id="topErr"></div>
+  <section class="room">
+    <div class="card">
+      <h2>The eleven</h2>
+      <div class="formbar" id="formbar"></div>
+      <div class="roompitch" id="pitch">
+        <div class="halfway"></div><div class="centre"></div>
+      </div>
+      <div class="muted" id="pitchHint" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Squad</h2>
+      <div id="squadList"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Tactics</h2>
+    <div class="presets" id="presets"></div>
+    <div class="choices" id="choices"></div>
+    <div class="groups" id="groups"></div>
+  </section>
+</main>
+
+<div class="savebar">
+  <span class="status" id="status">Pick your eleven and set your shape.</span>
+  <button class="ghost sm" id="resetBtn">RESET</button>
+  <button class="primary" id="saveBtn">SAVE TEAM SHEET</button>
+</div>
+
+<script type="module">
+  import { playerCard } from '../src/ui/playerCard.js';
+  import { createPlayerDetail } from '../src/ui/playerDetail.js';
+  import { FORMATIONS, prettyFormation, slotsFor, outOfPosition } from '../src/ui/formation.js';
+  import { TACTIC_GROUPS, TACTIC_CHOICES, PRESETS } from '../src/ui/tactics.js';
+
+  const $ = id => document.getElementById(id);
+  const SESSION_KEY = 'fobal.lobby.session';
+
+  let session = null;
+  try { session = JSON.parse(sessionStorage.getItem(SESSION_KEY)); } catch {}
+  const params = new URLSearchParams(location.search);
+  const lobbyUrl = (params.get('lobby') ?? session?.url ?? window.FOBAL_CONFIG?.lobbyUrl ?? 'http://localhost:8475')
+    .replace(/\/+$/, '');
+  if (!session?.token) location.href = `lobby.html${params.get('lobby') ? `?lobby=${encodeURIComponent(lobbyUrl)}` : ''}`;
+
+  const api = (path, { method = 'GET', body } = {}) =>
+    fetch(`${lobbyUrl}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.token}` },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+  $('backBtn').onclick = () => {
+    location.href = `lobby.html${params.get('lobby') ? `?lobby=${encodeURIComponent(lobbyUrl)}` : ''}`;
+  };
+
+  // ---- state -------------------------------------------------------------
+  // `sheet` is the working copy; nothing reaches the server until SAVE, so a
+  // manager can try an eleven without committing to it.
+  let sheet = null;            // { version, lineup[11], bench[], formation, tactics }
+  let byId = new Map();        // playerId → the /squad presentation payload
+  let colors = undefined;
+  let source = 'generated';
+  let selected = null;         // playerId the manager has picked up
+  let dirty = false;
+
+  const detail = createPlayerDetail({});
+
+  function setStatus(text, kind = ''){
+    const el = $('status');
+    el.textContent = text;
+    el.className = `status ${kind}`;
+  }
+  const markDirty = () => { dirty = true; setStatus('Unsaved changes — save to take them into your next match.'); };
+
+  // ---- load --------------------------------------------------------------
+  async function load(){
+    // /squad is the canonical player-presentation payload (cards render from
+    // it alone); /sheet carries the selection. Joined by playerId.
+    const [sheetRes, squadRes] = await Promise.all([api('/sheet'), api('/squad')]);
+    if (sheetRes.status === 401 || squadRes.status === 401){
+      sessionStorage.removeItem(SESSION_KEY);
+      location.href = 'lobby.html';
+      return;
+    }
+    if (!sheetRes.ok || !squadRes.ok){
+      $('topErr').textContent = 'Your squad did not load. Refresh to try again.';
+      return;
+    }
+    const sheetView = await sheetRes.json();
+    const squad = await squadRes.json();
+    byId = new Map(squad.players.map(p => [p.playerId, p]));
+    colors = squad.colors ?? undefined;
+    source = squad.source ?? 'generated';
+    sheet = {
+      version: 1,
+      lineup: [...sheetView.sheet.lineup],
+      bench: [...sheetView.sheet.bench],
+      formation: sheetView.sheet.formation ?? '442',
+      tactics: { ...(sheetView.sheet.tactics ?? {}) },
+    };
+    $('who').textContent = squad.teamName ?? '';
+    if (sheetView.issue){
+      $('topErr').textContent = `Your saved sheet is out of date: ${sheetView.issue}. Fix it and save again — until then your squad plays in its own order.`;
+    }
+    setStatus(sheetView.saved ? 'This is the team sheet your next match starts with.' : 'No sheet saved yet — this is what your squad plays today.');
+    renderAll();
+  }
+
+  function renderAll(){
+    renderFormbar();
+    renderPitch();
+    renderSquadList();
+    renderTactics();
+  }
+
+  // ---- the pitch ---------------------------------------------------------
+  function renderFormbar(){
+    const bar = $('formbar');
+    bar.replaceChildren();
+    const label = document.createElement('span');
+    label.className = 'muted';
+    label.textContent = 'Formation';
+    bar.appendChild(label);
+    for (const f of FORMATIONS){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `sm${sheet.formation === f ? ' on' : ''}`;
+      b.textContent = prettyFormation(f);
+      b.onclick = () => { sheet.formation = f; markDirty(); renderAll(); };
+      bar.appendChild(b);
+    }
+  }
+
+  function renderPitch(){
+    const pitch = $('pitch');
+    pitch.replaceChildren();
+    const half = document.createElement('div'); half.className = 'halfway';
+    const circle = document.createElement('div'); circle.className = 'centre';
+    pitch.append(half, circle);
+
+    slotsFor(sheet.formation).forEach((slot, i) => {
+      const id = sheet.lineup[i];
+      const player = byId.get(id);
+      const el = document.createElement('div');
+      el.className = 'slot';
+      el.style.left = `${slot.x}%`;
+      el.style.bottom = `${slot.y}%`;
+      el.dataset.slot = String(i);
+      if (selected) el.classList.add('target');
+
+      if (player){
+        const card = playerCard(player, colors, {
+          onOpen: () => onSlotTap(i),
+        });
+        el.appendChild(card);
+        const oop = outOfPosition(player.role, slot.role);
+        if (oop){
+          el.classList.add('oop');
+          const lab = document.createElement('div');
+          lab.className = 'slotLabel';
+          lab.textContent = `playing ${slot.role}`;   // his own role is on the card
+          el.appendChild(lab);
+        }
+      } else {
+        const empty = document.createElement('button');
+        empty.type = 'button';
+        empty.className = 'pcard';
+        empty.style.opacity = '.5';
+        empty.textContent = slot.role;
+        empty.onclick = () => onSlotTap(i);
+        el.appendChild(empty);
+      }
+      pitch.appendChild(el);
+    });
+
+    $('pitchHint').textContent = selected
+      ? `${byId.get(selected)?.name ?? 'Player'} is picked up — tap a position to place him.`
+      : 'Tap a player in your squad, then tap a position to place him. Tap a shirt to read his numbers.';
+  }
+
+  /** Placing a player: whoever is in the slot trades places with him, so the
+   *  eleven always stays eleven and nobody silently disappears. */
+  function onSlotTap(slotIndex){
+    if (!selected){
+      const p = byId.get(sheet.lineup[slotIndex]);
+      if (p) detail.open(p, { colors, source });
+      return;
+    }
+    const incoming = selected;
+    const outgoing = sheet.lineup[slotIndex];
+    const fromLineup = sheet.lineup.indexOf(incoming);
+    const fromBench = sheet.bench.indexOf(incoming);
+
+    sheet.lineup[slotIndex] = incoming;
+    if (fromLineup >= 0) sheet.lineup[fromLineup] = outgoing;          // swap within the XI
+    else if (fromBench >= 0){
+      if (outgoing) sheet.bench[fromBench] = outgoing;                  // straight swap
+      else sheet.bench.splice(fromBench, 1);
+    } else if (outgoing && sheet.bench.length < 5){
+      sheet.bench.push(outgoing);                                       // drafted from outside
+    }
+    selected = null;
+    markDirty();
+    renderAll();
+  }
+
+  // ---- the squad list ----------------------------------------------------
+  function renderSquadList(){
+    const list = $('squadList');
+    list.replaceChildren();
+    const inXi = new Set(sheet.lineup);
+    const onBench = sheet.bench.filter(id => byId.has(id));
+    const rest = [...byId.keys()].filter(id => !inXi.has(id) && !onBench.includes(id));
+
+    const section = (label, ids) => {
+      if (!ids.length) return;
+      const h = document.createElement('div');
+      h.className = 'sublabel';
+      h.textContent = label;
+      list.appendChild(h);
+      for (const id of ids){
+        const p = byId.get(id);
+        if (!p) continue;
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = `listrow${selected === id ? ' sel' : ''}`;
+        row.dataset.player = id;
+        row.innerHTML = '';
+        const n = document.createElement('span'); n.className = 'n'; n.textContent = `${p.shirtNumber}`;
+        const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = p.name;
+        const rl = document.createElement('span'); rl.className = 'rl'; rl.textContent = p.role;
+        const ov = document.createElement('span'); ov.className = 'ov'; ov.textContent = `${p.overall ?? ''}`;
+        row.append(n, nm, rl, ov);
+        row.onclick = () => { selected = selected === id ? null : id; renderAll(); };
+        list.appendChild(row);
+      }
+    };
+    section('On the bench', onBench);
+    section('Not in the squad', rest);
+    if (!onBench.length && !rest.length){
+      const none = document.createElement('div');
+      none.className = 'muted';
+      none.textContent = 'Every player you own is in the eleven.';
+      list.appendChild(none);
+    }
+  }
+
+  // ---- tactics -----------------------------------------------------------
+  function renderTactics(){
+    const presets = $('presets');
+    presets.replaceChildren();
+    for (const preset of PRESETS){
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'sm';
+      b.textContent = preset.label;
+      b.title = 'The same orders you can shout mid-match';
+      b.onclick = () => { Object.assign(sheet.tactics, preset.patch); markDirty(); renderTactics(); };
+      presets.appendChild(b);
+    }
+
+    const choices = $('choices');
+    choices.replaceChildren();
+    for (const choice of TACTIC_CHOICES){
+      const wrap = document.createElement('div');
+      wrap.className = 'choice';
+      const lab = document.createElement('label');
+      lab.textContent = choice.label;
+      const opts = document.createElement('div');
+      opts.className = 'opts';
+      for (const option of choice.options){
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = `sm${sheet.tactics[choice.key] === option ? ' on' : ''}`;
+        b.textContent = option;
+        b.dataset.choice = `${choice.key}:${option}`;
+        b.onclick = () => { sheet.tactics[choice.key] = option; markDirty(); renderTactics(); };
+        opts.appendChild(b);
+      }
+      wrap.append(lab, opts);
+      choices.appendChild(wrap);
+    }
+
+    const groups = $('groups');
+    groups.replaceChildren();
+    for (const group of TACTIC_GROUPS){
+      const g = document.createElement('div');
+      g.className = 'grp';
+      const h = document.createElement('h3');
+      h.textContent = group.label;
+      g.appendChild(h);
+      for (const field of group.fields){
+        const set = sheet.tactics[field.key] !== undefined;
+        const value = set ? sheet.tactics[field.key] : 0.5;
+        const fld = document.createElement('div');
+        fld.className = 'fld';
+        const top = document.createElement('div');
+        top.className = 'top';
+        const name = document.createElement('span'); name.textContent = field.label;
+        const val = document.createElement('span');
+        val.className = 'val';
+        val.textContent = set ? `${Math.round(value * 100)}` : 'default';
+        top.append(name, val);
+        const input = document.createElement('input');
+        input.type = 'range'; input.min = '0'; input.max = '100'; input.step = '5';
+        input.value = `${Math.round(value * 100)}`;
+        input.dataset.field = field.key;
+        input.oninput = () => {
+          sheet.tactics[field.key] = Number(input.value) / 100;
+          val.textContent = input.value;
+          markDirty();
+        };
+        const ends = document.createElement('div');
+        ends.className = 'ends';
+        const lo = document.createElement('span'); lo.textContent = field.low;
+        const hi = document.createElement('span'); hi.textContent = field.high;
+        ends.append(lo, hi);
+        fld.append(top, input, ends);
+        g.appendChild(fld);
+      }
+      groups.appendChild(g);
+    }
+  }
+
+  // ---- save --------------------------------------------------------------
+  $('saveBtn').onclick = async () => {
+    $('topErr').textContent = '';
+    setStatus('Saving…');
+    try {
+      const res = await api('/sheet', { method: 'PUT', body: sheet });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok){
+        // the server's reason names the player and says what to do
+        setStatus(out.error ?? 'That team sheet was refused.', 'bad');
+        return;
+      }
+      dirty = false;
+      setStatus('Saved — your next match starts exactly like this.', 'ok');
+    } catch (err){
+      setStatus(`Could not reach the lobby: ${err.message ?? err}`, 'bad');
+    }
+  };
+
+  $('resetBtn').onclick = async () => {
+    setStatus('Clearing…');
+    await api('/sheet', { method: 'DELETE' });
+    selected = null;
+    await load();
+    setStatus('Back to your squad’s own order.', 'ok');
+  };
+
+  window.addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+
+  load();
+</script>
+</body>
+</html>
