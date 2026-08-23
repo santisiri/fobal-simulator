@@ -29,7 +29,15 @@ contract DeployArtLibrary is Script {
     }
 
     function run() external returns (FobalArtLibrary lib) {
-        address admin = vm.envAddress("FOBAL_ART_ADMIN");
+        return runWith(vm.envAddress("FOBAL_ART_ADMIN"));
+    }
+
+    /// @dev The logic, with the admin passed in. Reading it from the process
+    /// environment is fine for a real deploy and useless for a test: vm.setEnv
+    /// mutates a PROCESS global, and forge runs tests in parallel, so two
+    /// tests configuring the same script race each other. One passed alone and
+    /// failed beside its neighbours, which is the least useful kind of failure.
+    function runWith(address admin) public returns (FobalArtLibrary lib) {
         // Broadcast AS msg.sender explicitly. Bare startBroadcast() uses the
         // default sender, which is not msg.sender under `forge test` — so the
         // library would be constructed owning one account and written to by
@@ -67,20 +75,35 @@ contract DeployArtLibrary is Script {
 
         // Hand over only after the read-back passed. Renouncing last means a
         // failed verification above leaves the deployer still able to fix it.
-        vm.startBroadcast(deployer);
-        lib.grantRole(lib.DEFAULT_ADMIN_ROLE(), admin);
-        lib.grantRole(lib.ART_ADMIN_ROLE(), admin);
-        lib.renounceRole(lib.ART_ADMIN_ROLE(), deployer);
-        lib.renounceRole(lib.DEFAULT_ADMIN_ROLE(), deployer);
-        vm.stopBroadcast();
+        //
+        // ...and only when there is somebody ELSE to hand to. Until the
+        // timelock exists (rollout step 7) the art admin IS the operator's own
+        // key, and granting then renouncing the same account leaves the
+        // library with no administrator at all — unable to set a class or ever
+        // be sealed. The require below caught that, so it failed safe rather
+        // than bricking anything, but the correct behaviour is to notice there
+        // is nothing to hand over.
+        if (admin != deployer) {
+            vm.startBroadcast(deployer);
+            lib.grantRole(lib.DEFAULT_ADMIN_ROLE(), admin);
+            lib.grantRole(lib.ART_ADMIN_ROLE(), admin);
+            lib.renounceRole(lib.ART_ADMIN_ROLE(), deployer);
+            lib.renounceRole(lib.DEFAULT_ADMIN_ROLE(), deployer);
+            vm.stopBroadcast();
+            console2.log("art admin handed to", admin);
+        } else {
+            console2.log("art admin stays with the deployer", admin);
+            console2.log("hand it to the timelock at rollout step 7");
+        }
 
         require(lib.hasRole(lib.ART_ADMIN_ROLE(), admin), "handover failed");
-        require(!lib.hasRole(lib.DEFAULT_ADMIN_ROLE(), deployer), "deployer still admin");
+        if (admin != deployer) {
+            require(!lib.hasRole(lib.DEFAULT_ADMIN_ROLE(), deployer), "deployer still admin");
+        }
 
         console2.log("art library deployed", address(lib));
         console2.log("classes installed", CLASSES.length);
         console2.log("rects verified by read-back", totalRects);
-        console2.log("art admin handed to", admin);
         console2.log("NOT sealed: inspect rendered output first, then seal()");
     }
 

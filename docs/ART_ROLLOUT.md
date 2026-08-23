@@ -70,6 +70,18 @@ Each phase is a separate transaction set with its own rollback. Do not batch
 them: the point of the sequence is that a mistake is visible before the next
 step depends on it.
 
+### 1 — Install the router as a proven no-op  ✅ DONE 2026-08-23
+
+Router `0x93C5c6a849d32921BB364BfB1a63e072c4DF2955`, installed in tx
+`0x08cd4d2ba9b05c09bdd38851e6ee515dfcf2417eae626e6133e4d761e1bdb08e`
+(38,543 gas). All 11 tokens hashed before and after: **unchanged, 11/11**.
+Both events fired — `RendererChanged(router, "router-v1")` and
+`BatchMetadataUpdate(1, 11)`.
+
+Rollback remains one call: `setRenderer(0xB103DCe9f0A45c0FDE4d34AdB53836e9c43aB5dF)`.
+
+<details><summary>original instructions</summary>
+
 ### 1 — Install the router as a proven no-op
 
 Full procedure in `docs/ROUTER_INSTALL.md`. Prove parity on a fork first:
@@ -83,10 +95,20 @@ diffing `tokenURI(1)` before and after.
 
 Rollback: `setRenderer(0xB103DCe9f0A45c0FDE4d34AdB53836e9c43aB5dF)`.
 
+</details>
+
 ### 2 — Deploy the art atlas (inert)
 
+**`FOBAL_ART_ADMIN` is your own key until step 7.** No timelock exists yet, and
+the script notices: when the admin IS the deployer there is nothing to hand
+over, so it keeps the roles rather than granting and renouncing the same
+account — which would leave the library with no administrator at all, unable
+to set a class or ever be sealed.
+
+
 ```bash
-FOBAL_ART_ADMIN=<timelock> forge script script/DeployArtLibrary.s.sol \
+FOBAL_ART_ADMIN=0x26250e47500943464290A77ae3508a3001d9B69d \
+  forge script script/DeployArtLibrary.s.sol \
   --rpc-url base_sepolia --account fobal-admin --broadcast --verify
 ```
 
