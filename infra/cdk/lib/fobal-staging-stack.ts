@@ -569,6 +569,10 @@ export class FobalStack extends Stack {
           } : {}),
           // harmless without the signer secret: the mint service only boots
           // when the FULL set (generator + chainId + key) is present
+          ...(envCfg.chain?.marketplaceAddress ? {
+            FOBAL_CHAIN_MARKETPLACE: envCfg.chain.marketplaceAddress,
+            FOBAL_MARKET_FROM_BLOCK: String(envCfg.chain.marketFromBlock ?? 0),
+          } : {}),
           ...(envCfg.chain?.generatorAddress ? {
             FOBAL_CHAIN_GENERATOR: envCfg.chain.generatorAddress,
           } : {}),

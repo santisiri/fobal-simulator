@@ -11,6 +11,8 @@ export type { Invitation } from './store.js';
 export { createChainReader, ChainReadError, ratingsFromSkills, playerSnapshotFrom } from './chain.js';
 export type { NormalizedPlayer } from './chain.js';
 export { playerName, squadNames } from './playerNames.js';
+export { createMarketReader } from './market.js';
+export type { MarketReader, MarketReaderOptions, Listing, Sale } from './market.js';
 export { createMintService, MintError, validateSeeds, signSquadMint, encodeSeedsStandalone } from './mint.js';
 export type { MintService, MintServiceOptions, MintPlan, MintProgress, PlayerSeedInput, PreparedTx } from './mint.js';
 export type { ChainReader, ChainReaderOptions, ChainPlayer } from './chain.js';
@@ -50,6 +52,10 @@ export type { IdentityResolver, IdentityResolverOptions, WalletIdentity, EnsClie
 //   FOBAL_CHAIN_ID          (+ the three above) enables POST /mint/prepare
 //   FOBAL_GENERATOR_SIGNER_PK  SquadMint permit signer key — SECRET, holds
 //                           zero on-chain roles; Secrets Manager in deploys
+//   FOBAL_CHAIN_MARKETPLACE FobalMarketplace address; with FOBAL_RPC_URL it
+//   FOBAL_MARKET_FROM_BLOCK enables the /market routes (start block = the
+//                           marketplace deploy; scanning from 0 is refused
+//                           by public RPCs and pointless)
 //   FOBAL_IDENTITY          '0' disables ENS identity (default: on)
 //   FOBAL_IDENTITY_RPC_URL  Ethereum MAINNET rpc for identity resolution —
 //                           the IDENTITY network, deliberately separate
@@ -138,6 +144,20 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     console.log(JSON.stringify({ msg: 'mint_service', generator: process.env.FOBAL_CHAIN_GENERATOR, chainId: process.env.FOBAL_CHAIN_ID }));
   }
 
+  // I — the market index. Read-only: it replays marketplace logs and can be
+  // rebuilt from chain at any time.
+  let market = null;
+  if (process.env.FOBAL_CHAIN_MARKETPLACE && process.env.FOBAL_RPC_URL){
+    const { createMarketReader } = await import('./market.js');
+    market = createMarketReader({
+      rpcUrl: process.env.FOBAL_RPC_URL,
+      marketplaceAddress: process.env.FOBAL_CHAIN_MARKETPLACE,
+      fromBlock: Number(process.env.FOBAL_MARKET_FROM_BLOCK ?? 0) || undefined,
+    });
+    console.log(JSON.stringify({ msg: 'market_reader', marketplace: process.env.FOBAL_CHAIN_MARKETPLACE,
+      fromBlock: process.env.FOBAL_MARKET_FROM_BLOCK ?? '0' }));
+  }
+
   // wallet identity (ENS) — on by default: it degrades to shortened
   // addresses on any failure and never blocks a request
   let identity = null;
@@ -154,6 +174,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]){
     deliverCode,
     chainReader,
     mintService,
+    market,
     emailProvider,
     inviteBaseUrl: process.env.FOBAL_INVITE_BASE_URL,
     emailWebhookSecret: process.env.FOBAL_EMAIL_WEBHOOK_SECRET,

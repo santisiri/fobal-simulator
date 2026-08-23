@@ -51,6 +51,11 @@ export interface FobalEnvConfig {
     playerAddress: string;
     registryAddress: string;
     generatorAddress?: string;
+    /** I: FobalMarketplace — enables the /market routes. `marketFromBlock`
+     *  is where the index starts scanning; it must be the deploy block,
+     *  because public RPCs refuse a scan from zero. */
+    marketplaceAddress?: string;
+    marketFromBlock?: number;
   };
 }
 
@@ -84,6 +89,9 @@ export const ENVS: Record<'staging' | 'production', FobalEnvConfig> = {
       // recovered from the chain itself: the MINTER_ROLE grant on the
       // player contract at block 45488725 names the generator
       generatorAddress: '0xC3b29a5417b2bb64AE1DC9A5539261a16f2Cf178',
+      // docs/ONCHAIN_DEPLOYMENTS.md — deployed 2026-08-14 in the same run
+      marketplaceAddress: '0x35f0CF848cB276AFf36745bEF65ccd80C03169E3',
+      marketFromBlock: 45488725,
     },
   },
   production: {
