@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {DeployArtLibrary} from "../../script/DeployArtLibrary.s.sol";
 import {FobalArtLibrary} from "../../src/FobalArtLibrary.sol";
 import {FobalArtConstants as K} from "../../src/art/FobalArtConstants.sol";
@@ -14,9 +14,11 @@ import {FobalArtConstants as K} from "../../src/art/FobalArtConstants.sol";
 contract DeployArtLibraryTest is Test {
     address internal timelock = makeAddr("timelock");
 
+    /// @dev admin passed directly, never through vm.setEnv — that mutates a
+    /// process global and forge runs tests in parallel, so two tests
+    /// configuring the same script race each other.
     function _run() internal returns (FobalArtLibrary lib) {
-        vm.setEnv("FOBAL_ART_ADMIN", vm.toString(timelock));
-        lib = new DeployArtLibrary().run();
+        lib = new DeployArtLibrary().runWith(timelock);
     }
 
     function test_scriptInstallsEveryGeneratedClass() public {
@@ -54,6 +56,20 @@ contract DeployArtLibraryTest is Test {
         vm.prank(timelock);
         lib.setClass(heads, blob);
         assertGt(lib.partCount(heads), 0);
+    }
+
+    /// Until the timelock exists (rollout step 7) FOBAL_ART_ADMIN is the
+    /// operator's OWN key — the same account that broadcasts. Granting then
+    /// renouncing the same account would leave the library with no
+    /// administrator at all: unable to set a class, and unable to ever be
+    /// sealed. There is simply nothing to hand over.
+    function test_adminIsTheDeployer_keepsTheRoles() public {
+        FobalArtLibrary lib = new DeployArtLibrary().runWith(address(this));
+        assertTrue(lib.hasRole(lib.ART_ADMIN_ROLE(), address(this)), "operator must keep art admin");
+        assertTrue(lib.hasRole(lib.DEFAULT_ADMIN_ROLE(), address(this)), "operator must keep default admin");
+        // and the atlas is still fully installed
+        bytes32[] memory names = K.classNames();
+        for (uint256 i; i < names.length; ++i) assertGt(lib.partCount(names[i]), 0);
     }
 
     /// Nothing is sealed by the script: sealing must follow inspection of
