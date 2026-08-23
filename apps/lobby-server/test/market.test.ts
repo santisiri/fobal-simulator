@@ -38,7 +38,9 @@ const sold = (tokenId: number, price: bigint, block: number, logIndex = 0): Log 
   blockNumber: `0x${block.toString(16)}`, logIndex: `0x${logIndex.toString(16)}`,
 });
 
-function readerOver(logs: Log[], { head = 100, now = () => 10_000, fromBlock = 0 } = {}){
+interface RigOptions { head?: number; now?: () => number; fromBlock?: number }
+
+function readerOver(logs: Log[], { head = 100, now = () => 10_000, fromBlock = 0 }: RigOptions = {}){
   const ranges: Array<[number, number]> = [];
   const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
     const req = JSON.parse(String(init?.body)) as { id: number; method: string; params: any[] };

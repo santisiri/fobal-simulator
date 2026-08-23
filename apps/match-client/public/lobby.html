@@ -199,6 +199,7 @@
         <button id="renameBtn" class="sm ghost" title="Rename club">RENAME</button>
         <button id="squadBtn" class="sm">EDIT SQUAD</button>
         <button id="roomBtn" class="sm primary">SQUAD ROOM</button>
+        <button id="marketBtn" class="sm purple">MARKET</button>
       </div>
       <div id="squadPanel" class="hidden">
         <div class="row" style="margin-top:14px;">
@@ -553,6 +554,12 @@
       paintCrest({ primary: $('kitPrimary').value, secondary: $('kitSecondary').value });
       await squadView.load();
     }
+  };
+
+  // the market (I1) — public browsing of what is for sale
+  $('marketBtn').onclick = () => {
+    const dev = new URLSearchParams(location.search).get('lobby');
+    location.href = `market.html${dev ? `?lobby=${encodeURIComponent(dev)}` : ''}`;
   };
 
   // the squad room (H2) — the eleven, the shape, the tactics. Carries the
