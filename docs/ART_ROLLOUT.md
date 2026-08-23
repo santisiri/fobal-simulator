@@ -40,6 +40,30 @@ ordinary marketplace and indexer reads are far clear of it; a client that sets
 its own tight gas cap is not. Check any integration that passes an explicit
 gas limit to `tokenURI`.
 
+## Rehearsed end to end, 2026-08-23
+
+Before spending any gas, the whole sequence was run against forked Base
+Sepolia state:
+
+    cd contracts && forge test --match-contract RolloutRehearsal \
+      --fork-url https://sepolia.base.org -vv
+
+| step | result on the fork |
+|---|---|
+| 1 · install the router | 11/11 tokens byte-identical |
+| 2 · deploy the atlas | 13 classes, 302 rects read back, **inert** |
+| 3 · deploy the renderer stack | renders all 11 live tokens, still **inert** |
+| 4 · pin token 1 | token 1 on v2, tokens 2–11 untouched; rollback proven |
+| 5 · cohort 1–11 | all 11 on v2; rollback proven |
+| 6 · default + refresh | all 11 on v2 |
+| undo | `setRenderer(v1)` restores every token byte for byte |
+
+Reading a live token through the new renderer costs **1.50M gas mean, 1.62M
+worst** — see `contracts/test/unit/RenderGas.t.sol` for the caller-budget note.
+
+The rehearsal asserts the admin role still sits on the address recorded in
+`docs/ONCHAIN_DEPLOYMENTS.md`, and fails with that instruction if it moved.
+
 ## Order, and why
 
 Each phase is a separate transaction set with its own rollback. Do not batch
