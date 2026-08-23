@@ -597,7 +597,11 @@ export async function startLobbyServer(options: LobbyServerOptions): Promise<Lob
       if (req.method === 'OPTIONS'){
         res.writeHead(204, {
           'access-control-allow-origin': corsOrigin,
-          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          // PUT/DELETE are real parts of this API (the team sheet, unlinking
+          // a chain squad). Omitting them made the browser refuse those calls
+          // cross-origin — which is every deployed setup, where the client and
+          // the lobby are different hosts.
+          'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
           'access-control-allow-headers': 'authorization, content-type',
           'access-control-max-age': '86400',
         });

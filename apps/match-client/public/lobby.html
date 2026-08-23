@@ -198,6 +198,7 @@
         <span class="cn" id="teamName"></span>
         <button id="renameBtn" class="sm ghost" title="Rename club">RENAME</button>
         <button id="squadBtn" class="sm">EDIT SQUAD</button>
+        <button id="roomBtn" class="sm primary">SQUAD ROOM</button>
       </div>
       <div id="squadPanel" class="hidden">
         <div class="row" style="margin-top:14px;">
@@ -552,6 +553,13 @@
       paintCrest({ primary: $('kitPrimary').value, secondary: $('kitSecondary').value });
       await squadView.load();
     }
+  };
+
+  // the squad room (H2) — the eleven, the shape, the tactics. Carries the
+  // dev lobby override through so a local rig stays on the same server.
+  $('roomBtn').onclick = () => {
+    const dev = new URLSearchParams(location.search).get('lobby');
+    location.href = `squad.html${dev ? `?lobby=${encodeURIComponent(dev)}` : ''}`;
   };
 
   $('renameBtn').onclick = async () => {

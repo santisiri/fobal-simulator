@@ -3,6 +3,7 @@
 //
 //   dist/client/index.html          match client shell (config injected)
 //   dist/client/lobby.html          lobby page (config injected)
+//   dist/client/squad.html          the squad room (config injected)
 //   dist/client/src/*.js            client modules (paths unchanged)
 //   dist/client/golden/index.html   the golden reference, BYTE-IDENTICAL —
 //                                   verified by hash; the build ABORTS if the
@@ -93,6 +94,18 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ["from '../src/ui/squadView.js'", "from './src/ui/squadView.js'"],
   ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
   ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
+  ['<script type="module">', CONFIG_SNIPPET()],
+]));
+
+// 4a. the squad room — same session as the lobby, same flattened module
+//     paths (playerCard/playerDetail are shared with the lobby's panel).
+const room = readFileSync(join(root, 'apps/match-client/public/squad.html'), 'utf8');
+writeFileSync(join(outDir, 'squad.html'), rewrite('squad.html', room, [
+  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
+  ["from '../src/ui/playerCard.js'", "from './src/ui/playerCard.js'"],
+  ["from '../src/ui/playerDetail.js'", "from './src/ui/playerDetail.js'"],
+  ["from '../src/ui/formation.js'", "from './src/ui/formation.js'"],
+  ["from '../src/ui/tactics.js'", "from './src/ui/tactics.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
