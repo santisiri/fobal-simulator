@@ -10,6 +10,7 @@
     "silhouette": "node tools/silhouette.mjs",
     "ascii": "node tools/ascii.mjs",
     "sheets": "node tools/contact-sheet.mjs",
-    "palettes": "node tools/solve-palettes.mjs"
+    "palettes": "node tools/solve-palettes.mjs",
+    "squads": "node tools/squad-sheet.mjs"
   }
 }

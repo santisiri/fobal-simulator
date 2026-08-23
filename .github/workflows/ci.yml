@@ -97,6 +97,10 @@ jobs:
       # be ONE connected figure.
       - name: no detached paint
         run: node packages/art/tools/connectivity.mjs 400
+      # eleven players in ONE kit — the view the hub shows, and the only one
+      # where team colour does no work at all
+      - name: squads stay legible
+        run: node packages/art/tools/squad-sheet.mjs
       - name: install foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
