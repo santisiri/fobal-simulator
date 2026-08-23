@@ -4,6 +4,7 @@
 //   dist/client/index.html          match client shell (config injected)
 //   dist/client/lobby.html          lobby page (config injected)
 //   dist/client/squad.html          the squad room (config injected)
+//   dist/client/market.html         the market (config injected)
 //   dist/client/src/*.js            client modules (paths unchanged)
 //   dist/client/golden/index.html   the golden reference, BYTE-IDENTICAL —
 //                                   verified by hash; the build ABORTS if the
@@ -106,6 +107,16 @@ writeFileSync(join(outDir, 'squad.html'), rewrite('squad.html', room, [
   ["from '../src/ui/playerDetail.js'", "from './src/ui/playerDetail.js'"],
   ["from '../src/ui/formation.js'", "from './src/ui/formation.js'"],
   ["from '../src/ui/tactics.js'", "from './src/ui/tactics.js'"],
+  ['<script type="module">', CONFIG_SNIPPET()],
+]));
+
+// 4a2. the market — public browsing, so it needs no session; same shared
+//      atoms (avatarTile) and the money helpers.
+const market = readFileSync(join(root, 'apps/match-client/public/market.html'), 'utf8');
+writeFileSync(join(outDir, 'market.html'), rewrite('market.html', market, [
+  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
+  ["from '../src/ui/playerCard.js'", "from './src/ui/playerCard.js'"],
+  ["from '../src/ui/money.js'", "from './src/ui/money.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
