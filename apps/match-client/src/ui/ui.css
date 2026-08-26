@@ -226,6 +226,38 @@ input[type=color] { width: 46px; height: 40px; padding: 0; border: 1px solid var
 .rating .bar { height: 5px; }
 .rating .val { text-align: right; font-weight: 700; font-family: var(--font-data); }
 
+/* ---- the eleven acknowledge ----
+   A confirmation you can FEEL: eleven pips light in a 40ms stagger, the way
+   a team turns its head one player at a time. Born for the voice order
+   ("TEAM HEARD YOU"), reused wherever something is finally settled — a
+   transaction, an accepted challenge. Transform/opacity only. */
+.ripple { display: inline-flex; gap: 4px; align-items: center; }
+.ripple i {
+  width: 5px; height: 5px; border-radius: 50%; flex: none;
+  background: rgba(248, 250, 252, 0.18);
+}
+.ripple--go i {
+  background: var(--green-hi); box-shadow: 0 0 8px rgba(34, 197, 94, 0.7);
+  animation: ripple-ack 0.5s ease-out backwards;
+}
+.ripple--own.ripple--go i { background: var(--purple-hi); box-shadow: 0 0 8px rgba(168, 85, 247, 0.7); }
+.ripple--go i:nth-child(1) { animation-delay: 0ms; }
+.ripple--go i:nth-child(2) { animation-delay: 40ms; }
+.ripple--go i:nth-child(3) { animation-delay: 80ms; }
+.ripple--go i:nth-child(4) { animation-delay: 120ms; }
+.ripple--go i:nth-child(5) { animation-delay: 160ms; }
+.ripple--go i:nth-child(6) { animation-delay: 200ms; }
+.ripple--go i:nth-child(7) { animation-delay: 240ms; }
+.ripple--go i:nth-child(8) { animation-delay: 280ms; }
+.ripple--go i:nth-child(9) { animation-delay: 320ms; }
+.ripple--go i:nth-child(10) { animation-delay: 360ms; }
+.ripple--go i:nth-child(11) { animation-delay: 400ms; }
+@keyframes ripple-ack {
+  from { transform: scale(0.4); opacity: 0.15; }
+  60% { transform: scale(1.35); opacity: 1; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* ---- loading is a skeleton, never a spinner ---- */
 .skeleton { height: 9px; border-radius: 5px; position: relative; overflow: hidden;
   background: linear-gradient(90deg, rgba(248,250,252,0.06), rgba(248,250,252,0.16), rgba(248,250,252,0.06));
@@ -241,6 +273,7 @@ input[type=color] { width: 46px; height: 40px; padding: 0; border: 1px solid var
 
 @media (prefers-reduced-motion: reduce) {
   .marquee .track, .skeleton { animation: none; }
+  .ripple--go i { animation: none; opacity: 1; }
   .btn, .btn-primary, .btn-own, .btn-quiet, .btn-danger { transition: none; }
   * { scroll-behavior: auto !important; }
 }

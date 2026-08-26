@@ -60,22 +60,39 @@
     border: 1px solid rgba(43,224,143,0.4); border-radius: 4px; padding: 1.5px 6px; }
   #micBtn.listening { background: #3a1420; border-color: #e25948; color: #ffb0a8;
     animation: micPulse 1.1s ease-in-out infinite; }
-  #voiceAck { position: absolute; left: 50%; transform: translateX(-50%); bottom: 68px;
-    z-index: 6; display: none; align-items: center; gap: 9px; max-width: min(92vw, 560px);
-    background: rgba(9,14,23,0.97); border: 1px solid var(--line); border-radius: 999px;
-    padding: 8px 16px; font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.4px;
-    box-shadow: 0 10px 32px rgba(0,0,0,0.45); }
-  #voiceAck.on { display: inline-flex; }
-  #voiceAck .vdot { width: 9px; height: 9px; border-radius: 50%; background: #4a5568; flex: none; }
-  #voiceAck.listening .vdot { background: #e25948; animation: cpulse 0.9s infinite; }
-  #voiceAck.transcribing .vdot, #voiceAck.thinking .vdot { background: #e8a531; animation: cpulse 1.1s infinite; }
-  #voiceAck.sent .vdot { background: #9fb2c8; }
-  #voiceAck.applied { border-color: rgba(43,224,143,0.7); }
-  #voiceAck.applied .vdot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
-  #voiceAck.noop .vdot { background: #9fb2c8; }
-  #voiceAck.failed { border-color: rgba(226,89,72,0.6); }
-  #voiceAck.failed .vdot { background: #e25948; }
+  /* ---- the voice strip: the moment the product exists for ----
+     A coach speaks; the strip narrates the whole journey and only turns
+     green when the SERVER says the order landed. Colors obey the system:
+     red = live capture, slate = working, green = confirmed. Gold is never
+     used here — it belongs to epic rarity alone. */
+  #voiceAck { position: absolute; left: 50%; bottom: 68px; z-index: 6;
+    display: none; align-items: center; gap: 10px; max-width: min(92vw, 620px);
+    padding: 9px 16px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(30,42,80,0.92), rgba(9,14,23,0.95));
+    border: 1px solid var(--hairline-2); color: var(--ink);
+    font-family: var(--font-body); font-size: 12.5px; letter-spacing: 0.2px;
+    box-shadow: 0 14px 38px rgba(0,0,0,0.55), var(--toplight);
+    transform: translateX(-50%) translateY(4px); opacity: 0;
+    transition: transform 0.12s ease-out, opacity 0.12s ease-out, border-color 0.12s ease-out; }
+  #voiceAck.on { display: inline-flex; transform: translateX(-50%) translateY(0); opacity: 1; }
+  #voiceAck .vdot { width: 8px; height: 8px; border-radius: 50%; background: var(--hairline-2); flex: none; }
+  #voiceAck.listening { border-color: rgba(248,113,113,0.6); }
+  #voiceAck.listening .vdot { background: var(--red); box-shadow: 0 0 10px rgba(248,113,113,0.8); animation: cpulse 0.9s infinite; }
+  #voiceAck.transcribing .vdot, #voiceAck.thinking .vdot { background: rgba(200,220,255,0.75); animation: cpulse 1.1s infinite; }
+  #voiceAck.sent .vdot { background: rgba(200,220,255,0.9); }
+  #voiceAck.applied { border-color: rgba(34,197,94,0.7); box-shadow: 0 14px 38px rgba(0,0,0,0.55), 0 0 26px rgba(34,197,94,0.22), var(--toplight); }
+  #voiceAck.applied .vdot { background: var(--green-hi); box-shadow: 0 0 10px var(--green); }
+  #voiceAck.noop .vdot { background: rgba(200,220,255,0.75); }
+  #voiceAck.failed { border-color: rgba(248,113,113,0.6); }
+  #voiceAck.failed .vdot { background: var(--red); }
   #voiceAck #voiceAckText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the eleven ride along, dim, until the order actually lands */
+  #voiceAck .ripple { flex: none; margin-left: 2px; }
+  #voiceAck:not(.applied) .ripple { opacity: 0.5; }
+  @media (prefers-reduced-motion: reduce) {
+    #voiceAck { transition: opacity 0.15s linear; transform: translateX(-50%); }
+    #voiceAck.on { transform: translateX(-50%); }
+  }
   #micBtn.listening kbd { background: rgba(226,89,72,0.15); color: #ffb0a8;
     border-color: rgba(226,89,72,0.5); }
   @keyframes micPulse { 50% { box-shadow: 0 0 0 6px rgba(226,89,72,0.12); } }
@@ -204,7 +221,7 @@
         title="Push-to-talk: hold SPACE, X, or press and hold this button. Speak your instruction in any language, release to send it to the bench.">
         🎙 HOLD TO COACH <kbd>SPACE</kbd>
       </button>
-      <div id="voiceAck"><span class="vdot"></span><span id="voiceAckText"></span></div>
+      <div id="voiceAck"><span class="vdot"></span><span id="voiceAckText"></span><span class="ripple" id="voiceTeam" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></div>
     </div>
     <!-- shell-rendered player card (replaces the golden profile panel) -->
     <div id="playerCard">
@@ -413,10 +430,15 @@
         failed: d => `\u2717 ${d}`,
         idle: () => '',
       };
+      const voiceTeam = document.getElementById('voiceTeam');
       puppet.voiceHooks = { onState: (state, detail) => {
         clearTimeout(ackTimer);
-        if (state === 'idle'){ ack.className = ''; return; }
+        if (state === 'idle'){ ack.className = ''; voiceTeam.className = 'ripple'; return; }
         ack.className = `on ${state}`;
+        // the eleven acknowledge — only on the SERVER's word, and restarted
+        // per order so two commands in a row each get their own ripple
+        voiceTeam.className = 'ripple';
+        if (state === 'applied'){ void voiceTeam.offsetWidth; voiceTeam.className = 'ripple ripple--go'; }
         ackText.textContent = (VOICE_LINES[state] ?? (d => d))(String(detail ?? '').slice(0, 120));
         if (state === 'applied' || state === 'noop') ackTimer = setTimeout(() => { ack.className = ''; }, 4500);
         if (state === 'failed') ackTimer = setTimeout(() => { ack.className = ''; }, 6000);
