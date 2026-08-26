@@ -15,7 +15,11 @@
   main { max-width: var(--maxw); margin: 0 auto; padding: 26px 20px 60px; }
 
   /* club header */
-  .clubhead { display: flex; align-items: center; gap: 20px; padding: 22px; }
+  .clubhead { display: flex; align-items: center; gap: 20px; padding: 22px; position: relative; }
+  /* the sheen: a soft top-left ellipse, the way a floodlight falls on a trophy */
+  .clubhead::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(600px 220px at 12% -30%, rgba(248,250,252,0.12), transparent 70%); }
+  .clubhead > * { position: relative; z-index: 1; }
   .crest { width: 96px; height: 96px; border-radius: 16px; flex: none; position: relative;
     overflow: hidden; border: 1px solid var(--line-strong); display: grid; place-items: center; }
   .crest .stripe { position: absolute; inset: 0; }
@@ -53,7 +57,11 @@
   .squadpanel .head .spacer { flex: 1; }
   .strip { display: grid; grid-template-columns: repeat(11, 1fr); gap: 8px; }
   .strip .p { text-align: center; cursor: pointer; }
-  .strip .p svg { width: 100%; max-width: 52px; image-rendering: pixelated; border-radius: 8px;
+  .strip .p { position: relative; }
+  .strip .p::before { content: ""; position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
+    width: 74px; height: 74px; border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle, rgba(168,85,247,0.28), transparent 70%); }
+  .strip .p svg { position: relative; width: 100%; max-width: 52px; image-rendering: pixelated; border-radius: 8px;
     border: 1.5px solid var(--line-strong); transition: transform 0.12s, border-color 0.12s; }
   .strip .p:hover svg { transform: translateY(-3px); border-color: var(--green); }
   .strip .p .nm { font-family: var(--mono); font-size: 9px; letter-spacing: 0.3px; color: var(--dim); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -79,7 +87,7 @@
 </div>
 
 <main>
-  <div class="panel clubhead">
+  <div class="bezel"><div class="bezel-in clubhead">
     <div class="crest"><div class="stripe" id="crestStripe"></div><span class="ini" id="crestIni">FC</span></div>
     <div class="who">
       <span class="label green">Your club · Season 01</span>
@@ -94,7 +102,7 @@
       <div class="stat"><span class="v" id="statPlayers">11</span><span class="l">PLAYERS</span></div>
       <div class="stat"><span class="v" id="statRecord">0-0-0</span><span class="l">W-D-L</span></div>
     </div>
-  </div>
+  </div></div>
 
   <div class="doors">
     <a class="panel door play" id="doorPlay" href="play.html">
