@@ -81,6 +81,7 @@ cpSync(join(root, 'apps/match-client/src'), join(outDir, 'src'), { recursive: tr
 const shell = readFileSync(join(root, 'apps/match-client/public/index.html'), 'utf8');
 writeFileSync(join(outDir, 'index.html'), rewrite('index.html', shell, [
   ['<iframe src="/index.html"', '<iframe src="/golden/index.html"'],
+  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
   ["from '../src/net.js'", "from './src/net.js'"],
   ["from '../src/render.js'", "from './src/render.js'"],
   ["from '../src/puppet.js'", "from './src/puppet.js'"],

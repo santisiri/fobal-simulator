@@ -1,3 +1,252 @@
+/* @shared-system:start — the ONE design system. apps/match-client/src/ui/ui.css
+   carries a byte-identical copy (the two dev roots cannot reach one file);
+   `node tools/sync-tokens.mjs` regenerates it and a test proves they match. */
+:root {
+  color-scheme: dark;
+
+  /* ---- Premium Broadcast: stadium night, layered depth ---- */
+  --bg: #05070f;                /* deepest — page floor */
+  --bg-2: #0a0f1e;              /* mid floodlight */
+  --bg-3: #101c3d;              /* the light above the stand */
+  --panel: #0d1428;
+  --panel-2: #131d3d;
+
+  --ink: #f8fafc;
+  --ink-dim: rgba(248, 250, 252, 0.55);
+  --ink-faint: rgba(248, 250, 252, 0.4);
+
+  --hairline: rgba(120, 150, 200, 0.16);
+  --hairline-2: rgba(120, 150, 200, 0.3);
+
+  /* play / live / on-chain OK */
+  --green: #22c55e;
+  --green-hi: #4ade80;
+  --green-lo: #16a34a;
+  /* ownership / NFT / legendary */
+  --purple: #a855f7;
+  --purple-hi: #c084fc;
+  --purple-lo: #7c3aed;
+  /* epic rarity ONLY */
+  --gold: #f5c451;
+  --red: #f87171;
+  --grass: #12351f;
+
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --r-s: 9px;
+  --r-m: 13px;
+  --r-l: 15px;
+
+  /* the inner top-light every raised surface carries */
+  --toplight: inset 0 1px 0 rgba(248, 250, 252, 0.05);
+  /* the page floodlight, reused by bezel interiors so depth stays continuous */
+  --floodlight: radial-gradient(1200px 520px at 50% -10%, var(--bg-3) 0%, var(--bg-2) 45%, var(--bg) 100%);
+
+  /* ---- legacy aliases: every existing rule in the app keeps working ---- */
+  --dim: var(--ink-dim);
+  --faint: var(--ink-faint);
+  --line: var(--hairline);
+  --line-strong: var(--hairline-2);
+  --green-ink: #05070f;
+  --sans: var(--font-body);
+  --display: var(--font-display);
+  --mono: var(--font-data);
+  --radius: var(--r-m);
+  --maxw: 1080px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* every page stands under the same floodlight — fixed so the light stays
+   overhead while the content scrolls beneath it */
+body {
+  background: var(--floodlight) fixed;
+  background-color: var(--bg);
+}
+
+/* the field: the iso-pitch grid, now laid UNDER the floodlight */
+body.field {
+  background:
+    linear-gradient(var(--hairline) 1px, transparent 1px) 0 0 / 100% 44px,
+    linear-gradient(90deg, var(--hairline) 1px, transparent 1px) 0 0 / 44px 100%,
+    var(--floodlight) fixed;
+  background-color: var(--bg);
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ---- type ---- */
+.display { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.5px; line-height: 1.02; }
+.mono { font-family: var(--font-data); }
+.label {
+  font-family: var(--font-data); font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-dim);
+}
+.label.green { color: var(--green-hi); }
+.label.purple { color: var(--purple-hi); }
+.muted { color: var(--ink-dim); }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 800; margin: 0; }
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 20px; border-bottom: 1px solid var(--hairline);
+  box-shadow: var(--toplight);
+}
+.brand { font-family: var(--font-display); font-weight: 800; letter-spacing: 1.5px; font-size: 16px; }
+.brand .ai { color: var(--green-hi); }
+.topbar .spacer { flex: 1; }
+
+/* ---- bezel: the 1px gradient frame, light top → dark bottom.
+   <div class="bezel"><div class="bezel-in">…</div></div> ---- */
+.bezel {
+  padding: 1px; border-radius: var(--r-l);
+  background: linear-gradient(180deg, rgba(120,150,200,0.35), rgba(120,150,200,0.08) 30%, rgba(34,197,94,0.15));
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.bezel-in { border-radius: calc(var(--r-l) - 1px); overflow: hidden; background: var(--floodlight); }
+.bezel--own {
+  background: linear-gradient(180deg, #e9d5ff, var(--purple-hi) 30%, #5b21b6);
+  box-shadow: 0 16px 44px rgba(0,0,0,0.55), 0 0 34px rgba(168,85,247,0.3);
+}
+.bezel--epic {
+  background: linear-gradient(180deg, #fde68a, var(--gold) 30%, #7a5410);
+  box-shadow: 0 14px 36px rgba(0,0,0,0.55), 0 0 26px rgba(245,196,81,0.22);
+}
+.bezel--rare {
+  background: linear-gradient(180deg, #8fa8d8, #3a4a70);
+  box-shadow: 0 14px 36px rgba(0,0,0,0.55);
+}
+
+/* ---- panels: never flat — gradient body + inner top-light ---- */
+.panel {
+  background: linear-gradient(180deg, rgba(17,26,51,0.7), rgba(13,20,40,0.7));
+  border: 1px solid var(--hairline); border-radius: var(--r-m);
+  box-shadow: var(--toplight);
+}
+
+/* ---- buttons: ONE system. Legacy modifiers (.primary/.ghost/.lg) and the
+   named classes (.btn-primary/.btn-own/.btn-quiet/.btn-danger) are the same
+   language, so old markup restyles without being rewritten. ---- */
+.btn, .btn-primary, .btn-own, .btn-quiet, .btn-danger {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--font-display); font-weight: 800; font-size: 12px;
+  letter-spacing: 0.06em; text-transform: uppercase; line-height: 1;
+  padding: 12px 22px; border-radius: 10px; border: 0; cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.btn:hover, .btn-primary:hover, .btn-own:hover, .btn-quiet:hover, .btn-danger:hover { transform: translateY(-1px); }
+.btn:active, .btn-primary:active, .btn-own:active, .btn-quiet:active, .btn-danger:active { transform: none; }
+.btn:focus-visible, .btn-primary:focus-visible, .btn-own:focus-visible,
+.btn-quiet:focus-visible, .btn-danger:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--green-hi);
+}
+.btn:disabled, .btn-primary:disabled, .btn-own:disabled, .btn-quiet:disabled {
+  opacity: 0.45; cursor: not-allowed; transform: none;
+}
+
+/* play / primary action */
+.btn-primary, .btn.primary {
+  background: linear-gradient(180deg, var(--green-hi), var(--green-lo)); color: var(--bg);
+  box-shadow: 0 4px 16px rgba(34,197,94,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+}
+.btn-primary:hover, .btn.primary:hover { box-shadow: 0 6px 22px rgba(34,197,94,0.5), inset 0 1px 0 rgba(255,255,255,0.45); }
+/* ownership */
+.btn-own, .btn.own {
+  background: linear-gradient(180deg, var(--purple-hi), var(--purple-lo)); color: var(--ink);
+  box-shadow: 0 4px 16px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.35);
+}
+.btn-own:hover, .btn.own:hover { box-shadow: 0 6px 22px rgba(124,58,237,0.55), inset 0 1px 0 rgba(255,255,255,0.4); }
+/* quiet / secondary — also the default .btn */
+.btn, .btn-quiet, .btn.ghost {
+  background: linear-gradient(180deg, rgba(30,42,80,0.9), rgba(16,24,48,0.9));
+  border: 1px solid var(--hairline-2); color: rgba(248,250,252,0.85); font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(248,250,252,0.08);
+}
+.btn:hover, .btn-quiet:hover, .btn.ghost:hover { border-color: var(--hairline-2); }
+.btn-danger, .btn.danger {
+  background: linear-gradient(180deg, rgba(248,113,113,0.25), rgba(127,29,29,0.3));
+  border: 1px solid rgba(239,68,68,0.45); color: #fca5a5; font-weight: 700;
+}
+.btn.lg { padding: 15px 28px; font-size: 13px; }
+
+/* ---- pills & badges ---- */
+.pill, .chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 20px; padding: 7px 13px;
+  font-family: var(--font-data); font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+  background: linear-gradient(180deg, rgba(30,42,80,0.55), rgba(16,24,48,0.55));
+  border: 1px solid var(--hairline-2); color: var(--ink-dim);
+}
+.pill--live, .chip.green {
+  color: var(--green-hi); border-color: rgba(34,197,94,0.45);
+  background: rgba(34,197,94,0.08); box-shadow: 0 0 14px rgba(34,197,94,0.15);
+}
+.pill--owned, .chip.purple {
+  color: var(--purple-hi); border-color: rgba(168,85,247,0.45); background: rgba(168,85,247,0.08);
+}
+.pill--epic { color: var(--gold); border-color: rgba(245,196,81,0.45); background: rgba(245,196,81,0.08); }
+.dot-live, .chip .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 8px var(--green);
+}
+
+/* ---- the pixel avatars are heroes: always crisp, never smoothed ---- */
+.avatar-hero, .avatar-hero img, .avatar-hero svg { image-rendering: pixelated; }
+.avatar-disc { border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.avatar-disc--own { background: radial-gradient(circle, rgba(168,85,247,0.35), transparent 70%); }
+.avatar-disc--epic { background: radial-gradient(circle, rgba(245,196,81,0.3), transparent 70%); }
+.avatar-disc--live { background: radial-gradient(circle, rgba(34,197,94,0.3), transparent 70%); }
+
+/* ---- inputs ---- */
+.input {
+  width: 100%; padding: 13px 15px; border-radius: 10px;
+  background: rgba(5,7,15,0.6); border: 1px solid var(--hairline-2); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px;
+  box-shadow: inset 0 1px 0 rgba(0,0,0,0.4);
+}
+.input:focus { outline: none; border-color: var(--green-hi); box-shadow: inset 0 1px 0 rgba(0,0,0,0.4), 0 0 0 3px rgba(34,197,94,0.15); }
+input[type=color] { width: 46px; height: 40px; padding: 0; border: 1px solid var(--hairline-2); border-radius: 8px; background: rgba(5,7,15,0.6); cursor: pointer; }
+
+/* ---- value bars ---- */
+.bar { height: 5px; border-radius: 3px; background: rgba(248,250,252,0.08); overflow: hidden; }
+.bar > span, .bar > i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--green), var(--green-hi)); }
+.rating { display: grid; grid-template-columns: 34px 1fr 26px; gap: 8px; align-items: center; font-size: 11px; }
+.rating .lb { color: var(--ink-dim); letter-spacing: 0.1em; font-family: var(--font-data); }
+.rating .bar { height: 5px; }
+.rating .val { text-align: right; font-weight: 700; font-family: var(--font-data); }
+
+/* ---- loading is a skeleton, never a spinner ---- */
+.skeleton { height: 9px; border-radius: 5px; position: relative; overflow: hidden;
+  background: linear-gradient(90deg, rgba(248,250,252,0.06), rgba(248,250,252,0.16), rgba(248,250,252,0.06));
+  background-size: 200% 100%; animation: skeleton-sweep 1.4s linear infinite; }
+@keyframes skeleton-sweep { to { background-position: -200% 0; } }
+
+/* ---- marquee ---- */
+.marquee { overflow: hidden; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); padding: 10px 0; }
+.marquee .track { display: inline-flex; gap: 28px; white-space: nowrap; animation: scroll 32s linear infinite; }
+.marquee .track span { font-family: var(--font-data); font-size: 11px; letter-spacing: 0.14em; color: var(--ink-faint); }
+.marquee .track .dot { color: var(--green); }
+@keyframes scroll { to { transform: translateX(-50%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee .track, .skeleton { animation: none; }
+  .btn, .btn-primary, .btn-own, .btn-quiet, .btn-danger { transition: none; }
+  * { scroll-behavior: auto !important; }
+}
+
+/* @shared-system:end */
+
 /* Product-UI workstream — squad experience, player cards, transaction flow.
    Composes with the fobal.ai tokens the host page defines on :root
    (--bg, --panel, --ink, --dim, --green, --purple, --line, --display,
