@@ -18,6 +18,18 @@
 # the two client buckets, and invalidate the two distributions — nothing
 # else.
 #
+# Context gates: every cdk invocation below carries the STANDING pair
+#   -c aiSecrets=1 -c mintSigner=1
+# Both gate a secret binding, and a gate left off silently drops the
+# feature rather than failing: without mintSigner the lobby boots with no
+# FOBAL_GENERATOR_SIGNER_PK and the mint service never starts. mintSigner
+# additionally requires a chain block in envs.ts, so it is inert for
+# production until prod gets one — passing it there costs nothing and
+# means prod activation cannot forget it.
+#
+# -c emailSecrets=1 is deliberately ABSENT: it binds Resend secrets that
+# do not exist, which crash-loops the lobby task at boot.
+#
 # Repo variables (Settings → Secrets and variables → Actions → Variables):
 #   FOBAL_STAGING_CERT_ARN    matches-staging.fobal.ai cert (sa-east-1)
 #   FOBAL_WILDCARD_CERT_ARN   *.fobal.ai wildcard (sa-east-1) — used for
@@ -94,11 +106,11 @@ jobs:
           npm run cdk -- diff fobal-staging-match-server \
             -c certificateArn='${{ vars.FOBAL_STAGING_CERT_ARN }}' \
             -c wildcardCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
-            -c aiSecrets=1 -c imageTag="$TAG"
+            -c aiSecrets=1 -c mintSigner=1 -c imageTag="$TAG"
           npm run cdk -- diff fobal-prod-match-server \
             -c prodCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
             -c prodWildcardCertificateArn='${{ vars.FOBAL_WILDCARD_CERT_ARN }}' \
-            -c aiSecrets=1 -c imageTag="$TAG"
+            -c aiSecrets=1 -c mintSigner=1 -c imageTag="$TAG"
       - name: diff skipped — cert repo variables not set
         if: vars.FOBAL_WILDCARD_CERT_ARN == '' || vars.FOBAL_STAGING_CERT_ARN == ''
         run: >-
@@ -181,7 +193,7 @@ jobs:
         working-directory: infra/cdk
         run: |
           npm run cdk -- deploy "$STACK" --require-approval never \
-            $CONTEXTS -c aiSecrets=1 -c imageTag="$TAG"
+            $CONTEXTS -c aiSecrets=1 -c mintSigner=1 -c imageTag="$TAG"
       - name: build + publish the client
         run: |
           node tools/build-client.mjs --lobby-url "$LOBBY_URL" --match-ws "$MATCH_WS"
