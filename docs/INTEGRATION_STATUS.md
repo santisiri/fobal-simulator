@@ -79,21 +79,30 @@ ignored — the canonical direction, proven.
 
 ## Deploy state
 
-**Staging is LIVE on `40326b0`** (deployed 2026-08-22, from `38b964e` —
-44 commits of catch-up). Both services rolled cleanly: match-server task
-def `:9`, lobby-server `:7`, each `1/1` running, rollout `COMPLETED`.
-Client rebuilt, synced, CloudFront invalidation completed.
+**Staging is LIVE on `4572e44`** (task defs `match-server:10`,
+`lobby-server:8`). This supersedes the `40326b0` line this file used to
+carry: a later deploy moved staging forward and the file was not updated,
+which stalled a deploy phase whose gate was written against the stale tag.
 
-All six smokes passed: both `/health` endpoints, wallet-auth challenge,
-the three boot markers (`chain_reader` · `mint_service` ·
-`identity_resolver`), the lobby title marker, and `invite.html`.
+**Verify before writing a deploy prompt.** The live image tag is a fact
+about the account, not about this file:
 
-**Verified:** the deployed tree is byte-for-byte the code reviewed green
-at `3c00e6b` — the intervening commits touched only contract tests and
-docs. No unreviewed application code is serving staging.
+    aws ecs describe-task-definition --output text \
+      --task-definition "$(aws ecs describe-services --cluster fobal-staging-cluster \
+        --services fobal-staging-lobby-server \
+        --query 'services[0].taskDefinition' --output text)" \
+      --query 'taskDefinition.containerDefinitions[0].image'
 
-Drift since the deploy is `packages/art` tooling and CI only; nothing
-client-facing, so no redeploy is owed.
+`4572e44` carries the market end to end — `9077b82` (the marketplace CDK
+env vars) is an ancestor of it, so `FOBAL_CHAIN_MARKETPLACE` and
+`FOBAL_MARKET_FROM_BLOCK` are already on the running lobby task. A
+`cdk diff` for a newer commit will NOT show them; their absence is
+correct, not a missing change.
+
+Everything between `4572e44` and main `148732c` is **client-only** (the
+Premium Broadcast system and the voice moment). No path the Dockerfile
+copies into the image changed, so that deploy is a client sync plus a tag
+realignment.
 
 **Standing staging contexts**: `-c aiSecrets=1 -c mintSigner=1`.
 **Do NOT pass `-c emailSecrets=1`** — it injects Resend secrets that do
@@ -117,6 +126,9 @@ lobby task at boot. Without it the lobby stays on the SES backend.
 - One agent, one worktree; commit early (stranded work nearly died twice).
 - Deployed artifacts are built from committed main only; a failing smoke
   is **reported, never patched locally**.
+- A deploy prompt's expected-diff gate must be written against the LIVE
+  image tag, read from the account — never against this file. A stale
+  baseline turns a correct diff into a false alarm.
 - Staging carries `-c aiSecrets=1 -c mintSigner=1`.
 - The engine stays authoritative.
 
