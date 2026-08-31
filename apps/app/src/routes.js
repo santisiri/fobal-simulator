@@ -33,7 +33,7 @@
 export const ROUTES = [
   { path: '/', view: 'club', title: 'Club' },
   { path: '/onboarding', view: 'onboarding', title: 'Found your club' },
-  { path: '/squad', legacy: 'squad.html', title: 'Squad' },
+  { path: '/squad', view: 'squad', title: 'Squad room' },
   { path: '/market/:tokenId', legacy: 'market.html', title: 'Market' },
   { path: '/market', legacy: 'market.html', title: 'Market' },
   { path: '/lobby', legacy: 'lobby.html', title: 'Lobby' },

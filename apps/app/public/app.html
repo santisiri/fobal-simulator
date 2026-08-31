@@ -10,7 +10,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="../../web/public/styles/fobal.css">
+<!-- ui.css = the shared design system (byte-identical to fobal.css's
+     shared block, proven by tokens.test) PLUS the product atoms the app's
+     views reuse (player cards, the detail drawer, skeletons). -->
+<link rel="stylesheet" href="../../match-client/src/ui/ui.css">
 <style>
   /* ==== the unified shell — tokens come from fobal.css, never redefined ==== */
   /* the hidden attribute must beat any display: the shell toggles with it */
@@ -232,7 +235,8 @@
 
   .onb-meet h1 { font-size: clamp(26px, 4vw, 34px); margin: 4px 0 0; }
   .onb-meet-sub { margin: 6px 0 22px; }
-  .reveal { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
+  /* obreveal, not reveal — ui.css owns .reveal for the card entrance */
+  .obreveal { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
   .pitchwrap { perspective: 1000px; }
   .obpitch { position: relative; width: 100%; padding-top: 66%; border-radius: 14px; overflow: hidden;
     transform: rotateX(36deg); transform-origin: center 54%;
@@ -254,7 +258,8 @@
   .obtoken-nm { margin-top: 3px; font-family: var(--font-data); font-size: 9px; letter-spacing: 0.5px; color: #fff;
     background: rgba(7,11,22,0.7); border-radius: 4px; padding: 1px 4px; display: inline-block; white-space: nowrap; }
 
-  .pcard { padding: 0; overflow: hidden; position: sticky; top: 16px; }
+  /* obcard, not pcard — ui.css owns .pcard for the on-pitch player chip */
+  .obcard { padding: 0; overflow: hidden; position: sticky; top: 16px; }
   .pcard-kitbar { height: 6px; }
   .pcard-top { display: flex; gap: 12px; padding: 16px 16px 6px; align-items: center; }
   .pcard-av { width: 60px; height: 60px; border-radius: 10px; border: 1px solid var(--hairline-2); flex: none; }
@@ -273,13 +278,112 @@
     display: flex; flex-direction: column; gap: 12px; align-items: center; }
   .notfound h1 { font-size: 26px; }
 
+  /* ==== the squad room (J2 — absorbed from squad.html) ==== */
+  .hidden { display: none !important; }
+  .err { color: var(--red); font-size: 13px; min-height: 18px; margin: 0 0 6px; }
+  .room-shell { display: flex; flex-direction: column; gap: 14px; }
+  .roomcard { padding: 16px; }
+  .roomcard > .label { display: block; margin-bottom: 12px; }
+  .room { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); gap: 14px; }
+  .room-hint { font-size: 13px; margin: 10px 0 0; }
+  .room-skel { display: flex; flex-direction: column; gap: 12px; padding: 8px 0 20px; }
+  .room-skel .skeleton { height: 12px; }
+  .room-skel .skeleton:nth-child(2) { width: 70%; }
+  .room-skel .skeleton:nth-child(3) { width: 45%; }
+
+  .roomgate { max-width: 520px; margin: 40px auto; }
+  .roomgate-card { padding: 30px; display: flex; flex-direction: column; gap: 12px; }
+  .roomgate-card h1 { font-size: clamp(24px, 3.6vw, 32px); }
+
+  .formbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+  .btn-quiet.on { border-color: rgba(34,197,94,0.55); color: var(--green-hi);
+    box-shadow: inset 0 1px 0 rgba(248,250,252,0.08), 0 0 14px rgba(34,197,94,0.15); }
+
+  .roompitch { position: relative; width: 100%; aspect-ratio: 4 / 5; border-radius: 10px;
+    border: 1px solid var(--hairline-2);
+    background:
+      linear-gradient(0deg, rgba(34,197,94,0.07), rgba(34,197,94,0.02)),
+      repeating-linear-gradient(0deg, rgba(255,255,255,0.028) 0 8%, transparent 8% 16%),
+      var(--bg-2);
+    overflow: hidden; }
+  .roompitch::before, .roompitch::after { content: ""; position: absolute; left: 22%; right: 22%;
+    height: 13%; border: 1px solid rgba(255,255,255,0.12); }
+  .roompitch::before { top: -1px; border-top: 0; }
+  .roompitch::after { bottom: -1px; border-bottom: 0; }
+  .roompitch .halfway { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px solid rgba(255,255,255,0.12); }
+  .roompitch .centre { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1;
+    transform: translate(-50%,-50%); border: 1px solid rgba(255,255,255,0.12); border-radius: 50%; }
+
+  .slot { position: absolute; transform: translate(-50%, 50%); width: 74px; text-align: center; }
+  .slot .pcard { width: 100%; padding: 6px 2px 5px; }
+  .slot .slotLabel { font-family: var(--font-data); font-size: 9px; letter-spacing: 1.4px;
+    color: var(--ink-faint); margin-top: 3px; }
+  .slot.target .pcard { border-color: var(--green); box-shadow: 0 0 0 2px rgba(34,197,94,0.35); }
+  .slot.oop .slotLabel { color: var(--gold); }
+  .slot-empty { opacity: 0.55; min-height: 92px; justify-content: center;
+    font-family: var(--font-data); letter-spacing: 1.4px; font-size: 11px; color: var(--ink-dim);
+    border: 1px dashed var(--hairline-2) !important; }
+
+  .listrow { display: flex; align-items: center; gap: 10px; padding: 8px 6px; width: 100%;
+    text-align: left; background: none; border: 0; border-bottom: 1px solid var(--hairline);
+    border-radius: 0; color: var(--ink); font-family: var(--font-body); font-size: 14px;
+    font-weight: 500; cursor: pointer; }
+  .listrow:hover { background: rgba(255,255,255,0.03); }
+  .listrow:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--green-hi); }
+  .listrow:last-child { border-bottom: 0; }
+  .listrow.sel { background: rgba(34,197,94,0.1); box-shadow: inset 2px 0 0 var(--green); }
+  .listrow .n { font-family: var(--font-data); font-size: 11px; color: var(--ink-faint); width: 22px; }
+  .listrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .listrow .rl { font-family: var(--font-data); font-size: 10px; letter-spacing: 1px; color: var(--ink-dim); }
+  .listrow .ov { font-family: var(--font-data); font-weight: 700; font-size: 12px; }
+  .sublabel { display: block; margin: 12px 0 4px; }
+
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 14px; }
+  .choices { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
+  .choice { display: flex; flex-direction: column; gap: 6px; }
+  .choice .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px,1fr)); gap: 16px; margin-top: 14px; }
+  .grp h3 { font-family: var(--font-data); font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--green-hi); margin: 0 0 10px; font-weight: 600; }
+  .fld { margin-bottom: 12px; }
+  .fld .top { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .fld .ends { display: flex; justify-content: space-between; font-family: var(--font-data);
+    font-size: 9px; color: var(--ink-faint); letter-spacing: 0.5px; }
+  .fld input[type=range] { width: 100%; accent-color: var(--green); margin: 0; }
+  .fld input[type=range]:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--green-hi); border-radius: 4px; }
+  .fld .val { font-family: var(--font-data); color: var(--ink-dim); font-size: 11px; }
+
+  .savebar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; border-radius: var(--r-m); border: 1px solid var(--hairline-2);
+    background: rgba(7,11,22,0.92); backdrop-filter: blur(8px); box-shadow: 0 -10px 30px rgba(0,0,0,0.35); }
+  .savebar-status { flex: 1; font-size: 13px; color: var(--ink-dim); }
+  .savebar-status.ok { color: var(--green-hi); }
+  .savebar-status.bad { color: var(--red); }
+
+  /* the player-detail drawer ships its own controls (it mounts at body
+     level) — give its plain buttons/inputs the app's voice */
+  .drawer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.7px;
+    padding: 8px 12px; border-radius: 9px; border: 1px solid var(--hairline-2);
+    background: var(--panel); color: var(--ink); cursor: pointer; }
+  .drawer button:hover { border-color: var(--green); }
+  .drawer button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--green-hi); }
+  .drawer button.primary { background: linear-gradient(180deg, var(--green-hi), var(--green-lo));
+    color: var(--bg); border: 0; }
+  .drawer button.ghost { background: transparent; }
+  .drawer input { padding: 9px 12px; border-radius: 9px; background: rgba(5,7,15,0.6);
+    border: 1px solid var(--hairline-2); color: var(--ink); font-family: var(--font-body); font-size: 14px; }
+  .drawer input:focus { outline: none; border-color: var(--green-hi); }
+
   /* ==== responsive ==== */
   @media (max-width: 980px) {
     .club { grid-template-columns: 1fr; }
     .entry { grid-template-columns: 1fr; }
     .entry-door { border-left: 0; border-top: 1px solid var(--hairline); }
-    .reveal, .onb-create { grid-template-columns: 1fr; }
-    .pcard { position: static; }
+    .obreveal, .onb-create { grid-template-columns: 1fr; }
+    .room { grid-template-columns: 1fr; }
+    .slot { width: 62px; }
+    .obcard { position: static; }
   }
   @media (max-width: 760px) {
     .shellbody { flex-direction: column; padding: 14px 12px 60px; gap: 14px; }
@@ -296,6 +400,10 @@
   @media (max-width: 440px) {
     .strip { grid-template-columns: repeat(4, 1fr); }
     .signin-row { flex-direction: column; }
+  }
+  @media (max-width: 560px) {
+    .savebar { flex-wrap: wrap; }
+    .savebar-status { flex-basis: 100%; }
   }
   @media (prefers-reduced-motion: reduce) {
     .view-enter, .stepview.on, .signin-code { animation: none; }
@@ -317,6 +425,10 @@
   // every module below app.html's entry imports only within its own root.
   import { createLobbyService } from '../../match-client/src/lobbyService.js';
   import { claimPendingClub } from '../../match-client/src/clubClaim.js';
+  import { playerCard } from '../../match-client/src/ui/playerCard.js';
+  import { createPlayerDetail } from '../../match-client/src/ui/playerDetail.js';
+  import { FORMATIONS, prettyFormation, slotsFor, outOfPosition } from '../../match-client/src/ui/formation.js';
+  import { TACTIC_GROUPS, TACTIC_CHOICES, PRESETS } from '../../match-client/src/ui/tactics.js';
   import { avatarSvgDressed } from '../../web/public/js/avatar.js';
   import { generateSquad, ratingFace } from '../../web/public/js/squad.js';
   import { loadClub, saveClub, clubOverall, crestInitials, clubRecord } from '../../web/public/js/club.js';
@@ -329,6 +441,8 @@
     deps: {
       createLobbyService, claimPendingClub, avatarSvgDressed,
       generateSquad, ratingFace, loadClub, saveClub, clubOverall, crestInitials, clubRecord,
+      playerCard, createPlayerDetail, FORMATIONS, prettyFormation, slotsFor, outOfPosition,
+      TACTIC_GROUPS, TACTIC_CHOICES, PRESETS,
     },
   });
 </script>

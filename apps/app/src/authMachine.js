@@ -118,6 +118,11 @@ export function createAuthMachine({
     on(event, fn) { (listeners.get(event) ?? listeners.set(event, new Set()).get(event)).add(fn); return this; },
     off(event, fn) { listeners.get(event)?.delete(fn); return this; },
 
+    /** The session's authenticated fetch — raw Response, for surfaces that
+     *  speak endpoints LobbyService does not carry (the team sheet, renames).
+     *  Same builder the club claim uses; throws 'no session' when signed out. */
+    api: claimApi,
+
     /** Wake a stored session (refresh, returning tab). True if one existed. */
     resume() {
       const had = lobby.resume();

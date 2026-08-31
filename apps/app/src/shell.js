@@ -11,6 +11,7 @@ import { crestHtml, esc, html, pick } from './ui.js';
 import { mountClub } from './views/club.js';
 import { mountEntry } from './views/entry.js';
 import { mountOnboarding } from './views/onboarding.js';
+import { mountSquad } from './views/squad.js';
 
 /**
  * @param {{
@@ -88,6 +89,9 @@ export function createApp({ root, window: win, config, deps }) {
     view.classList.add('view-enter');
     if (name === 'club') {
       const handle = mountClub(view, { auth, lobby, router, deps });
+      mounted.dispose = handle?.dispose ?? null;
+    } else if (name === 'squad') {
+      const handle = mountSquad(view, { auth, router, deps });
       mounted.dispose = handle?.dispose ?? null;
     } else if (name === 'entry') {
       mountEntry(view, { auth, router });

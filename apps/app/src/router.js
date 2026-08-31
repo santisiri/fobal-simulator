@@ -23,8 +23,18 @@ export function createRouter({ window: win, onChange, keep = {} }) {
     return matchRoute(currentPath(win.location, mode));
   }
 
+  // A view with unsaved work may hold the door: the guard returns true to
+  // allow leaving. One guard at a time — the mounted view owns it, and the
+  // shell clears it on unmount. (Hard navigations are the view's own
+  // beforeunload; browser back/forward is not guarded, same as any page.)
+  /** @type {null | (() => boolean)} */
+  let leaveGuard = null;
+  const setLeaveGuard = (fn) => { leaveGuard = fn; };
+
   /** Navigate to an app path. Legacy routes leave the document on purpose. */
   function go(path, { replace = false } = {}) {
+    if (leaveGuard && !leaveGuard()) return null;
+    leaveGuard = null;
     const match = matchRoute(path);
     if (match.route.legacy) {
       win.location.assign(legacyHref(match.route.legacy, { keep }));
@@ -63,5 +73,5 @@ export function createRouter({ window: win, onChange, keep = {} }) {
     return first;
   }
 
-  return { mode, href, go, start, resolve, normalizePath };
+  return { mode, href, go, start, resolve, normalizePath, setLeaveGuard };
 }
