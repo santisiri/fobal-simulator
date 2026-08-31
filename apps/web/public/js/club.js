@@ -16,10 +16,11 @@ export function saveClub(club) {
   localStorage.setItem(KEY, JSON.stringify(club));
 }
 
-/** Redirect to onboarding if no club exists; otherwise return it. */
+/** Redirect to onboarding (inside the unified app) if no club exists;
+ *  otherwise return it. */
 export function requireClub() {
   const club = loadClub();
-  if (!club) { location.replace('onboarding.html'); return null; }
+  if (!club) { location.replace('app.html?p=/onboarding'); return null; }
   return club;
 }
 

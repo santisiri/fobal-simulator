@@ -1,6 +1,12 @@
 // Assemble the static hosted client (B3) from the repo — no bundler, the
 // client is plain modules on purpose. Layout of the output:
 //
+//   dist/client/app.html            the unified app shell (workstream J) —
+//                                   /, /onboarding render here; other routes
+//                                   hand off to the pages below until their
+//                                   J slice absorbs them
+//   dist/client/app/*.js            the app's modules (apps/app/src, paths
+//                                   unchanged)
 //   dist/client/index.html          match client shell (config injected)
 //   dist/client/lobby.html          lobby page (config injected)
 //   dist/client/squad.html          the squad room (config injected)
@@ -131,17 +137,35 @@ writeFileSync(join(outDir, 'invite.html'), rewrite('invite.html', invite, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 5. the web app surfaces (onboarding, hub, play + shared design system).
-//    Static and self-contained; relative paths resolve at the dist root. A
-//    FOBAL_CONFIG snippet is injected so play.html can find the relocated
-//    golden (/golden/index.html) and the lobby URL — same config the shell
-//    and lobby receive.
+// 4c. the unified app shell (workstream J). Its modules ship under /app with
+//     their internal structure preserved; app.html's entry script is the ONE
+//     place that imports across roots, so only these specifiers re-point.
+cpSync(join(root, 'apps/app/src'), join(outDir, 'app'), { recursive: true });
+const app = readFileSync(join(root, 'apps/app/public/app.html'), 'utf8');
+//     References are ROOT-ABSOLUTE: the app is served for nested paths
+//     (/market/42) by the router function, where relative URLs would 404.
+writeFileSync(join(outDir, 'app.html'), rewrite('app.html', app, [
+  ['href="../../web/public/styles/fobal.css"', 'href="/styles/fobal.css"'],
+  ["from '../../match-client/src/lobbyService.js'", "from '/src/lobbyService.js'"],
+  ["from '../../match-client/src/clubClaim.js'", "from '/src/clubClaim.js'"],
+  ["from '../../web/public/js/avatar.js'", "from '/js/avatar.js'"],
+  ["from '../../web/public/js/squad.js'", "from '/js/squad.js'"],
+  ["from '../../web/public/js/club.js'", "from '/js/club.js'"],
+  ["from '../src/shell.js'", "from '/app/shell.js'"],
+  ['<script type="module">', CONFIG_SNIPPET()],
+]));
+
+// 5. the web app surfaces (play + shared design system). Onboarding and the
+//    hub were absorbed into app.html (workstream J1); play.html remains
+//    until J5 absorbs mode select. A FOBAL_CONFIG snippet is injected so
+//    play.html can find the relocated golden (/golden/index.html) and the
+//    lobby URL — same config the shell and lobby receive.
 cpSync(join(root, 'apps/web/public/styles'), join(outDir, 'styles'), { recursive: true });
 cpSync(join(root, 'apps/web/public/js'), join(outDir, 'js'), { recursive: true });
 const webConfig = `<script>window.FOBAL_CONFIG = ${JSON.stringify({
   lobbyUrl, matchWsUrl: matchWs, goldenUrl: '/golden/index.html',
 })};</script>\n<link rel="stylesheet" href="styles/fobal.css">`;
-for (const page of ['onboarding.html', 'hub.html', 'play.html']) {
+for (const page of ['play.html']) {
   const html = readFileSync(join(root, 'apps/web/public', page), 'utf8');
   writeFileSync(join(outDir, page), rewrite(page, html, [
     ['<link rel="stylesheet" href="styles/fobal.css">', webConfig],

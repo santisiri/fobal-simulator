@@ -2,10 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "fobal",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8471"],
-      "port": 8471
+      "name": "app",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/serve-client.mjs", "--dir", "dist/client", "--port", "8470"],
+      "port": 8470
+    },
+    {
+      "name": "lobby",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["FOBAL_DEV_AUTH=1", "FOBAL_CREATE_KEY=dev-create-key", "npx", "tsx", "apps/lobby-server/src/index.ts"],
+      "port": 8475
     }
   ]
 }
