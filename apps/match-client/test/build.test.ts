@@ -58,11 +58,14 @@ describe('build-client', () => {
       .toBe(sha(readFileSync(join(root, 'apps/app/src/shell.js'))));
     expect(sha(readFileSync(join(out, 'app/views/squad.js'))))
       .toBe(sha(readFileSync(join(root, 'apps/app/src/views/squad.js'))));
+    expect(sha(readFileSync(join(out, 'app/views/market.js'))))
+      .toBe(sha(readFileSync(join(root, 'apps/app/src/views/market.js'))));
 
     // absorbed pages are gone from the artifact — the app owns their routes
     expect(() => readFileSync(join(out, 'hub.html'))).toThrow();
     expect(() => readFileSync(join(out, 'onboarding.html'))).toThrow();
     expect(() => readFileSync(join(out, 'squad.html'))).toThrow();
+    expect(() => readFileSync(join(out, 'market.html'))).toThrow();
   });
 
   test('missing args fail fast', () => {

@@ -33,6 +33,18 @@ export function assetLabel(asset) {
 /** '2.5 ETH' */
 export const priceLabel = (wei, asset) => `${formatEth(wei)} ${assetLabel(asset)}`;
 
+/** '2.5' → '2500000000000000000'; null when the input is not a clean
+ *  positive decimal. String maths only: a float would lose wei, and a
+ *  mispriced listing is a real loss. */
+export function ethToWei(input) {
+  const text = String(input ?? '').trim();
+  if (!/^\d*\.?\d*$/.test(text) || text === '' || text === '.') return null;
+  const [whole = '0', fraction = ''] = text.split('.');
+  if (fraction.length > 18) return null;
+  const wei = BigInt(whole || '0') * WEI_PER_ETH + BigInt((fraction || '0').padEnd(18, '0'));
+  return wei > 0n ? wei.toString() : null;
+}
+
 /** how a price moved between two sales: {direction, percent} or null */
 export function priceMove(previousWei, latestWei) {
   let a, b;

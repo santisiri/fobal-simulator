@@ -10,8 +10,24 @@
     {
       "name": "lobby",
       "runtimeExecutable": "env",
-      "runtimeArgs": ["FOBAL_DEV_AUTH=1", "FOBAL_CREATE_KEY=dev-create-key", "npx", "tsx", "apps/lobby-server/src/index.ts"],
+      "runtimeArgs": [
+        "FOBAL_DEV_AUTH=1",
+        "FOBAL_CREATE_KEY=dev-create-key",
+        "FOBAL_IDENTITY=0",
+        "FOBAL_RPC_URL=http://127.0.0.1:8545",
+        "FOBAL_CHAIN_PLAYER=0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        "FOBAL_CHAIN_REGISTRY=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+        "FOBAL_CHAIN_MARKETPLACE=0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "FOBAL_MARKET_FROM_BLOCK=1",
+        "npx", "tsx", "apps/lobby-server/src/index.ts"
+      ],
       "port": 8475
+    },
+    {
+      "name": "anvil",
+      "runtimeExecutable": "anvil",
+      "runtimeArgs": [],
+      "port": 8545
     }
   ]
 }

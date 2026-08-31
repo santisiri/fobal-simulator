@@ -10,6 +10,7 @@ import { createRouter } from './router.js';
 import { crestHtml, esc, html, pick } from './ui.js';
 import { mountClub } from './views/club.js';
 import { mountEntry } from './views/entry.js';
+import { mountMarket } from './views/market.js';
 import { mountOnboarding } from './views/onboarding.js';
 import { mountSquad } from './views/squad.js';
 
@@ -53,7 +54,8 @@ export function createApp({ root, window: win, config, deps }) {
     </div>`);
 
   const view = pick(root, 'view');
-  let mounted = { name: null, dispose: /** @type {null | (() => void)} */ (null) };
+  /** @type {{ name: string|null, dispose: null|(() => void), update: null|((match: any) => void) }} */
+  let mounted = { name: null, dispose: null, update: null };
 
   // ---- routing ------------------------------------------------------------
   const router = createRouter({
@@ -74,13 +76,24 @@ export function createApp({ root, window: win, config, deps }) {
     return hasClub ? 'club' : 'entry';
   };
 
+  const markNav = (path) => {
+    for (const [id, navPath] of [['nav-club', '/'], ['nav-squad', '/squad'], ['nav-market', '/market'], ['nav-lobby', '/lobby'], ['nav-play', '/play']]) {
+      pick(root, id).classList.toggle('active', path === navPath || (navPath !== '/' && path.startsWith(navPath)));
+    }
+  };
+
   let current = null;
   function renderRoute(match) {
     current = match;
     const name = viewNameFor(match);
-    if (mounted.name === name) return;
+    if (mounted.name === name) {
+      // same view, new URL (a /market/:tokenId deep state) — hand it the match
+      mounted.update?.(match);
+      markNav(match.path);
+      return;
+    }
     mounted.dispose?.();
-    mounted = { name, dispose: null };
+    mounted = { name, dispose: null, update: null };
     win.document.title = `FOBAL — ${name === 'entry' ? 'Say the word' : match.route.title}`;
     view.classList.remove('view-enter');
     // restart the enter transition (transform/opacity only; reduced motion
@@ -93,6 +106,10 @@ export function createApp({ root, window: win, config, deps }) {
     } else if (name === 'squad') {
       const handle = mountSquad(view, { auth, router, deps });
       mounted.dispose = handle?.dispose ?? null;
+    } else if (name === 'market') {
+      const handle = mountMarket(view, { auth, router, deps, lobbyUrl, params: match.params });
+      mounted.dispose = handle?.dispose ?? null;
+      mounted.update = handle?.update ?? null;
     } else if (name === 'entry') {
       mountEntry(view, { auth, router });
     } else if (name === 'onboarding') {
@@ -106,9 +123,7 @@ export function createApp({ root, window: win, config, deps }) {
           <a class="btn-primary" data-nav="/" href="${esc(router.href('/'))}">Back to the club</a>
         </div>`);
     }
-    for (const [id, path] of [['nav-club', '/'], ['nav-squad', '/squad'], ['nav-market', '/market'], ['nav-lobby', '/lobby'], ['nav-play', '/play']]) {
-      pick(root, id).classList.toggle('active', match.path === path || (path !== '/' && match.path.startsWith(path)));
-    }
+    markNav(match.path);
   }
 
   // ---- chrome updates from the one snapshot --------------------------------

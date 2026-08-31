@@ -2,14 +2,13 @@
 // client is plain modules on purpose. Layout of the output:
 //
 //   dist/client/app.html            the unified app shell (workstream J) —
-//                                   /, /onboarding, /squad render here; other
-//                                   routes hand off to the pages below until
-//                                   their J slice absorbs them
+//                                   /, /onboarding, /squad, /market render
+//                                   here; other routes hand off to the pages
+//                                   below until their J slice absorbs them
 //   dist/client/app/*.js            the app's modules (apps/app/src, paths
 //                                   unchanged)
 //   dist/client/index.html          match client shell (config injected)
 //   dist/client/lobby.html          lobby page (config injected)
-//   dist/client/market.html         the market (config injected)
 //   dist/client/src/*.js            client modules (paths unchanged)
 //   dist/client/golden/index.html   the golden reference, BYTE-IDENTICAL —
 //                                   verified by hash; the build ABORTS if the
@@ -107,17 +106,7 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
 
 // (squad.html was absorbed into app.html in J2 — /squad renders in the app)
 
-// 4a2. the market — public browsing, so it needs no session; same shared
-//      atoms (avatarTile) and the money helpers.
-const market = readFileSync(join(root, 'apps/match-client/public/market.html'), 'utf8');
-writeFileSync(join(outDir, 'market.html'), rewrite('market.html', market, [
-  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
-  ["from '../src/ui/playerCard.js'", "from './src/ui/playerCard.js'"],
-  ["from '../src/ui/money.js'", "from './src/ui/money.js'"],
-  ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
-  ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
-  ['<script type="module">', CONFIG_SNIPPET()],
-]));
+// (market.html was absorbed into app.html in J3 — /market renders in the app)
 
 // 4b. the invitation landing page — config only (it reads the lobby URL to
 //     fetch the invite context before anyone signs in)
@@ -141,6 +130,9 @@ writeFileSync(join(outDir, 'app.html'), rewrite('app.html', app, [
   ["from '../../match-client/src/ui/playerDetail.js'", "from '/src/ui/playerDetail.js'"],
   ["from '../../match-client/src/ui/formation.js'", "from '/src/ui/formation.js'"],
   ["from '../../match-client/src/ui/tactics.js'", "from '/src/ui/tactics.js'"],
+  ["from '../../match-client/src/ui/money.js'", "from '/src/ui/money.js'"],
+  ["from '../../match-client/src/ui/tx.js'", "from '/src/ui/tx.js'"],
+  ["from '../../match-client/src/ui/errors.js'", "from '/src/ui/errors.js'"],
   ["from '../../web/public/js/avatar.js'", "from '/js/avatar.js'"],
   ["from '../../web/public/js/squad.js'", "from '/js/squad.js'"],
   ["from '../../web/public/js/club.js'", "from '/js/club.js'"],

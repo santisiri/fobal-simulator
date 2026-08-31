@@ -567,10 +567,10 @@
     }
   };
 
-  // the market (I1) — public browsing of what is for sale
+  // the market — now a route inside the unified app (J3)
   $('marketBtn').onclick = () => {
     const dev = new URLSearchParams(location.search).get('lobby');
-    location.href = `market.html${dev ? `?lobby=${encodeURIComponent(dev)}` : ''}`;
+    location.href = `/app.html?p=/market${dev ? `&lobby=${encodeURIComponent(dev)}` : ''}`;
   };
 
   // the squad room — now a route inside the unified app (J2). The ?p= form
