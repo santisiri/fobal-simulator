@@ -21,6 +21,7 @@ byte-identical · **zero open PRs**.
 | Voice/LLM — GameCommand | closed taxonomy, resolution, compile boundary | ✅ main |
 | Football AI — tactical execution | 7 player intents move real footballers | ✅ main |
 | **Art v2/v3** | `packages/art` single source → generated JS + Solidity; router, atlas, rollout runbook | ✅ **in repo — NOT on chain** |
+| Unified app (J) | J1 shell: `apps/app` — routes, auth machine, club claim; hub + onboarding absorbed and deleted. Status: `docs/UNIFIED_APP.md` | ✅ main (J1) |
 
 ## Architecture audit — still clean
 
@@ -134,6 +135,9 @@ lobby task at boot. Without it the lobby stays on the SES backend.
 
 ## Open follow-ups
 
+- Attach `infra/cloudfront/app-router-function.js` to distribution
+  `E35URO4KFESJYU` (imperative step, documented in the file) — flips the
+  unified app from `/app.html?p=` fallback to clean paths at the root.
 - Art rollout on Base Sepolia (human, admin key) — `docs/ART_ROLLOUT.md`.
 - The identity schism — highest-value product work available.
 - Invitations for arbitrary recipients: SES production access (AWS case)

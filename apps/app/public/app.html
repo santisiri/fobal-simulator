@@ -13,6 +13,9 @@
 <link rel="stylesheet" href="../../web/public/styles/fobal.css">
 <style>
   /* ==== the unified shell — tokens come from fobal.css, never redefined ==== */
+  /* the hidden attribute must beat any display: the shell toggles with it */
+  [hidden] { display: none !important; }
+
   .shell { min-height: 100vh; display: flex; flex-direction: column; }
 
   .shellbar { display: flex; align-items: center; gap: 12px; padding: 12px 20px;

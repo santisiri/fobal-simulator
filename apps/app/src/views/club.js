@@ -85,9 +85,11 @@ export function mountClub(el, { auth, lobby, router, deps }) {
   }
 
   // ---- the kick-off card: match > challenge > queue > find a rival -------
+  // root-absolute like every cross-page URL the app emits — the club can be
+  // rendered at a deep link, where a relative file name would 404
   function matchClientUrl(match, token) {
     const ws = match.matchUrl.replace(/^http/, 'ws');
-    return `index.html?ws=${encodeURIComponent(ws)}&match=${encodeURIComponent(match.matchId)}&token=${encodeURIComponent(token)}`;
+    return `/index.html?ws=${encodeURIComponent(ws)}&match=${encodeURIComponent(match.matchId)}&token=${encodeURIComponent(token)}`;
   }
 
   function renderKickoff() {
@@ -296,7 +298,7 @@ export function mountClub(el, { auth, lobby, router, deps }) {
       </div>
       <button class="btn-quiet lastft-watch" id="watchBtn">▶ Watch replay</button>`);
     pick(el, 'watchBtn').addEventListener('click', () => {
-      location.assign(`index.html?replayUrl=${encodeURIComponent(m.matchUrl)}`
+      location.assign(`/index.html?replayUrl=${encodeURIComponent(m.matchUrl)}`
         + `&match=${encodeURIComponent(m.matchId)}&token=${encodeURIComponent(m.spectatorToken)}`);
     });
   }

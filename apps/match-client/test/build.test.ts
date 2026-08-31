@@ -43,13 +43,15 @@ describe('build-client', () => {
 
     // the unified app shell (J1): config injected, every cross-root import
     // re-pointed at the dist layout, its own modules shipped under /app
+    // references are root-absolute — the app answers nested deep links
+    // (/market/42), where a relative path would resolve under the link
     const app = readFileSync(join(out, 'app.html'), 'utf8');
     expect(app).toContain('"lobbyUrl":"https://lobby-staging.fobal.ai"');
-    expect(app).toContain('href="styles/fobal.css"');
+    expect(app).toContain('href="/styles/fobal.css"');
     expect(app).not.toContain("from '../");
-    expect(app).toContain("from './src/lobbyService.js'");
-    expect(app).toContain("from './js/avatar.js'");
-    expect(app).toContain("from './app/shell.js'");
+    expect(app).toContain("from '/src/lobbyService.js'");
+    expect(app).toContain("from '/js/avatar.js'");
+    expect(app).toContain("from '/app/shell.js'");
     expect(sha(readFileSync(join(out, 'app/shell.js'))))
       .toBe(sha(readFileSync(join(root, 'apps/app/src/shell.js'))));
     expect(sha(readFileSync(join(out, 'app/views/club.js'))))

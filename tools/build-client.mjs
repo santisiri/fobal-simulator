@@ -142,14 +142,16 @@ writeFileSync(join(outDir, 'invite.html'), rewrite('invite.html', invite, [
 //     place that imports across roots, so only these specifiers re-point.
 cpSync(join(root, 'apps/app/src'), join(outDir, 'app'), { recursive: true });
 const app = readFileSync(join(root, 'apps/app/public/app.html'), 'utf8');
+//     References are ROOT-ABSOLUTE: the app is served for nested paths
+//     (/market/42) by the router function, where relative URLs would 404.
 writeFileSync(join(outDir, 'app.html'), rewrite('app.html', app, [
-  ['href="../../web/public/styles/fobal.css"', 'href="styles/fobal.css"'],
-  ["from '../../match-client/src/lobbyService.js'", "from './src/lobbyService.js'"],
-  ["from '../../match-client/src/clubClaim.js'", "from './src/clubClaim.js'"],
-  ["from '../../web/public/js/avatar.js'", "from './js/avatar.js'"],
-  ["from '../../web/public/js/squad.js'", "from './js/squad.js'"],
-  ["from '../../web/public/js/club.js'", "from './js/club.js'"],
-  ["from '../src/shell.js'", "from './app/shell.js'"],
+  ['href="../../web/public/styles/fobal.css"', 'href="/styles/fobal.css"'],
+  ["from '../../match-client/src/lobbyService.js'", "from '/src/lobbyService.js'"],
+  ["from '../../match-client/src/clubClaim.js'", "from '/src/clubClaim.js'"],
+  ["from '../../web/public/js/avatar.js'", "from '/js/avatar.js'"],
+  ["from '../../web/public/js/squad.js'", "from '/js/squad.js'"],
+  ["from '../../web/public/js/club.js'", "from '/js/club.js'"],
+  ["from '../src/shell.js'", "from '/app/shell.js'"],
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 

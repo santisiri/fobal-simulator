@@ -80,9 +80,9 @@ describe('URL modes', () => {
     expect(hrefFor('/squad', { keep: { lobby: null } })).toBe('/squad');
   });
 
-  test('legacy hand-offs are plain files beside the app, override intact', () => {
-    expect(legacyHref('lobby.html', {})).toBe('lobby.html');
+  test('legacy hand-offs are root-absolute (the app answers nested paths), override intact', () => {
+    expect(legacyHref('lobby.html', {})).toBe('/lobby.html');
     expect(legacyHref('squad.html', { keep: { lobby: 'http://x' } }))
-      .toBe('squad.html?lobby=http%3A%2F%2Fx');
+      .toBe('/squad.html?lobby=http%3A%2F%2Fx');
   });
 });

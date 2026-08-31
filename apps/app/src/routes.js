@@ -116,10 +116,12 @@ export function hrefFor(path, { mode = 'path', docPath = '/app.html', keep = {} 
   return `${p}${qs ? `?${qs}` : ''}`;
 }
 
-/** The hand-off URL for a legacy page (relative — pages ship side by side). */
+/** The hand-off URL for a legacy page. Root-absolute on purpose: the app
+ *  answers nested paths (/market/42), where a relative file name would
+ *  resolve under the deep link and 404. Every page ships at the dist root. */
 export function legacyHref(file, { keep = {} } = {}) {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(keep)) if (v != null && v !== '') q.set(k, v);
   const qs = q.toString();
-  return `${file}${qs ? `?${qs}` : ''}`;
+  return `/${file}${qs ? `?${qs}` : ''}`;
 }
