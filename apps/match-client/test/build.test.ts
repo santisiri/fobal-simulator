@@ -40,6 +40,24 @@ describe('build-client', () => {
     // modules ship unmodified
     expect(sha(readFileSync(join(out, 'src/puppet.js'))))
       .toBe(sha(readFileSync(join(root, 'apps/match-client/src/puppet.js'))));
+
+    // the unified app shell (J1): config injected, every cross-root import
+    // re-pointed at the dist layout, its own modules shipped under /app
+    const app = readFileSync(join(out, 'app.html'), 'utf8');
+    expect(app).toContain('"lobbyUrl":"https://lobby-staging.fobal.ai"');
+    expect(app).toContain('href="styles/fobal.css"');
+    expect(app).not.toContain("from '../");
+    expect(app).toContain("from './src/lobbyService.js'");
+    expect(app).toContain("from './js/avatar.js'");
+    expect(app).toContain("from './app/shell.js'");
+    expect(sha(readFileSync(join(out, 'app/shell.js'))))
+      .toBe(sha(readFileSync(join(root, 'apps/app/src/shell.js'))));
+    expect(sha(readFileSync(join(out, 'app/views/club.js'))))
+      .toBe(sha(readFileSync(join(root, 'apps/app/src/views/club.js'))));
+
+    // the absorbed pages are gone from the artifact — app.html is the club
+    expect(() => readFileSync(join(out, 'hub.html'))).toThrow();
+    expect(() => readFileSync(join(out, 'onboarding.html'))).toThrow();
   });
 
   test('missing args fail fast', () => {

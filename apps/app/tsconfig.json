@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "checkJs": false,
+    "allowJs": true,
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

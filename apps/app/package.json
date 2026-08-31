@@ -1,0 +1,10 @@
+{
+  "name": "@fobal/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The unified fobal.ai application shell (workstream J): one root, one session, one navigation. Client-side routes over the lobby-server contract; hands off to the golden match client for live play and returns.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}
