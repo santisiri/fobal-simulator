@@ -16,7 +16,9 @@ describe('the shared design system', () => {
 
   test('no surface redefines a token the system owns', () => {
     const owned = ['--bg:', '--panel:', '--green:', '--purple:', '--ink:', '--hairline:'];
-    for (const page of ['lobby', 'squad', 'market', 'invite', 'index']){
+    // squad.html was absorbed into the unified app (J2); app.html consumes
+    // ui.css directly and defines no :root of its own
+    for (const page of ['lobby', 'market', 'invite', 'index']){
       const html = readFileSync(`apps/match-client/public/${page}.html`, 'utf8');
       const root = html.slice(html.indexOf(':root {'), html.indexOf('}', html.indexOf(':root {')));
       for (const token of owned)

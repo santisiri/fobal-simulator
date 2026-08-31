@@ -33,9 +33,19 @@ export function createPlayerDetail({ explorerBase = 'https://sepolia.basescan.or
     lastFocus?.focus?.();
   };
   scrim.addEventListener('click', close);
-  document.addEventListener('keydown', e => {
+  const onKeydown = e => {
     if (e.key === 'Escape' && drawer.classList.contains('on')) close();
-  });
+  };
+  document.addEventListener('keydown', onKeydown);
+
+  /** Remove the drawer from the document entirely — for hosts that mount
+   *  and unmount views (the unified app). The standalone pages never call
+   *  this; for them the drawer lives as long as the document. */
+  const destroy = () => {
+    document.removeEventListener('keydown', onKeydown);
+    scrim.remove();
+    drawer.remove();
+  };
 
   function open(player, { colors, source } = {}) {
     lastFocus = document.activeElement;
@@ -155,5 +165,5 @@ export function createPlayerDetail({ explorerBase = 'https://sepolia.basescan.or
     closeBtn.focus();
   }
 
-  return { open, close };
+  return { open, close, destroy };
 }

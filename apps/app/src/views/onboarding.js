@@ -70,12 +70,12 @@ export function mountOnboarding(el, { router, deps }) {
           <h1 class="display" id="meetTitle">Meet your team.</h1>
           <p class="muted onb-meet-sub">Eleven NFTs, dealt onto the pitch in a 4-3-3. Tap any footballer to read
             their card. Every avatar here is drawn by the same code, from the same data, as the art the chain mints.</p>
-          <div class="reveal">
+          <div class="obreveal">
             <div class="pitchwrap"><div class="obpitch">
               <div class="obpitch-lines"></div><div class="obpitch-box top"></div><div class="obpitch-box bottom"></div>
               <div id="obTokens"></div>
             </div></div>
-            <div class="panel pcard" id="obCard"><div class="pcard-hint muted">Tap a player to scout them.</div></div>
+            <div class="panel obcard" id="obCard"><div class="pcard-hint muted">Tap a player to scout them.</div></div>
           </div>
           <div class="footer-cta">
             <button class="btn-primary btn-lg" id="enterClub">Enter your club →</button>

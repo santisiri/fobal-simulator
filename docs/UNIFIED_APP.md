@@ -11,7 +11,7 @@ status + the decisions that bind the slices.
 | Slice | Scope | Status |
 |---|---|---|
 | **J1** | the shell: routing, nav, auth machine, session, club claim; hub + onboarding absorbed | ✅ shipped |
-| J2 | squad room + team sheet | — |
+| **J2** | squad room + team sheet at `/squad`; squad.html absorbed and deleted | ✅ shipped |
 | J3 | market + wallet tx lifecycle | — |
 | J4 | lobby + queue + invites + history | — |
 | J5 | match hand-off + return, spectator links; play absorbed | — |
@@ -91,3 +91,27 @@ at `/index.html` (every match URL names it explicitly).
 `apps/web/public/hub.html` and `apps/web/public/onboarding.html` — absorbed
 as the club home and `/onboarding`. `play.html`'s back link, the lobby's
 `← CLUB` link and `club.js#requireClub` now point at the app.
+
+## What J2 absorbed (the squad room)
+
+`apps/match-client/public/squad.html` → `apps/app/src/views/squad.js` at
+`/squad`, deleted in the same PR; the lobby's SQUAD ROOM button points at
+the app. Decisions added in J2, inherited by later slices:
+
+- **The app's stylesheet is `ui.css`** (dev: `apps/match-client/src/ui/ui.css`,
+  dist: `/src/ui/ui.css`) — the shared design-system block (byte-identical
+  to fobal.css, proven by tokens.test) PLUS the product atoms the views
+  reuse (player cards, the detail drawer, skeletons, tx flow). The app's
+  own class names must not collide with ui.css atoms (`.pcard`, `.reveal`,
+  `.pitch` are taken — J1's wizard classes were renamed `obcard`/`obreveal`).
+- **`auth.api(path, init)`** is the session's authenticated raw fetch, for
+  endpoints LobbyService doesn't carry (`/sheet`, player renames). Views
+  never build their own fetch.
+- **Unsaved work holds the door**: `router.setLeaveGuard(fn)` — the mounted
+  view owns the one guard, the shell's route change consults it, dispose
+  clears it; hard navigations stay on `beforeunload`.
+- The placement rules (eleven stays eleven, placements trade places) are
+  pure in `views/sheetOps.js` with their own tests; the room renders from
+  the SAME `/squad` payload as everywhere else and joins `/sheet` by
+  playerId. `playerDetail` gained an additive `destroy()` so SPA unmounts
+  don't leak drawers.

@@ -20,7 +20,7 @@ describe('matchRoute', () => {
   test('the committed route shapes all resolve', () => {
     expect(matchRoute('/').route.view).toBe('club');
     expect(matchRoute('/onboarding').route.view).toBe('onboarding');
-    expect(matchRoute('/squad').route.legacy).toBe('squad.html');
+    expect(matchRoute('/squad').route.view).toBe('squad');   // absorbed in J2
     expect(matchRoute('/lobby').route.legacy).toBe('lobby.html');
     expect(matchRoute('/play').route.legacy).toBe('play.html');
     expect(matchRoute('/invite').route.legacy).toBe('invite.html');

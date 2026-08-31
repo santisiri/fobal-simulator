@@ -2,14 +2,13 @@
 // client is plain modules on purpose. Layout of the output:
 //
 //   dist/client/app.html            the unified app shell (workstream J) —
-//                                   /, /onboarding render here; other routes
-//                                   hand off to the pages below until their
-//                                   J slice absorbs them
+//                                   /, /onboarding, /squad render here; other
+//                                   routes hand off to the pages below until
+//                                   their J slice absorbs them
 //   dist/client/app/*.js            the app's modules (apps/app/src, paths
 //                                   unchanged)
 //   dist/client/index.html          match client shell (config injected)
 //   dist/client/lobby.html          lobby page (config injected)
-//   dist/client/squad.html          the squad room (config injected)
 //   dist/client/market.html         the market (config injected)
 //   dist/client/src/*.js            client modules (paths unchanged)
 //   dist/client/golden/index.html   the golden reference, BYTE-IDENTICAL —
@@ -106,17 +105,7 @@ writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 4a. the squad room — same session as the lobby, same flattened module
-//     paths (playerCard/playerDetail are shared with the lobby's panel).
-const room = readFileSync(join(root, 'apps/match-client/public/squad.html'), 'utf8');
-writeFileSync(join(outDir, 'squad.html'), rewrite('squad.html', room, [
-  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
-  ["from '../src/ui/playerCard.js'", "from './src/ui/playerCard.js'"],
-  ["from '../src/ui/playerDetail.js'", "from './src/ui/playerDetail.js'"],
-  ["from '../src/ui/formation.js'", "from './src/ui/formation.js'"],
-  ["from '../src/ui/tactics.js'", "from './src/ui/tactics.js'"],
-  ['<script type="module">', CONFIG_SNIPPET()],
-]));
+// (squad.html was absorbed into app.html in J2 — /squad renders in the app)
 
 // 4a2. the market — public browsing, so it needs no session; same shared
 //      atoms (avatarTile) and the money helpers.
@@ -145,9 +134,13 @@ const app = readFileSync(join(root, 'apps/app/public/app.html'), 'utf8');
 //     References are ROOT-ABSOLUTE: the app is served for nested paths
 //     (/market/42) by the router function, where relative URLs would 404.
 writeFileSync(join(outDir, 'app.html'), rewrite('app.html', app, [
-  ['href="../../web/public/styles/fobal.css"', 'href="/styles/fobal.css"'],
+  ['href="../../match-client/src/ui/ui.css"', 'href="/src/ui/ui.css"'],
   ["from '../../match-client/src/lobbyService.js'", "from '/src/lobbyService.js'"],
   ["from '../../match-client/src/clubClaim.js'", "from '/src/clubClaim.js'"],
+  ["from '../../match-client/src/ui/playerCard.js'", "from '/src/ui/playerCard.js'"],
+  ["from '../../match-client/src/ui/playerDetail.js'", "from '/src/ui/playerDetail.js'"],
+  ["from '../../match-client/src/ui/formation.js'", "from '/src/ui/formation.js'"],
+  ["from '../../match-client/src/ui/tactics.js'", "from '/src/ui/tactics.js'"],
   ["from '../../web/public/js/avatar.js'", "from '/js/avatar.js'"],
   ["from '../../web/public/js/squad.js'", "from '/js/squad.js'"],
   ["from '../../web/public/js/club.js'", "from '/js/club.js'"],

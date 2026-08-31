@@ -573,11 +573,11 @@
     location.href = `market.html${dev ? `?lobby=${encodeURIComponent(dev)}` : ''}`;
   };
 
-  // the squad room (H2) — the eleven, the shape, the tactics. Carries the
-  // dev lobby override through so a local rig stays on the same server.
+  // the squad room — now a route inside the unified app (J2). The ?p= form
+  // routes on any host; the dev lobby override rides along.
   $('roomBtn').onclick = () => {
     const dev = new URLSearchParams(location.search).get('lobby');
-    location.href = `squad.html${dev ? `?lobby=${encodeURIComponent(dev)}` : ''}`;
+    location.href = `/app.html?p=/squad${dev ? `&lobby=${encodeURIComponent(dev)}` : ''}`;
   };
 
   $('renameBtn').onclick = async () => {
