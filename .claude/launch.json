@@ -19,9 +19,18 @@
         "FOBAL_CHAIN_REGISTRY=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
         "FOBAL_CHAIN_MARKETPLACE=0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
         "FOBAL_MARKET_FROM_BLOCK=1",
+        "FOBAL_CHAIN_GENERATOR=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        "FOBAL_CHAIN_ID=31337",
+        "FOBAL_GENERATOR_SIGNER_PK=0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
         "npx", "tsx", "apps/lobby-server/src/index.ts"
       ],
       "port": 8475
+    },
+    {
+      "name": "match",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["FOBAL_CREATE_KEY=dev-create-key", "npx", "tsx", "apps/match-server/src/index.ts"],
+      "port": 8473
     },
     {
       "name": "anvil",

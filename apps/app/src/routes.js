@@ -36,7 +36,7 @@ export const ROUTES = [
   { path: '/squad', view: 'squad', title: 'Squad room' },
   { path: '/market/:tokenId', view: 'market', title: 'Market' },
   { path: '/market', view: 'market', title: 'Market' },
-  { path: '/lobby', legacy: 'lobby.html', title: 'Lobby' },
+  { path: '/lobby', view: 'lobby', title: 'Matchday lobby' },
   { path: '/play', legacy: 'play.html', title: 'Play' },
   { path: '/invite', legacy: 'invite.html', title: 'Match challenge' },
 ];

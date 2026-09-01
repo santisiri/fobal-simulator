@@ -2,13 +2,13 @@
 // client is plain modules on purpose. Layout of the output:
 //
 //   dist/client/app.html            the unified app shell (workstream J) —
-//                                   /, /onboarding, /squad, /market render
-//                                   here; other routes hand off to the pages
-//                                   below until their J slice absorbs them
+//                                   /, /onboarding, /squad, /market, /lobby
+//                                   render here; /play and /invite hand off
+//                                   to the pages below until their J slice
+//                                   absorbs them
 //   dist/client/app/*.js            the app's modules (apps/app/src, paths
 //                                   unchanged)
 //   dist/client/index.html          match client shell (config injected)
-//   dist/client/lobby.html          lobby page (config injected)
 //   dist/client/src/*.js            client modules (paths unchanged)
 //   dist/client/golden/index.html   the golden reference, BYTE-IDENTICAL —
 //                                   verified by hash; the build ABORTS if the
@@ -92,17 +92,7 @@ writeFileSync(join(outDir, 'index.html'), rewrite('index.html', shell, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 4. the lobby page — config injected, squad-experience module paths
-//    flattened (they ship under /src with the other client modules)
-const lobby = readFileSync(join(root, 'apps/match-client/public/lobby.html'), 'utf8');
-writeFileSync(join(outDir, 'lobby.html'), rewrite('lobby.html', lobby, [
-  ['href="../src/ui/ui.css"', 'href="./src/ui/ui.css"'],
-  ["from '../src/ui/squadView.js'", "from './src/ui/squadView.js'"],
-  ["from '../src/ui/tx.js'", "from './src/ui/tx.js'"],
-  ["from '../src/ui/errors.js'", "from './src/ui/errors.js'"],
-  ["from '../src/clubClaim.js'", "from './src/clubClaim.js'"],
-  ['<script type="module">', CONFIG_SNIPPET()],
-]));
+// (lobby.html was absorbed into app.html in J4 — /lobby renders in the app)
 
 // (squad.html was absorbed into app.html in J2 — /squad renders in the app)
 

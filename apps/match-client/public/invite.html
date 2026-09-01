@@ -53,7 +53,7 @@
   <div id="problem" class="err hidden">
     <h1 id="problemLine"></h1>
     <p class="sub">You can still head to the lobby and challenge anyone who's around.</p>
-    <a class="cta" href="lobby.html">GO TO THE LOBBY</a>
+    <a class="cta" href="/app.html?p=/lobby">GO TO THE LOBBY</a>
   </div>
   <p class="fine">This page opens a game invitation and nothing else.<br>Didn't expect it? You can safely close this tab.</p>
 </main>
@@ -89,7 +89,7 @@
       $('expiry').textContent = days > 1 ? `EXPIRES IN ${days} DAYS` : 'EXPIRES SOON';
       // the token rides to the lobby, which claims it after ANY sign-in —
       // email code, wallet, even a freshly minted squad later
-      $('joinBtn').href = `lobby.html?invite=${encodeURIComponent(token)}`
+      $('joinBtn').href = `/app.html?p=/lobby&invite=${encodeURIComponent(token)}`
         + (lobbyParam ? `&lobby=${encodeURIComponent(lobbyParam)}` : '');
       $('loading').classList.add('hidden');
       $('challenge').classList.remove('hidden');

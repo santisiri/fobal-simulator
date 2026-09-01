@@ -10,6 +10,7 @@ import { createRouter } from './router.js';
 import { crestHtml, esc, html, pick } from './ui.js';
 import { mountClub } from './views/club.js';
 import { mountEntry } from './views/entry.js';
+import { mountLobby } from './views/lobby.js';
 import { mountMarket } from './views/market.js';
 import { mountOnboarding } from './views/onboarding.js';
 import { mountSquad } from './views/squad.js';
@@ -26,6 +27,13 @@ export function createApp({ root, window: win, config, deps }) {
   const params = new URLSearchParams(win.location.search);
   const devLobby = params.get('lobby');
   const lobbyUrl = devLobby ?? config.lobbyUrl ?? 'http://localhost:8475';
+
+  // an invitation token (invite.html's join link) survives the whole
+  // sign-in journey here — the lobby view claims it after any sign-in
+  const inviteToken = params.get('invite');
+  if (inviteToken) {
+    try { win.sessionStorage.setItem('fobal.invite', inviteToken); } catch { /* claimed this visit or not at all */ }
+  }
 
   const lobby = deps.createLobbyService({ lobbyUrl });
   const auth = createAuthMachine({ lobby, claimClub: deps.claimPendingClub });
@@ -110,6 +118,9 @@ export function createApp({ root, window: win, config, deps }) {
       const handle = mountMarket(view, { auth, router, deps, lobbyUrl, params: match.params });
       mounted.dispose = handle?.dispose ?? null;
       mounted.update = handle?.update ?? null;
+    } else if (name === 'lobby') {
+      const handle = mountLobby(view, { auth, lobby, router });
+      mounted.dispose = handle?.dispose ?? null;
     } else if (name === 'entry') {
       mountEntry(view, { auth, router });
     } else if (name === 'onboarding') {

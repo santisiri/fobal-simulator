@@ -10,9 +10,10 @@ import { elevenPips, esc, html } from '../ui.js';
  * @param {HTMLElement} el         container; cleared while the flow is idle
  * @param {any} snap               createTxFlow snapshot
  * @param {{ txStateLine: Function, explorerBase?: string, onRetry?: Function,
- *           settledLine?: string }} options
+ *           settledLine?: string, legs?: number }} options
+ *   legs — total on-chain steps; >1 renders the leg dots (the mint's three)
  */
-export function renderTxPanel(el, snap, { txStateLine, explorerBase = 'https://sepolia.basescan.org', onRetry, settledLine = 'Settled — it is yours.' } = {}) {
+export function renderTxPanel(el, snap, { txStateLine, explorerBase = 'https://sepolia.basescan.org', onRetry, settledLine = 'Settled — it is yours.', legs = 1 } = {}) {
   if (!snap || snap.state === 'idle') {
     el.replaceChildren();
     el.classList.add('hidden');
@@ -32,12 +33,16 @@ export function renderTxPanel(el, snap, { txStateLine, explorerBase = 'https://s
   const settled = snap.state === 'success'
     ? `<div class="txSettled">${elevenPips(true)}<span>${esc(settledLine)}</span></div>`
     : '';
+  const legRow = legs > 1
+    ? `<div class="legs">${Array.from({ length: legs }, (_, i) =>
+        `<i class="${i < snap.legsDone ? 'done' : (i === snap.legsDone && busy ? 'now' : '')}"></i>`).join('')}</div>`
+    : '';
   html(el, `
     <div class="txflow${snap.state === 'success' ? ' ok' : ''}">
       <div class="txAction">${esc(snap.action)}</div>
       <div class="txLine">${mark}
         <span>${snap.state === 'failure' ? 'stopped — nothing was lost' : esc(txStateLine(snap))}</span></div>
-      ${hashRow}${failure}${settled}
+      ${legRow}${hashRow}${failure}${settled}
     </div>`);
   if (busy) return;
   el.querySelector('[data-tx-retry]')?.addEventListener('click', () => onRetry?.());
