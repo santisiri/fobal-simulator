@@ -18,7 +18,7 @@ describe('the shared design system', () => {
     const owned = ['--bg:', '--panel:', '--green:', '--purple:', '--ink:', '--hairline:'];
     // squad.html was absorbed into the unified app (J2); app.html consumes
     // ui.css directly and defines no :root of its own
-    for (const page of ['lobby', 'market', 'invite', 'index']){
+    for (const page of ['lobby', 'invite', 'index']){
       const html = readFileSync(`apps/match-client/public/${page}.html`, 'utf8');
       const root = html.slice(html.indexOf(':root {'), html.indexOf('}', html.indexOf(':root {')));
       for (const token of owned)

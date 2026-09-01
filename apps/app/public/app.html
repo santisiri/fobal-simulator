@@ -360,6 +360,65 @@
   .savebar-status.ok { color: var(--green-hi); }
   .savebar-status.bad { color: var(--red); }
 
+  /* ==== the market (J3 — absorbed from market.html) ==== */
+  .marketwrap { display: flex; flex-direction: column; gap: 14px; }
+  .ticker { display: flex; flex-wrap: wrap; gap: 26px; align-items: baseline; }
+  .mstat .k { font-family: var(--font-data); font-size: 10px; letter-spacing: 2px;
+    text-transform: uppercase; color: var(--ink-faint); display: block; }
+  .mstat .v { font-family: var(--font-display); font-weight: 800; font-size: 22px; }
+  .mstat .v small { font-size: 12px; color: var(--ink-dim); font-weight: 500; margin-left: 4px; }
+  .mstat-skel { width: 90px; height: 30px; border-radius: 7px; }
+
+  .lots { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+  .lot { text-align: left; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+    border-radius: var(--r-m); border: 1px solid var(--hairline); cursor: pointer;
+    background: linear-gradient(180deg, rgba(17,26,51,0.7), rgba(13,20,40,0.7));
+    box-shadow: var(--toplight); color: var(--ink); font-family: var(--font-body);
+    transition: transform 0.12s ease, border-color 0.12s ease; }
+  .lot:hover { transform: translateY(-2px); border-color: rgba(168,85,247,0.5); }
+  .lot:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--green-hi); }
+  .lot-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .lot-nm { font-family: var(--font-display); font-weight: 700; font-size: 15px; flex: 1;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lot-rl { font-family: var(--font-data); font-size: 10px; letter-spacing: 1px; color: var(--ink-dim); }
+  .lot-price { font-family: var(--font-display); font-weight: 800; font-size: 20px; color: var(--green-hi); }
+  .lot-price small { font-size: 11px; color: var(--ink-dim); font-weight: 600; margin-left: 3px; }
+  .lot-last { font-family: var(--font-data); font-size: 11px; color: var(--ink-faint); }
+  .up { color: var(--green-hi); } .down { color: var(--red); } .flat { color: var(--ink-dim); }
+
+  .sheet { position: fixed; right: 0; top: 0; bottom: 0; width: min(420px, 100%); z-index: 41;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border-left: 1px solid var(--hairline-2); padding: 20px; overflow-y: auto;
+    transform: translateX(102%); transition: transform 0.22s cubic-bezier(0.2,0.8,0.25,1); }
+  .sheet.on { transform: none; }
+  .sheet h3 { font-family: var(--font-display); font-weight: 800; font-size: 22px; margin: 10px 0 2px; }
+  .sheet-close { position: absolute; top: 14px; right: 14px; }
+  .sheet-sub { margin: 0; font-size: 13px; }
+  .sheet-price { margin: 12px 0 0; }
+  .sheet-histTitle { margin: 16px 0 6px; font-size: 13px; }
+  .histRow { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0;
+    border-bottom: 1px solid var(--hairline); font-family: var(--font-data); font-size: 12px; }
+  .histRow:last-child { border-bottom: 0; }
+  .mratings { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 12px 0 0; }
+  .mrt { display: flex; justify-content: space-between; font-size: 12px; }
+  .mrt .k { color: var(--ink-dim); font-family: var(--font-data); font-size: 10px;
+    letter-spacing: 1px; text-transform: uppercase; }
+  .mrt .v { font-family: var(--font-data); font-weight: 700; }
+
+  .tradebox { border: 1px dashed var(--hairline-2); border-radius: 10px; padding: 12px; margin-top: 16px;
+    display: flex; flex-direction: column; gap: 10px; }
+  .tradebox > p { margin: 0; font-size: 13px; }
+  .tradebox .input { width: 100%; }
+  #tradeControls { display: flex; flex-direction: column; gap: 8px; }
+  .txflow button { display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.7px;
+    text-transform: uppercase; padding: 7px 11px; border-radius: 8px;
+    border: 1px solid var(--hairline-2); background: var(--panel); color: var(--ink); cursor: pointer; }
+  .txflow button:hover { border-color: var(--green); }
+  .txflow button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--green-hi); }
+  .txSettled { display: flex; align-items: center; gap: 10px; margin-top: 10px;
+    color: var(--purple-hi); font-size: 13px; }
+
   /* the player-detail drawer ships its own controls (it mounts at body
      level) — give its plain buttons/inputs the app's voice */
   .drawer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -425,10 +484,13 @@
   // every module below app.html's entry imports only within its own root.
   import { createLobbyService } from '../../match-client/src/lobbyService.js';
   import { claimPendingClub } from '../../match-client/src/clubClaim.js';
-  import { playerCard } from '../../match-client/src/ui/playerCard.js';
+  import { avatarTile, playerCard } from '../../match-client/src/ui/playerCard.js';
   import { createPlayerDetail } from '../../match-client/src/ui/playerDetail.js';
   import { FORMATIONS, prettyFormation, slotsFor, outOfPosition } from '../../match-client/src/ui/formation.js';
   import { TACTIC_GROUPS, TACTIC_CHOICES, PRESETS } from '../../match-client/src/ui/tactics.js';
+  import { assetLabel, ethToWei, formatEth, priceLabel, priceMove } from '../../match-client/src/ui/money.js';
+  import { createTxFlow, txStateLine } from '../../match-client/src/ui/tx.js';
+  import { normalizeWalletError } from '../../match-client/src/ui/errors.js';
   import { avatarSvgDressed } from '../../web/public/js/avatar.js';
   import { generateSquad, ratingFace } from '../../web/public/js/squad.js';
   import { loadClub, saveClub, clubOverall, crestInitials, clubRecord } from '../../web/public/js/club.js';
@@ -443,6 +505,8 @@
       generateSquad, ratingFace, loadClub, saveClub, clubOverall, crestInitials, clubRecord,
       playerCard, createPlayerDetail, FORMATIONS, prettyFormation, slotsFor, outOfPosition,
       TACTIC_GROUPS, TACTIC_CHOICES, PRESETS,
+      avatarTile, assetLabel, ethToWei, formatEth, priceLabel, priceMove,
+      createTxFlow, txStateLine, normalizeWalletError,
     },
   });
 </script>

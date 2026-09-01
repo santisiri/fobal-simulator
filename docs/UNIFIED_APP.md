@@ -12,7 +12,7 @@ status + the decisions that bind the slices.
 |---|---|---|
 | **J1** | the shell: routing, nav, auth machine, session, club claim; hub + onboarding absorbed | ✅ shipped |
 | **J2** | squad room + team sheet at `/squad`; squad.html absorbed and deleted | ✅ shipped |
-| J3 | market + wallet tx lifecycle | — |
+| **J3** | market + wallet tx lifecycle at `/market(/:tokenId)`; market.html absorbed and deleted | ✅ shipped |
 | J4 | lobby + queue + invites + history | — |
 | J5 | match hand-off + return, spectator links; play absorbed | — |
 | J6 | parity audit, delete the remaining pages, single root remains | — |
@@ -115,3 +115,40 @@ the app. Decisions added in J2, inherited by later slices:
   the SAME `/squad` payload as everywhere else and joins `/sheet` by
   playerId. `playerDetail` gained an additive `destroy()` so SPA unmounts
   don't leak drawers.
+
+## What J3 absorbed (the market)
+
+`apps/match-client/public/market.html` → `apps/app/src/views/market.js` at
+`/market` and `/market/:tokenId`, deleted in the same PR; the lobby's
+MARKET button points at the app. Decisions added in J3:
+
+- **The player sheet IS the deep link.** Opening a lot navigates to
+  `/market/:tokenId`; back/forward and refresh land right. The shell's
+  mount contract gained `update(match)` — same view, new URL reaches the
+  mounted view instead of remounting it. `/market` and `/market/:tokenId`
+  share one view name on purpose.
+- **`views/txPanel.js` is the ONE transaction-lifecycle component**
+  (mockup 3g): createTxFlow snapshot → action, shared state line, hash as
+  explorer link, failure in plain words with one retry, and the settled
+  state plays the eleven pips in ownership purple. Reuse it for every
+  later on-chain flow (the mint moves onto it when the lobby is absorbed).
+- **After a settled trade the sheet holds ~1.8s before re-rendering** — the
+  pips play, AND the lobby's live chain reads catch up with the receipt
+  (re-rendering instantly raced the owner read and showed a stale "not
+  yours"; found live against anvil).
+- Trade eligibility is pure in `views/marketOps.js` (`tradeChoice`) —
+  seller match beats ownership (the escrowed token belongs to the
+  marketplace while listed). `ethToWei` moved into the shared `money.js`
+  (string maths, tested). Public browsing works signed out; the sheet
+  offers the wallet door inline via `auth.walletSignIn`.
+
+**The local chain rig** (how J3 was verified end to end): `anvil` (a
+launch.json entry) → `contracts/script/Deploy.s.sol` with anvil key 0 as
+admin and keys 3/4 as generator/engine signers (writes
+`deployments/31337.json`) → `MintSquad.s.sol` once per test wallet
+(creates the registry team + generator-signed 11 + declared roster) →
+`cast` for seeding listings/sales. Lobby env: `FOBAL_RPC_URL` +
+`FOBAL_CHAIN_PLAYER/REGISTRY/MARKETPLACE` + `FOBAL_MARKET_FROM_BLOCK=1`
+(+ `FOBAL_IDENTITY=0` to skip mainnet ENS). In the pane, a ~20-line
+EIP-1193 shim over anvil's unlocked accounts stands in for MetaMask —
+`personal_sign` and `eth_sendTransaction` are real.

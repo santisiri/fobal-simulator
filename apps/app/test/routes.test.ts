@@ -21,15 +21,17 @@ describe('matchRoute', () => {
     expect(matchRoute('/').route.view).toBe('club');
     expect(matchRoute('/onboarding').route.view).toBe('onboarding');
     expect(matchRoute('/squad').route.view).toBe('squad');   // absorbed in J2
+    expect(matchRoute('/market').route.view).toBe('market'); // absorbed in J3
     expect(matchRoute('/lobby').route.legacy).toBe('lobby.html');
     expect(matchRoute('/play').route.legacy).toBe('play.html');
     expect(matchRoute('/invite').route.legacy).toBe('invite.html');
   });
 
-  test('market deep links carry the token id out as a param', () => {
+  test('market deep links carry the token id out as a param, same view either way', () => {
     const m = matchRoute('/market/42');
-    expect(m.route.legacy).toBe('market.html');
+    expect(m.route.view).toBe('market');
     expect(m.params).toEqual({ tokenId: '42' });
+    expect(matchRoute('/market').route.view).toBe('market');
     expect(matchRoute('/market').params).toEqual({});
   });
 

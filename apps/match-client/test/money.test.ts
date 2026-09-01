@@ -1,7 +1,7 @@
 // Money formatting, where a rounding bug is a real bug. Everything is
 // BigInt end to end: these tests exist to prove no Number sneaks in.
 import { describe, expect, test } from 'vitest';
-import { formatEth, assetLabel, priceLabel, priceMove } from '../src/ui/money.js';
+import { formatEth, assetLabel, ethToWei, priceLabel, priceMove } from '../src/ui/money.js';
 
 describe('formatEth', () => {
   test('whole and fractional ETH, trailing zeros trimmed', () => {
@@ -53,5 +53,30 @@ describe('priceMove', () => {
   test('no baseline, no claim', () => {
     expect(priceMove('0', '100')).toBeNull();
     expect(priceMove('x', '100')).toBeNull();
+  });
+});
+
+describe('ethToWei', () => {
+  test('clean decimals become exact wei strings', () => {
+    expect(ethToWei('2.5')).toBe('2500000000000000000');
+    expect(ethToWei('0.015')).toBe('15000000000000000');
+    expect(ethToWei('1')).toBe('1000000000000000000');
+    expect(ethToWei('.5')).toBe('500000000000000000');
+    expect(ethToWei(' 3 ')).toBe('3000000000000000000');
+  });
+
+  test('precision the chain cannot hold is refused, not rounded', () => {
+    expect(ethToWei('0.0000000000000000001')).toBeNull();   // 19 decimals
+    expect(ethToWei('0.000000000000000001')).toBe('1');     // exactly 1 wei
+  });
+
+  test('junk and non-positive prices are null', () => {
+    for (const bad of ['', '.', 'abc', '1e3', '-1', '1.2.3', '2,5', null, undefined, '0', '0.0'])
+      expect(ethToWei(bad as never), String(bad)).toBeNull();
+  });
+
+  test('a float would have lied here; the string maths does not', () => {
+    expect(ethToWei('0.1')).toBe('100000000000000000');     // not 0.1000…0002
+    expect(ethToWei('123456789.123456789123456789')).toBe('123456789123456789123456789');
   });
 });
