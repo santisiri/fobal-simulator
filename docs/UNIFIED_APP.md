@@ -15,6 +15,48 @@ status + the decisions that bind the slices.
 | **J3** | market + wallet tx lifecycle at `/market(/:tokenId)`; market.html absorbed and deleted | ✅ shipped |
 | **J4** | the lobby at `/lobby` — presence, challenges, queue, invites, history; lobby.html absorbed and deleted; identity + mint moved to the club home | ✅ shipped |
 | **J5** | `/play` absorbed (offline-vs-AI stage in the shell); the match client's full-time return bar; play.html deleted | ✅ shipped |
+| **J6** | the parity audit: orphaned modules deleted, docs bannered, the final map below | ✅ shipped |
+
+## The final map (J6 parity audit, 2026-09-02)
+
+Eight pages went in; ONE app came out, plus two deliberate standalone
+documents. Where everything lives now:
+
+| Was | Now |
+|---|---|
+| onboarding.html | `/onboarding` (the wizard) |
+| hub.html | `/` — the club home (+ identity card, on-chain card, last full time) |
+| play.html | `/play` (+ the offline golden stage) |
+| squad.html | `/squad` — the team sheet room |
+| market.html | `/market`, `/market/:tokenId` — sheet-as-deep-link |
+| lobby.html | `/lobby` — presence, challenges, queue, invites, history |
+| index.html (match client) | **stays** — the live match experience; the app hands off (`views/matchLink.js`) and the FULL TIME header bar hands back |
+| invite.html | **stays** — the email landing page; its links are baked into sent emails by the server (`<base>/invite.html?t=…`) and its join button lands inside the app |
+
+Deleted as orphans in J6: `apps/match-client/src/ui/squadView.js`,
+`apps/web/public/js/session.js`, `club.js#requireClub`,
+`playerCard.js#playerCardSkeleton` — each had zero consumers once their
+pages died.
+
+**The five journeys** (docs/FULL_APP_BRIEF definition of done) all run
+inside the one app and were each verified live during J1–J5: found→claim
+(J1, the pips), wallet mint→NFT squad (J4, real three-leg mint on anvil),
+market list/cancel/buy (J3, real chain), XI→queue/challenge→live
+match→voice→result in history (J2/J4/J5, ridden to a real full time),
+email invite→the app (J4; delivery on staging still needs the SES/Resend
+follow-up in INTEGRATION_STATUS).
+
+**The release step that makes the app the root**: attach
+`infra/cloudfront/app-router-function.js` (runbook in the file) to
+E35URO4KFESJYU's default behavior. Until then the app answers at
+`/app.html` with `?p=` routing — fully usable either way.
+`tools/serve-client.mjs` already mirrors the function locally.
+
+**Standing follow-ups (server-side, out of client scope by constitution):**
+- `/squad` does not serve `appearance`/`dna` — chain.ts decodes them and
+  drops them. Shipping them (player-data-model workstream) lights up real
+  NFT art in the tiles; `avatarTile` is the documented seam.
+- Invite delivery on staging: SES production access or Resend secrets.
 | J4 | lobby + queue + invites + history | — |
 | J5 | match hand-off + return, spectator links; play absorbed | — |
 | J6 | parity audit, delete the remaining pages, single root remains | — |

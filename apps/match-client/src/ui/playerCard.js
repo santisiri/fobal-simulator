@@ -51,18 +51,5 @@ export function playerCard(player, colors, { onOpen, revealDelay = 0 } = {}) {
   return el;
 }
 
-/** a same-shape skeleton so the pitch never shifts while loading */
-export function playerCardSkeleton() {
-  const el = document.createElement('div');
-  el.className = 'pcard skel-card';
-  const tile = document.createElement('div');
-  tile.className = 'tile skel';
-  const nm = document.createElement('span');
-  nm.className = 'nm skel';
-  nm.textContent = '········';
-  const rl = document.createElement('span');
-  rl.className = 'rl skel';
-  rl.textContent = '··';
-  el.append(tile, nm, rl);
-  return el;
-}
+// (playerCardSkeleton left with squadView.js in the J6 parity audit — the
+// app's views carry their own same-shape skeletons)

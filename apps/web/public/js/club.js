@@ -16,14 +16,6 @@ export function saveClub(club) {
   localStorage.setItem(KEY, JSON.stringify(club));
 }
 
-/** Redirect to onboarding (inside the unified app) if no club exists;
- *  otherwise return it. */
-export function requireClub() {
-  const club = loadClub();
-  if (!club) { location.replace('app.html?p=/onboarding'); return null; }
-  return club;
-}
-
 /** Squad-average overall, rounded. */
 export function clubOverall(club) {
   const ps = club.squad.players;
