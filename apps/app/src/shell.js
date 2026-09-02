@@ -13,6 +13,7 @@ import { mountEntry } from './views/entry.js';
 import { mountLobby } from './views/lobby.js';
 import { mountMarket } from './views/market.js';
 import { mountOnboarding } from './views/onboarding.js';
+import { mountPlay } from './views/play.js';
 import { mountSquad } from './views/squad.js';
 
 /**
@@ -120,6 +121,9 @@ export function createApp({ root, window: win, config, deps }) {
       mounted.update = handle?.update ?? null;
     } else if (name === 'lobby') {
       const handle = mountLobby(view, { auth, lobby, router });
+      mounted.dispose = handle?.dispose ?? null;
+    } else if (name === 'play') {
+      const handle = mountPlay(view, { auth, lobby, router, deps, config });
       mounted.dispose = handle?.dispose ?? null;
     } else if (name === 'entry') {
       mountEntry(view, { auth, router });

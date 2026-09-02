@@ -2,10 +2,9 @@
 // client is plain modules on purpose. Layout of the output:
 //
 //   dist/client/app.html            the unified app shell (workstream J) —
-//                                   /, /onboarding, /squad, /market, /lobby
-//                                   render here; /play and /invite hand off
-//                                   to the pages below until their J slice
-//                                   absorbs them
+//                                   /, /onboarding, /squad, /market, /lobby,
+//                                   /play all render here; only /invite still
+//                                   hands off (the email landing page below)
 //   dist/client/app/*.js            the app's modules (apps/app/src, paths
 //                                   unchanged)
 //   dist/client/index.html          match client shell (config injected)
@@ -130,22 +129,13 @@ writeFileSync(join(outDir, 'app.html'), rewrite('app.html', app, [
   ['<script type="module">', CONFIG_SNIPPET()],
 ]));
 
-// 5. the web app surfaces (play + shared design system). Onboarding and the
-//    hub were absorbed into app.html (workstream J1); play.html remains
-//    until J5 absorbs mode select. A FOBAL_CONFIG snippet is injected so
-//    play.html can find the relocated golden (/golden/index.html) and the
-//    lobby URL — same config the shell and lobby receive.
+// 5. the shared web modules + the canonical token sheet. No web PAGES
+//    remain (play.html was the last, absorbed in J5) — js/ carries the
+//    generated avatar renderer and club helpers the app imports, and
+//    styles/fobal.css stays published as the design system's source of
+//    truth (ui.css carries its byte-identical shared block).
 cpSync(join(root, 'apps/web/public/styles'), join(outDir, 'styles'), { recursive: true });
 cpSync(join(root, 'apps/web/public/js'), join(outDir, 'js'), { recursive: true });
-const webConfig = `<script>window.FOBAL_CONFIG = ${JSON.stringify({
-  lobbyUrl, matchWsUrl: matchWs, goldenUrl: '/golden/index.html',
-})};</script>\n<link rel="stylesheet" href="styles/fobal.css">`;
-for (const page of ['play.html']) {
-  const html = readFileSync(join(root, 'apps/web/public', page), 'utf8');
-  writeFileSync(join(outDir, page), rewrite(page, html, [
-    ['<link rel="stylesheet" href="styles/fobal.css">', webConfig],
-  ]));
-}
 
 console.log(`client built → ${outDir}`);
 console.log(`  lobby:  ${lobbyUrl}`);
