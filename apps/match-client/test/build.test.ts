@@ -34,8 +34,8 @@ describe('build-client', () => {
     expect(shell).toContain('"matchWsUrl":"wss://matches-staging.fobal.ai"');
     expect(shell).toContain('"goldenUrl":"/golden/index.html"');
 
-    const lobby = readFileSync(join(out, 'lobby.html'), 'utf8');
-    expect(lobby).toContain('"lobbyUrl":"https://lobby-staging.fobal.ai"');
+    const invite = readFileSync(join(out, 'invite.html'), 'utf8');
+    expect(invite).toContain('"lobbyUrl":"https://lobby-staging.fobal.ai"');
 
     // modules ship unmodified
     expect(sha(readFileSync(join(out, 'src/puppet.js'))))
@@ -61,11 +61,15 @@ describe('build-client', () => {
     expect(sha(readFileSync(join(out, 'app/views/market.js'))))
       .toBe(sha(readFileSync(join(root, 'apps/app/src/views/market.js'))));
 
+    expect(sha(readFileSync(join(out, 'app/views/lobby.js'))))
+      .toBe(sha(readFileSync(join(root, 'apps/app/src/views/lobby.js'))));
+
     // absorbed pages are gone from the artifact — the app owns their routes
     expect(() => readFileSync(join(out, 'hub.html'))).toThrow();
     expect(() => readFileSync(join(out, 'onboarding.html'))).toThrow();
     expect(() => readFileSync(join(out, 'squad.html'))).toThrow();
     expect(() => readFileSync(join(out, 'market.html'))).toThrow();
+    expect(() => readFileSync(join(out, 'lobby.html'))).toThrow();
   });
 
   test('missing args fail fast', () => {

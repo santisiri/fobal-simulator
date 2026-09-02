@@ -22,7 +22,7 @@ describe('matchRoute', () => {
     expect(matchRoute('/onboarding').route.view).toBe('onboarding');
     expect(matchRoute('/squad').route.view).toBe('squad');   // absorbed in J2
     expect(matchRoute('/market').route.view).toBe('market'); // absorbed in J3
-    expect(matchRoute('/lobby').route.legacy).toBe('lobby.html');
+    expect(matchRoute('/lobby').route.view).toBe('lobby');   // absorbed in J4
     expect(matchRoute('/play').route.legacy).toBe('play.html');
     expect(matchRoute('/invite').route.legacy).toBe('invite.html');
   });
@@ -83,8 +83,8 @@ describe('URL modes', () => {
   });
 
   test('legacy hand-offs are root-absolute (the app answers nested paths), override intact', () => {
-    expect(legacyHref('lobby.html', {})).toBe('/lobby.html');
-    expect(legacyHref('squad.html', { keep: { lobby: 'http://x' } }))
-      .toBe('/squad.html?lobby=http%3A%2F%2Fx');
+    expect(legacyHref('play.html', {})).toBe('/play.html');
+    expect(legacyHref('invite.html', { keep: { lobby: 'http://x' } }))
+      .toBe('/invite.html?lobby=http%3A%2F%2Fx');
   });
 });

@@ -13,6 +13,7 @@ status + the decisions that bind the slices.
 | **J1** | the shell: routing, nav, auth machine, session, club claim; hub + onboarding absorbed | ✅ shipped |
 | **J2** | squad room + team sheet at `/squad`; squad.html absorbed and deleted | ✅ shipped |
 | **J3** | market + wallet tx lifecycle at `/market(/:tokenId)`; market.html absorbed and deleted | ✅ shipped |
+| **J4** | the lobby at `/lobby` — presence, challenges, queue, invites, history; lobby.html absorbed and deleted; identity + mint moved to the club home | ✅ shipped |
 | J4 | lobby + queue + invites + history | — |
 | J5 | match hand-off + return, spectator links; play absorbed | — |
 | J6 | parity audit, delete the remaining pages, single root remains | — |
@@ -142,13 +143,42 @@ MARKET button points at the app. Decisions added in J3:
   (string maths, tested). Public browsing works signed out; the sheet
   offers the wallet door inline via `auth.walletSignIn`.
 
-**The local chain rig** (how J3 was verified end to end): `anvil` (a
+## What J4 absorbed (the lobby)
+
+`apps/match-client/public/lobby.html` → `apps/app/src/views/lobby.js` at
+`/lobby`, deleted in the same PR. The lobby view renders from the ONE
+LobbyService state the auth machine already polls — no second transport.
+Decisions added in J4:
+
+- **Club identity moved home.** Rename + kit live on the club home's
+  identity card; the on-chain card (link / unlink / MINT MY TEAM) is
+  there too — the lobby is for finding a rival. The mint flow lives in
+  `views/mint.js` (three legs on the shared txPanel, per-wallet resume in
+  localStorage, receipt parsing by the server-named topics — pure parts
+  tested), and a settled mint carries its eleven-pip moment across the
+  poll's re-render (`mintSettledAt` window).
+- **The auto-enter fuse is armed once per matchId** and the entered-latch
+  (`fobal.lobby.entered`, via `views/matchLink.js`) survives the round
+  trip — coming back from the match client never re-fires the fuse. The
+  match client's LOBBY links and invite.html's join link now point INTO
+  the app (`/app.html?p=/lobby`); the app captures `?invite=` at boot and
+  the lobby view claims it after any sign-in.
+- Countdowns on challenges tick with the poll; invitations degrade
+  honestly on 501 (form hidden, plain words). `views/matchLink.js` is the
+  one builder for match/replay hand-off URLs (root-absolute).
+- Leftovers for J6: `src/ui/squadView.js` and `apps/web/public/js/session.js`
+  no longer have a consuming page (they still ship, harmlessly).
+
+**The local chain rig** (how J3 and J4's mint were verified end to end): `anvil` (a
 launch.json entry) → `contracts/script/Deploy.s.sol` with anvil key 0 as
 admin and keys 3/4 as generator/engine signers (writes
 `deployments/31337.json`) → `MintSquad.s.sol` once per test wallet
 (creates the registry team + generator-signed 11 + declared roster) →
 `cast` for seeding listings/sales. Lobby env: `FOBAL_RPC_URL` +
 `FOBAL_CHAIN_PLAYER/REGISTRY/MARKETPLACE` + `FOBAL_MARKET_FROM_BLOCK=1`
-(+ `FOBAL_IDENTITY=0` to skip mainnet ENS). In the pane, a ~20-line
+(+ `FOBAL_IDENTITY=0` to skip mainnet ENS; for the mint add
+`FOBAL_CHAIN_GENERATOR` + `FOBAL_CHAIN_ID=31337` +
+`FOBAL_GENERATOR_SIGNER_PK` = anvil key 3). Note: the lobby's session
+secret is per-boot — restarting it signs every tab out (dev only). In the pane, a ~20-line
 EIP-1193 shim over anvil's unlocked accounts stands in for MetaMask —
 `personal_sign` and `eth_sendTransaction` are real.

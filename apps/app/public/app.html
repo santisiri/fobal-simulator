@@ -419,6 +419,47 @@
   .txSettled { display: flex; align-items: center; gap: 10px; margin-top: 10px;
     color: var(--purple-hi); font-size: 13px; }
 
+  /* ==== the lobby (J4 — absorbed from lobby.html) ==== */
+  .lobbywrap { display: grid; grid-template-columns: 1fr 340px; gap: 16px; align-items: start; }
+  .lobby-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .lobby-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .lobbygate { max-width: 520px; margin: 40px auto; }
+  .kickword { color: var(--green-hi); }
+  .lobbyhead { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .lobbyhead .label { margin: 0; flex: 1; }
+
+  .ens { color: var(--purple-hi); font-family: var(--font-data); }
+  .player-row { display: flex; align-items: center; gap: 10px; padding: 9px 8px;
+    border-bottom: 1px solid var(--hairline); font-size: 14px; }
+  .player-row:last-child { border-bottom: 0; }
+  .player-row--live { border: 1px solid rgba(34,197,94,0.4); border-radius: var(--r-s);
+    box-shadow: 0 0 18px rgba(34,197,94,0.1); margin-bottom: 6px; }
+  .row-name { flex: 1; min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+  .row-team { font-size: 13px; white-space: nowrap; }
+  .rec { white-space: nowrap; }
+  .presence-dot { width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: rgba(248,250,252,0.22); }
+  .presence-dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .tag { font-family: var(--font-data); font-size: 10px; letter-spacing: 1.5px;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+    border: 1px solid var(--hairline-2); color: var(--ink-dim); white-space: nowrap; }
+  .tag--live { border-color: rgba(34,197,94,0.5); color: var(--green-hi); }
+
+  .queue-line { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font-size: 14px; }
+  .queue-pulse { width: 34px; height: 8px; flex: none; }
+  .invite-msg { margin-top: 8px; }
+  .invite-note { font-size: 13px; min-height: 18px; margin: 10px 0 0; }
+
+  /* club identity + on-chain cards (moved to the club home in J4) */
+  .identity, .chaincard { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .identity .label, .chaincard .label { display: block; }
+  .identity-kit { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .identity-note { font-size: 12px; min-height: 15px; margin: 6px 0 0; }
+  .identity input.input { margin-top: 6px; }
+  .chain-line { margin: 0; font-size: 13px; }
+  .chain-row { display: flex; gap: 8px; }
+  .chain-id { max-width: 110px; }
+
   /* the player-detail drawer ships its own controls (it mounts at body
      level) — give its plain buttons/inputs the app's voice */
   .drawer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -443,6 +484,7 @@
     .room { grid-template-columns: 1fr; }
     .slot { width: 62px; }
     .obcard { position: static; }
+    .lobbywrap { grid-template-columns: 1fr; }
   }
   @media (max-width: 760px) {
     .shellbody { flex-direction: column; padding: 14px 12px 60px; gap: 14px; }

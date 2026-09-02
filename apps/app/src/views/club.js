@@ -8,7 +8,10 @@
 // The view renders its frame once and updates named regions off the poll,
 // so nothing flickers and no input loses focus on a 2-second cadence.
 import { ago, crestHtml, elevenPips, esc, html, pick } from '../ui.js';
+import { ENTERED_KEY, matchClientUrl, replayClientUrl } from './matchLink.js';
+import { MINT_LEGS, runMintFlow } from './mint.js';
 import { mountSignIn } from './signin.js';
+import { renderTxPanel } from './txPanel.js';
 
 /**
  * @param {HTMLElement} el
@@ -42,6 +45,8 @@ export function mountClub(el, { auth, lobby, router, deps }) {
           <h2 class="label">What needs you</h2>
           <div id="needs"></div>
         </section>
+        <section class="panel identity" id="identityCard" hidden></section>
+        <section class="panel chaincard" id="chainCard" hidden></section>
         <section class="panel lastft" id="lastft" hidden></section>
       </aside>
     </div>`);
@@ -85,13 +90,6 @@ export function mountClub(el, { auth, lobby, router, deps }) {
   }
 
   // ---- the kick-off card: match > challenge > queue > find a rival -------
-  // root-absolute like every cross-page URL the app emits — the club can be
-  // rendered at a deep link, where a relative file name would 404
-  function matchClientUrl(match, token) {
-    const ws = match.matchUrl.replace(/^http/, 'ws');
-    return `/index.html?ws=${encodeURIComponent(ws)}&match=${encodeURIComponent(match.matchId)}&token=${encodeURIComponent(token)}`;
-  }
-
   function renderKickoff() {
     const s = lobby.state;
     const box = pick(el, 'kickoff');
@@ -119,7 +117,7 @@ export function mountClub(el, { auth, lobby, router, deps }) {
           <p class="muted kickoff-note" id="kickNote"></p>
         </div>`);
       pick(el, 'tunnelBtn').addEventListener('click', () => {
-        try { sessionStorage.setItem('fobal.lobby.entered', s.match.matchId); } catch { /* still enter */ }
+        try { sessionStorage.setItem(ENTERED_KEY, s.match.matchId); } catch { /* still enter */ }
         location.assign(matchClientUrl(s.match, s.match.token));
       });
       pick(el, 'specBtn').addEventListener('click', async () => {
@@ -282,6 +280,125 @@ export function mountClub(el, { auth, lobby, router, deps }) {
       : reason === 'wallet account changed' ? 'Your wallet switched accounts, so the session closed. Sign in with the new one.'
         : 'You are signed out.';
 
+  // ---- club identity: the name opponents see, the kit that walks out ----
+  // (moved from lobby.html in J4 — identity belongs at home). Renders once
+  // per session so the poll never clobbers typing; saves through the same
+  // endpoints the club claim uses.
+  function renderIdentity() {
+    const card = pick(el, 'identityCard');
+    if (auth.state.status !== 'signed_in') { card.hidden = true; return; }
+    card.hidden = false;
+    const { name, colors } = identity();
+    html(card, `
+      <h2 class="label">Club identity</h2>
+      <form id="idForm" novalidate>
+        <label class="label" for="idName">Club name</label>
+        <input class="input" id="idName" maxlength="32" value="${esc(name)}" autocomplete="off">
+        <div class="identity-kit">
+          <span class="label">Kit</span>
+          <input type="color" id="idPrimary" value="${esc(colors?.primary ?? '#22c55e')}" title="Primary — shirt and socks">
+          <input type="color" id="idSecondary" value="${esc(colors?.secondary ?? '#0d1428')}" title="Secondary — shorts and trim">
+          <button class="btn-quiet btn-sm" type="submit">Save</button>
+        </div>
+        <p class="muted identity-note" id="idNote"></p>
+      </form>`);
+    pick(el, 'idForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const note = pick(el, 'idNote');
+      const newName = /** @type {HTMLInputElement} */ (pick(el, 'idName')).value.trim();
+      const primary = /** @type {HTMLInputElement} */ (pick(el, 'idPrimary')).value;
+      const secondary = /** @type {HTMLInputElement} */ (pick(el, 'idSecondary')).value;
+      note.textContent = 'Saving…';
+      try {
+        if (newName && newName !== identity().name) {
+          const res = await auth.api('/account/team', { method: 'POST', body: { teamName: newName } });
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) { note.textContent = out.error ?? 'that name was not accepted'; return; }
+        }
+        const res = await auth.api('/squad', { method: 'POST', body: { colors: { primary, secondary } } });
+        if (!res.ok) { note.textContent = 'the kit did not save — try again'; return; }
+        note.textContent = 'Saved — your next match wears it.';
+        fetchedFor = null; serverSquad = null;
+        await fetchServerBits();
+      } catch { note.textContent = 'The lobby is out of reach — nothing was changed.'; }
+    });
+  }
+
+  // ---- the on-chain team (wallet accounts): link, unlink, MINT MY TEAM ---
+  let mintSettledAt = 0;   // keeps the settled moment alive across the poll's re-render
+  function renderChain() {
+    const card = pick(el, 'chainCard');
+    const me = auth.state.me;
+    if (!me?.wallet) { card.hidden = true; return; }
+    card.hidden = false;
+    if (me.chainTeamId) {
+      const justSettled = Date.now() - mintSettledAt < 8000;
+      html(card, `
+        <h2 class="label purple">On-chain team</h2>
+        ${justSettled ? `<div class="txSettled">${elevenPips(true)}<span>Settled — your NFTs take the field.</span></div>` : ''}
+        <p class="muted chain-line">Linked: team ${esc(String(me.chainTeamId))} — your NFTs take the field.</p>
+        <button class="btn-danger btn-sm" id="chainUnlink">Unlink</button>
+        <p class="muted identity-note" id="chainNote"></p>`);
+      if (justSettled) requestAnimationFrame(() => card.querySelector('.ripple')?.classList.add('ripple--go'));
+      pick(el, 'chainUnlink').addEventListener('click', async () => {
+        try {
+          await auth.api('/squad/chain', { method: 'DELETE' });
+          pick(el, 'chainNote').textContent = 'Unlinked — back to your generated squad.';
+          fetchedFor = null; serverSquad = null;
+        } catch { pick(el, 'chainNote').textContent = 'The lobby is out of reach — still linked.'; }
+      });
+      return;
+    }
+    html(card, `
+      <h2 class="label purple">On-chain team</h2>
+      <p class="muted chain-line">Mint your squad as NFTs — or link a registry team you already own.</p>
+      <div class="chain-row">
+        <input class="input chain-id" id="chainTeamId" placeholder="team id" inputmode="numeric" aria-label="Registry team id">
+        <button class="btn-quiet btn-sm" id="chainLink">Link</button>
+      </div>
+      <button class="btn-own" id="mintBtn">⛓ Mint my team</button>
+      <div id="mintMount" class="hidden"></div>
+      <p class="muted identity-note" id="chainNote"></p>`);
+    pick(el, 'chainLink').addEventListener('click', async () => {
+      const note = pick(el, 'chainNote');
+      note.textContent = 'Reading the chain…';
+      try {
+        const teamId = Number(/** @type {HTMLInputElement} */ (pick(el, 'chainTeamId')).value.trim());
+        if (!Number.isInteger(teamId) || teamId <= 0) throw new Error('Enter your registry team id (a number).');
+        const res = await auth.api('/squad/chain', { method: 'POST', body: { teamId } });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out.error ?? res.status);
+        note.textContent = `${out.team.name} — ${out.team.players.length} players take the field.`;
+        fetchedFor = null; serverSquad = null;
+        await fetchServerBits();
+      } catch (err) { note.textContent = String(err?.message ?? err); }
+    });
+    pick(el, 'mintBtn').addEventListener('click', async () => {
+      const btn = /** @type {HTMLButtonElement} */ (pick(el, 'mintBtn'));
+      const mount = pick(el, 'mintMount');
+      const flow = deps.createTxFlow({
+        action: 'Mint my team',
+        onChange: (snap) => renderTxPanel(mount, snap, {
+          txStateLine: deps.txStateLine, legs: MINT_LEGS,
+          settledLine: 'Settled — your NFTs take the field.',
+          onRetry: () => pick(el, 'mintBtn')?.click(),   // resumes from saved progress
+        }),
+      });
+      btn.disabled = true;
+      try {
+        const out = await runMintFlow({ auth, flow });
+        mintSettledAt = Date.now();
+        pick(el, 'chainNote').textContent = `${out.teamName} — your NFTs take the field.`;
+        fetchedFor = null; serverSquad = null;
+        await fetchServerBits();
+      } catch (err) {
+        flow.failure(deps.normalizeWalletError(err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
   function renderLastFt() {
     const box = pick(el, 'lastft');
     if (!lastResult) { box.hidden = true; return; }
@@ -298,8 +415,7 @@ export function mountClub(el, { auth, lobby, router, deps }) {
       </div>
       <button class="btn-quiet lastft-watch" id="watchBtn">▶ Watch replay</button>`);
     pick(el, 'watchBtn').addEventListener('click', () => {
-      location.assign(`/index.html?replayUrl=${encodeURIComponent(m.matchUrl)}`
-        + `&match=${encodeURIComponent(m.matchId)}&token=${encodeURIComponent(m.spectatorToken)}`);
+      location.assign(replayClientUrl(m));
     });
   }
 
@@ -355,6 +471,10 @@ export function mountClub(el, { auth, lobby, router, deps }) {
     whenChanged('needs', [auth.state.status, auth.state.reason, auth.state.connection, me?.wallet, me?.chainTeamId,
       s.incomingChallenges?.map((c) => c.from?.teamName), claimFlash], renderNeeds);
     whenChanged('strip', [auth.state.status, !!draft, serverSquad?.teamName, serverSquad?.colors, serverSquad?.players?.length], renderStrip);
+    // identity renders once per session (typing must survive the poll);
+    // chain re-renders only when linkage or the wallet itself changes
+    whenChanged('identity', [auth.state.status === 'signed_in', me?.accountId], renderIdentity);
+    whenChanged('chain', [me?.wallet, me?.chainTeamId], renderChain);
     whenChanged('lastft', [lastResult?.matchId], renderLastFt);
   };
 
