@@ -179,6 +179,20 @@
   #inspector .ok { color: #2be08f; }
   #inspector .bad { color: #ffb0a8; }
   #inspector .lat { color: #9fb2c8; }
+
+  /* full time — the way back into the app (J5). Lives in the HEADER so it
+     floats around the play area, never over it. */
+  #ftBar { display: none; align-items: center; gap: 10px; margin-left: 12px;
+    padding: 5px 12px; border-radius: 999px; border: 1px solid rgba(43,224,143,0.5);
+    background: rgba(43,224,143,0.08); box-shadow: 0 0 16px rgba(43,224,143,0.18);
+    font-size: 12px; letter-spacing: 1px; animation: ftin 0.32s ease-out; }
+  #ftBar.on { display: inline-flex; }
+  #ftBar b { color: #2be08f; font-size: 13px; letter-spacing: 0.5px; }
+  #ftBar a { color: #2be08f; text-decoration: none; border-bottom: 1px dotted rgba(43,224,143,0.5); }
+  #ftBar a:hover { border-bottom-style: solid; }
+  #ftBar .ftq { color: #9fb2c8; border-color: rgba(159,178,200,0.5); }
+  @keyframes ftin { from { opacity: 0; transform: translateY(-4px); } }
+  @media (prefers-reduced-motion: reduce) { #ftBar { animation: none; } }
 </style>
 </head>
 <body>
@@ -186,6 +200,9 @@
   <h1>FOBAL<span>.ai</span> MATCH CLIENT</h1>
   <button id="modeLocal" class="active">LOCAL MODE</button>
   <button id="modeOnline">ONLINE MODE</button>
+  <span id="ftBar"><span>FULL TIME</span><b id="ftScore"></b>
+    <a id="ftLobby" href="/app.html?p=/lobby">BACK TO THE LOBBY</a>
+    <a id="ftReplay" class="ftq" href="#">WATCH REPLAY</a></span>
   <a href="/app.html?p=/lobby" style="margin-left:auto; color:#2be08f; font-size:12px;
      letter-spacing:1px; text-decoration:none;">LOBBY ↗</a>
 </header>
@@ -381,7 +398,19 @@
           pill.className = 'on ' + s;
           document.getElementById('connText').textContent = s.toUpperCase();
         },
-        onResult: r => console.log('FINAL RESULT', r),
+        onResult: r => {
+          console.log('FINAL RESULT', r);
+          // the way back (J5): score + the app's lobby, and this match's
+          // replay straight from the match server the tab is already on
+          const s = r?.finalScore;
+          document.getElementById('ftScore').textContent = Array.isArray(s) ? s.join(' – ') : '';
+          const httpBase = document.getElementById('wsUrl').value.replace(/^ws/, 'http').replace(/\/+$/, '');
+          document.getElementById('ftReplay').href =
+            `/index.html?replayUrl=${encodeURIComponent(httpBase)}`
+            + `&match=${encodeURIComponent(document.getElementById('matchId').value)}`
+            + `&token=${encodeURIComponent(document.getElementById('token').value)}`;
+          document.getElementById('ftBar').classList.add('on');
+        },
       },
     }).connect();
     document.getElementById('connRetry').onclick = () =>

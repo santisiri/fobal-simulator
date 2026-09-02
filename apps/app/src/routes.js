@@ -37,7 +37,7 @@ export const ROUTES = [
   { path: '/market/:tokenId', view: 'market', title: 'Market' },
   { path: '/market', view: 'market', title: 'Market' },
   { path: '/lobby', view: 'lobby', title: 'Matchday lobby' },
-  { path: '/play', legacy: 'play.html', title: 'Play' },
+  { path: '/play', view: 'play', title: 'Play' },
   { path: '/invite', legacy: 'invite.html', title: 'Match challenge' },
 ];
 

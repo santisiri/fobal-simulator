@@ -63,6 +63,11 @@ describe('build-client', () => {
 
     expect(sha(readFileSync(join(out, 'app/views/lobby.js'))))
       .toBe(sha(readFileSync(join(root, 'apps/app/src/views/lobby.js'))));
+    expect(sha(readFileSync(join(out, 'app/views/play.js'))))
+      .toBe(sha(readFileSync(join(root, 'apps/app/src/views/play.js'))));
+
+    // the offline friendly needs the relocated golden in the app's config
+    expect(app).toContain('"goldenUrl":"/golden/index.html"');
 
     // absorbed pages are gone from the artifact — the app owns their routes
     expect(() => readFileSync(join(out, 'hub.html'))).toThrow();
@@ -70,6 +75,7 @@ describe('build-client', () => {
     expect(() => readFileSync(join(out, 'squad.html'))).toThrow();
     expect(() => readFileSync(join(out, 'market.html'))).toThrow();
     expect(() => readFileSync(join(out, 'lobby.html'))).toThrow();
+    expect(() => readFileSync(join(out, 'play.html'))).toThrow();
   });
 
   test('missing args fail fast', () => {

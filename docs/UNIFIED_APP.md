@@ -14,6 +14,7 @@ status + the decisions that bind the slices.
 | **J2** | squad room + team sheet at `/squad`; squad.html absorbed and deleted | ✅ shipped |
 | **J3** | market + wallet tx lifecycle at `/market(/:tokenId)`; market.html absorbed and deleted | ✅ shipped |
 | **J4** | the lobby at `/lobby` — presence, challenges, queue, invites, history; lobby.html absorbed and deleted; identity + mint moved to the club home | ✅ shipped |
+| **J5** | `/play` absorbed (offline-vs-AI stage in the shell); the match client's full-time return bar; play.html deleted | ✅ shipped |
 | J4 | lobby + queue + invites + history | — |
 | J5 | match hand-off + return, spectator links; play absorbed | — |
 | J6 | parity audit, delete the remaining pages, single root remains | — |
@@ -168,6 +169,27 @@ Decisions added in J4:
   one builder for match/replay hand-off URLs (root-absolute).
 - Leftovers for J6: `src/ui/squadView.js` and `apps/web/public/js/session.js`
   no longer have a consuming page (they still ship, harmlessly).
+
+## What J5 absorbed (play + the way back)
+
+`apps/web/public/play.html` → `apps/app/src/views/play.js` at `/play`,
+deleted in the same PR — the LAST web page; `apps/web/public` now ships
+only `js/` (the generated avatar renderer + club helpers the app imports)
+and `styles/fobal.css` (the design system's source of truth).
+
+- The offline friendly boots the GOLDEN simulator in the app's full-bleed
+  stage and dresses the home team from the local draft — or, new, from
+  the signed-in account's server squad (names + kit) when no draft
+  exists. The golden file stays golden; dressing is applied from outside,
+  same seam as ever.
+- **The full-time return** (the J5 polish): the match client's online flow
+  now surfaces a FULL TIME bar in its HEADER on `onResult` — score,
+  BACK TO THE LOBBY (into the app), and WATCH REPLAY built from the
+  match's own server + token. In the header so it floats around the play
+  area, never over it.
+- `/invite` is the only hand-off left. J6 remains: parity audit, delete
+  the orphaned modules (`squadView.js`, web `session.js`,
+  `club.js#requireClub`), CloudFront function → app as the root.
 
 **The local chain rig** (how J3 and J4's mint were verified end to end): `anvil` (a
 launch.json entry) → `contracts/script/Deploy.s.sol` with anvil key 0 as
