@@ -1,5 +1,13 @@
 # Lobby / presence / matchmaking — the staging-area contract
 
+> **Superseded surfaces (workstream J, 2026-09):** the standalone pages this
+> document mentions (lobby.html, squad.html, market.html, …) were absorbed
+> into the unified app — one shell at `/app.html` with routes `/`, `/squad`,
+> `/market`, `/lobby`, `/play`. The CONTRACTS here (endpoints, state shapes,
+> safety rules) remain the reference; for where each surface lives now, see
+> `docs/UNIFIED_APP.md`.
+
+
 The lobby workstream's reference: transport, presence model, challenge
 protocol, match state machine, authentication, reliability behavior, the
 frontend integration API, and how to run two local clients. The charter's

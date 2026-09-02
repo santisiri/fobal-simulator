@@ -1,5 +1,13 @@
 # The Club and the Market — workstreams H and I
 
+> **Superseded surfaces (workstream J, 2026-09):** the standalone pages this
+> document mentions (lobby.html, squad.html, market.html, …) were absorbed
+> into the unified app — one shell at `/app.html` with routes `/`, `/squad`,
+> `/market`, `/lobby`, `/play`. The CONTRACTS here (endpoints, state shapes,
+> safety rules) remain the reference; for where each surface lives now, see
+> `docs/UNIFIED_APP.md`.
+
+
 Two features turn FOBAL from "a match you can join" into a game you
 inhabit: a **squad + tactics room** where you shape the team that walks
 out, and a **marketplace** where players have prices and owning them
